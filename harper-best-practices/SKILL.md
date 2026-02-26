@@ -15,7 +15,7 @@ metadata:
 
 Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.
 
-## When to Apply
+## When to Use
 
 Reference these guidelines when:
 
@@ -25,6 +25,15 @@ Reference these guidelines when:
 - Working with custom resources and extensions
 - Optimizing data storage and retrieval (Blobs, Vector Indexing)
 - Deploying applications to Harper Fabric
+
+## Steps
+
+1. Review the requirements for the task (schema design, API needs, or infrastructure setup).
+2. Consult the relevant category under "Rule Categories by Priority" to understand the impact of your decisions.
+3. Apply specific rules from the "Quick Reference" section below by reading their detailed rule files.
+4. If you're building a new table, prioritize the `schema-` rules.
+5. If you're extending functionality, consult the `logic-` and `api-` rules.
+6. Validate your implementation against the `ops-` rules before deployment.
 
 ## Rule Categories by Priority
 

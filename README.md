@@ -4,17 +4,13 @@ This repository provides specialized "skills" for AI agents (like Cursor, Windsu
 
 ## Installation
 
-Add these skills to your local project using the `skills` CLI:
+Add these skills to your local project using the [skills](https://skills.sh/) CLI:
 
 ```bash
 npx skills add harperfast/skills
 ```
 
-You can pull down the latest updates from us easily too:
-
-```bash
-npx skills update
-```
+Re-run this command later if you want to get the latest updates from us.
 
 ## Available Skills
 

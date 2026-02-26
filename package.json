@@ -1,13 +1,35 @@
 {
-  "name": "skills-validation",
+  "name": "@harperfast/skills",
   "version": "1.0.0",
-  "private": true,
-  "description": "Validation for agent skills",
+  "description": "Best practices for making awesome Harper apps with your favorite Agent",
+  "repository": "github:HarperFast/skills",
+  "bugs": {
+    "url": "https://github.com/harperfast/skills/issues"
+  },
+  "homepage": "https://github.com/harperfast",
+  "author": {
+    "name": "Harper",
+    "email": "support@harperdb.io"
+  },
+  "license": "Apache License 2.0",
+  "keywords": [],
+
   "type": "module",
   "scripts": {
     "validate": "node scripts/validate-skills.mjs"
   },
   "devDependencies": {
-    "gray-matter": "^4.0.3"
+    "@commitlint/cli": "^20.4.1",
+    "@commitlint/config-conventional": "^20.4.1",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.3",
+    "@semantic-release/npm": "^13.1.3",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/node": "^25.2.0",
+    "conventional-changelog-conventionalcommits": "^9.1.0",
+    "dprint": "^0.51.1",
+    "gray-matter": "^4.0.3",
+    "semantic-release": "^25.0.3"
   }
 }

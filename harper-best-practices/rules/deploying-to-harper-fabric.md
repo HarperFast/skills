@@ -13,12 +13,12 @@ Use this skill when you are ready to move your Harper application from local dev
 
 ## Steps
 
-1. **Sign up**: Create an account at [https://fabric.harperdb.io](https://fabric.harperdb.io) and create a cluster.
-2. **Configure Environment**: Add credentials and cluster URL to `.env`:
+1. **Sign up**: Create an account at [https://fabric.harper.fast/](https://fabric.harper.fast/) and create a cluster.
+2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
    ```bash
    CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
    CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
    CLI_TARGET='YOUR_CLUSTER_URL'
    ```
-3. **Deploy Locally**: Run `npm run deploy`.
+3. **Deploy From Local Environment**: Run `npm run deploy`.
 4. **Set up CI/CD**: Configure `.github/workflows/deploy.yaml` and set repository secrets for automated deployments.

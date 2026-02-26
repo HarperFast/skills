@@ -1,6 +1,6 @@
 # Harper Agent Skills
 
-This repository provides specialized "skills" for AI agents (like Cursor, Windsurf, or Junie) to build better applications on [Harper](https://harperdb.io).
+This repository provides specialized "skills" for AI agents (like Cursor, Windsurf, or Junie) to build better applications on [Harper](https://harper.fast/).
 
 ## Installation
 

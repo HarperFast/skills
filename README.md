@@ -10,6 +10,12 @@ Add these skills to your local project using the `skills` CLI:
 npx skills add harperfast/skills
 ```
 
+You can pull down the latest updates from us easily too:
+
+```bash
+npx skills update
+```
+
 ## Available Skills
 
 ### [Harper Best Practices](harper-best-practices/SKILL.md)

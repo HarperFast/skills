@@ -72,6 +72,7 @@ Reference these guidelines when:
 ### 4. Infrastructure & Ops (MEDIUM)
 
 - `deploying-to-harper-fabric` - Scale globally with Harper Fabric
+- `creating-harper-apps` - Quickstart with `npm create harper@latest`
 - `serving-web-content` - Ways to serve web content from Harper
 
 ## How to Use
@@ -81,6 +82,7 @@ Read individual rule files for detailed explanations and code examples:
 ```
 rules/adding-tables-with-schemas.md
 rules/automatic-apis.md
+rules/creating-harper-apps.md
 ```
 
 ## Full Compiled Document

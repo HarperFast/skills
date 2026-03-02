@@ -24,8 +24,9 @@ Guidelines for building scalable, secure, and performant applications on Harper.
    - 3.4 [TypeScript Type Stripping](#34-typescript-type-stripping)
    - 3.5 [Caching](#35-caching)
 4. [Infrastructure & Ops](#4-infrastructure--ops) — **MEDIUM**
-   - 4.1 [Deploying to Harper Fabric](#41-deploying-to-harper-fabric)
-   - 4.2 [Serving Web Content](#42-serving-web-content)
+   - 4.1 [Creating Harper Applications](#41-creating-harper-applications)
+   - 4.2 [Deploying to Harper Fabric](#42-deploying-to-harper-fabric)
+   - 4.3 [Serving Web Content](#43-serving-web-content)
 
 ---
 
@@ -240,7 +241,32 @@ How caching is defined and implemented in Harper applications.
 
 **Impact: MEDIUM**
 
-### 4.1 Deploying to Harper Fabric
+### 4.1 Creating Harper Applications
+
+The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
+
+#### When to Use
+Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
+
+#### Commands
+Initialize a project using your preferred package manager:
+
+**NPM**
+```bash
+npm create harper@latest
+```
+
+**PNPM**
+```bash
+pnpm create harper@latest
+```
+
+**Bun**
+```bash
+bun create harper@latest
+```
+
+### 4.2 Deploying to Harper Fabric
 
 Globally scaling your Harper application.
 
@@ -249,7 +275,7 @@ Globally scaling your Harper application.
 - **Automatic Sync**: Data is synced across the fabric automatically.
 - **Free Tier**: Start for free and scale as you grow.
 
-### 4.2 Serving Web Content
+### 4.3 Serving Web Content
 
 Two ways to serve web content from a Harper application.
 

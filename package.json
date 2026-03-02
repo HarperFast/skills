@@ -1,6 +1,6 @@
 {
   "name": "@harperfast/skills",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Best practices for making awesome Harper apps with your favorite Agent",
   "repository": "github:HarperFast/skills",
   "bugs": {
@@ -13,7 +13,6 @@
   },
   "license": "Apache License 2.0",
   "keywords": [],
-
   "type": "module",
   "scripts": {
     "validate": "node scripts/validate-skills.mjs"

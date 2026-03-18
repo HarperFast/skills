@@ -45,6 +45,7 @@ Use this skill when you need to perform similarity searches on high-dimensional 
    ```
 5. **Generate Embeddings**: Use external services (OpenAI, Ollama) to generate the numeric vectors before storing or searching them in Harper.
 
+```typescript
 const { Product } = tables;
 
 import OpenAI from 'openai';
@@ -120,16 +121,17 @@ generateEmbedding = process.env.EMBEDDING_GENERATOR === 'ollama'
 
 }
 
-````
+```
+
 Sample request to the `ProductSearch` resource which prompts to find "shorts for the gym":
 
 ```bash
 curl -X POST "http://localhost:9926/ProductSearch/" \
--H "accept: \
+-H "accept: application/json \
 -H "Content-Type: application/json" \
 -H "Authorization: Basic <YOUR_AUTH>" \
 -d '{"prompt": "shorts for the gym"}'
-````
+```
 
 ---
 

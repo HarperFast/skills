@@ -77,8 +77,7 @@ This project includes two Resource patterns for that flow:
 - with an existing Authorization token (either Basic Auth or a JWT) and you want to issue new tokens, or
 - from an explicit `{ username, password }` payload (useful for direct “login” from a CLI/mobile client).
 
-```
-js
+```js
 export class IssueTokens extends Resource {
 static loadAsInstance = false;
 
@@ -119,8 +118,7 @@ static loadAsInstance = false;
 
 **Description / use case:** When the JWT expires, the client uses the refresh token to get a new JWT without re-supplying username/password.
 
-```
-js
+```js
 export class RefreshJWT extends Resource {
 static loadAsInstance = false;
 

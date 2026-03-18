@@ -5,7 +5,7 @@ description:
   automatic APIs, authentication, custom resources, and data handling.
   Triggers on tasks involving Harper database design, API implementation,
   and deployment.
-license: MIT
+license: Apache-2.0
 metadata:
   author: harper
   version: '1.0.0'

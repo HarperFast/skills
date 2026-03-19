@@ -11,7 +11,7 @@ Instructions for the agent to follow when deploying to Harper Fabric.
 
 Use this skill when you are ready to move your Harper application from local development to a cloud-hosted environment.
 
-## Steps
+## How It Works
 
 1. **Sign up**: Follow the [creating-a-fabric-account-and-cluster](creating-a-fabric-account-and-cluster.md) rule to create a Harper Fabric account, organization, and cluster.
 2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
@@ -33,23 +33,23 @@ Add the following scripts and dependencies to your `package.json`:
 
 ```json
 {
-  "scripts": {
-    "deploy": "dotenv -- npm run deploy:component",
-    "deploy:component": "harperdb deploy_component . restart=rolling replicated=true"
-  },
-  "devDependencies": {
-    "dotenv-cli": "^11.0.0",
-    "harperdb": "^4.7.20"
-  }
+	"scripts": {
+		"deploy": "dotenv -- npm run deploy:component",
+		"deploy:component": "harperdb deploy_component . restart=rolling replicated=true"
+	},
+	"devDependencies": {
+		"dotenv-cli": "^11.0.0",
+		"harperdb": "^4.7.20"
+	}
 }
 ```
 
 #### Why split the scripts?
 
-The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI. 
+The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI.
 
 - `deploy`: Uses `dotenv-cli` to load environment variables (like `CLI_TARGET`, `CLI_TARGET_USERNAME`, and `CLI_TARGET_PASSWORD`) before executing the next command.
-- `deploy:component`: The actual command that performs the deployment. 
+- `deploy:component`: The actual command that performs the deployment.
 
 By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harperdb deploy_component` is called, allowing it to authenticate with your cluster.
 
@@ -89,9 +89,14 @@ jobs:
         run: npm run lint
       - name: Deploy
         run: npm run deploy
+        env:
+          CLI_TARGET: ${{ secrets.CLI_TARGET }}
+          CLI_TARGET_USERNAME: ${{ secrets.CLI_TARGET_USERNAME }}
+          CLI_TARGET_PASSWORD: ${{ secrets.CLI_TARGET_PASSWORD }}
 ```
 
 Be sure to set the following repository secrets in your GitHub repository's /settings/secrets/actions:
+
 - `CLI_TARGET`
 - `CLI_TARGET_USERNAME`
 - `CLI_TARGET_PASSWORD`

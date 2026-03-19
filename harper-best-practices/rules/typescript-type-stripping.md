@@ -11,7 +11,7 @@ Instructions for the agent to follow when using TypeScript in Harper.
 
 Use this skill when you want to write Harper Resources in TypeScript and have them execute directly in Node.js without an intermediate build or compilation step.
 
-## Steps
+## How It Works
 
 1. **Verify Node.js Version**: Ensure you are using Node.js v22.6.0 or higher.
 2. **Name Files with `.ts`**: Create your resource files in the `resources/` directory with a `.ts` extension.

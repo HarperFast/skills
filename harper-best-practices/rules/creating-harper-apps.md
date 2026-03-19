@@ -16,16 +16,19 @@ Use this command when starting a new Harper application or adding a new Harper m
 Initialize a project using your preferred package manager:
 
 ### NPM
+
 ```bash
 npm create harper@latest
 ```
 
 ### PNPM
+
 ```bash
 pnpm create harper@latest
 ```
 
 ### Bun
+
 ```bash
 bun create harper@latest
 ```

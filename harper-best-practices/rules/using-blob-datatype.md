@@ -11,7 +11,7 @@ Instructions for the agent to follow when working with the Blob data type in Har
 
 Use this skill when you need to store unstructured or large binary data (media, documents) that is too large for standard JSON fields. Blobs provide efficient storage and integrated streaming support.
 
-## Steps
+## How It Works
 
 1. **Define Blob Fields**: In your GraphQL schema, use the `Blob` type:
    ```graphql

@@ -40,16 +40,19 @@ Guidelines for building scalable, secure, and performant applications on Harper.
 Instructions for the agent to follow when adding tables to a Harper database.
 
 #### When to Use
+
 Use this skill when you need to define new data structures or modify existing ones in a Harper database.
 
-#### Steps
+#### How It Works
+
 1. **Create Dedicated Schema Files**: Prefer having a dedicated schema `.graphql` file for each table. Check the `config.yaml` file under `graphqlSchema.files` to see how it's configured. It typically accepts wildcards (e.g., `schemas/*.graphql`), but may be configured to point at a single file.
 2. **Use Directives**: All available directives for defining your schema are defined in `node_modules/harperdb/schema.graphql`. Common directives include `@table`, `@export`, `@primaryKey`, `@indexed`, and `@relationship`.
-3. **Define Relationships**: Link tables together using the `@relationship` directive. 
-4. **Enable Automatic APIs**: If you add `@table @export` to a schema type, Harper automatically sets up REST and WebSocket APIs for basic CRUD operations against that table. 
+3. **Define Relationships**: Link tables together using the `@relationship` directive.
+4. **Enable Automatic APIs**: If you add `@table @export` to a schema type, Harper automatically sets up REST and WebSocket APIs for basic CRUD operations against that table.
 5. **Consider Table Extensions**: If you are going to extend the table in your resources, then do not `@export` the table from the schema.
 
 #### Example
+
 ```graphql
 type ExamplePerson @table @export {
 	id: ID @primaryKey
@@ -63,29 +66,42 @@ type ExamplePerson @table @export {
 Using the `@relationship` directive to link tables.
 
 #### When to Use
+
 Use this when you have two or more tables that need to be logically linked (e.g., a "Product" table and a "Category" table).
 
-#### Steps
-1. **Identify the Relationship**: Determine which table should "own" the relationship. This is typically the table that will hold the foreign key.
+#### How It Works
+
+1. **Identify the Relationship Type**: Determine if it's one-to-one, many-to-one, or one-to-many.
 2. **Apply the `@relationship` Directive**: In your GraphQL schema, use the `@relationship` directive on the field that links to another table.
-3. **Specify the `name` and `path` Arguments**:
-   - `name`: A unique name for the relationship.
-   - `path`: The field name in the current table that holds the value to match in the related table.
-4. **Define the Inverse Relationship (Optional but Recommended)**: For better queryability, define the relationship in the related table as well.
+   - **Many-to-One (Current table holds FK)**: Use `from`.
+     ```graphql
+     type Book @table @export {
+     	authorId: ID
+     	author: Author @relationship(from: "authorId")
+     }
+     ```
+   - **One-to-Many (Related table holds FK)**: Use `to` and an array type.
+     ```graphql
+     type Author @table @export {
+     	books: [Book] @relationship(to: "authorId")
+     }
+     ```
+3. **Query with Relationships**: Use dot syntax in REST API calls for filtering or the `select()` operator for including related data.
 
 #### Example
+
 ```graphql
 type Product @table @export {
-    id: ID @primaryKey
-    name: String
-    category: Category @relationship(name: "product_category", path: "category_id")
-    category_id: ID
+	id: ID @primaryKey
+	name: String
+	categoryId: ID
+	category: Category @relationship(from: "categoryId")
 }
 
 type Category @table @export {
-    id: ID @primaryKey
-    name: String
-    products: [Product] @relationship(name: "product_category", path: "id")
+	id: ID @primaryKey
+	name: String
+	products: [Product] @relationship(to: "categoryId")
 }
 ```
 
@@ -94,31 +110,36 @@ type Category @table @export {
 How to define and use vector indexes for efficient similarity search.
 
 #### When to Use
+
 Use this when you need to perform similarity searches on high-dimensional data, such as image embeddings, text embeddings, or any other numeric vectors.
 
-#### Steps
+#### How It Works
+
 1. **Define the Vector Field**: In your GraphQL schema, define a field with a list of floats (e.g., `[Float]`).
 2. **Apply the `@indexed` Directive**: Use the `@indexed` directive on the vector field and specify the index type as `vector`.
 3. **Configure the Index (Optional)**: You can provide additional configuration for the vector index, such as the distance metric (e.g., `cosine`, `euclidean`).
 4. **Querying**: Use the `vector` operator in your REST or programmatic requests to perform similarity searches.
 
 #### Example
+
 ```graphql
 type Document @table @export {
-    id: ID @primaryKey
-    content: String
-    embedding: [Float] @indexed(type: "vector", options: { dims: 1536, metric: "cosine" })
+	id: ID @primaryKey
+	content: String
+	embedding: [Float] @indexed(type: "vector", options: { dims: 1536, metric: "cosine" })
 }
 ```
 
 ### 1.4 Using Blobs
 
-How to store and retrieve large data in HarperDB.
+How to store and retrieve large data in Harper.
 
 #### When to Use
+
 Use this when you need to store large, unstructured data such as files, images, or large text documents that exceed the typical size of a standard database field.
 
-#### Steps
+#### How It Works
+
 1. **Define the Blob Field**: Use the `Blob` scalar type in your GraphQL schema.
 2. **Storing Data**: Send the data as a buffer or a stream when creating or updating a record.
 3. **Retrieving Data**: Access the blob field, which will return the data as a stream or buffer.
@@ -128,10 +149,12 @@ Use this when you need to store large, unstructured data such as files, images, 
 How to store and serve binary data like images or MP3s.
 
 #### When to Use
+
 Use this when your application needs to handle binary files, particularly for storage and retrieval.
 
-#### Steps
-1. **Use the `Blob` type**: As with general large data, the `Blob` type is best for binary files.
+#### How It Works
+
+1. **Use the `Blob` type**: As with general large data, the `Blob` type is best for binary files. Ensure you store and retrieve the appropriate MIME type (e.g., `image/jpeg`, `audio/mpeg`) for the data.
 2. **Streaming**: For large files, use streaming to minimize memory usage during upload and download.
 3. **MIME Types**: Store the MIME type alongside the binary data to ensure it is served correctly by your application logic.
 
@@ -146,6 +169,7 @@ Use this when your application needs to handle binary files, particularly for st
 Details on the CRUD endpoints automatically generated for exported tables.
 
 #### Endpoints
+
 - `GET /{TableName}`: Describes the schema.
 - `GET /{TableName}/`: Lists records (supports filtering/sorting).
 - `GET /{TableName}/{id}`: Gets a record by ID.
@@ -160,6 +184,7 @@ Details on the CRUD endpoints automatically generated for exported tables.
 How to use filters, operators, sorting, and pagination in REST requests.
 
 #### Query Parameters
+
 - `limit`: Number of records to return.
 - `offset`: Number of records to skip.
 - `sort`: Field to sort by.
@@ -171,10 +196,12 @@ How to use filters, operators, sorting, and pagination in REST requests.
 Implementing WebSockets and Pub/Sub for live data updates.
 
 #### When to Use
+
 Use this for applications that require live updates, such as chat apps, live dashboards, or collaborative tools.
 
-#### Steps
-1. **WebSocket Connection**: Connect to the Harper WebSocket endpoint.
+#### How It Works
+
+1. **WebSocket Connection**: Connect to the Harper WebSocket endpoint. Use `wss://` for secure connections over HTTPS, or `ws://` for local development.
 2. **Subscribing**: Subscribe to table updates or specific records.
 3. **Pub/Sub**: Use the internal bus to publish and subscribe to custom events.
 
@@ -183,9 +210,11 @@ Use this for applications that require live updates, such as chat apps, live das
 How to use sessions to verify user identity and roles.
 
 #### When to Use
+
 Use this to secure your application by ensuring that only authorized users can access certain resources or perform specific actions.
 
-#### Steps
+#### How It Works
+
 1. **Session Handling**: Access the session object from the request context.
 2. **Identity Verification**: Check for the presence of a user ID or token.
 3. **Role Checks**: Verify if the user has the required roles for the action.
@@ -200,7 +229,8 @@ Use this to secure your application by ensuring that only authorized users can a
 
 How to define custom REST endpoints using JavaScript or TypeScript.
 
-#### Steps
+#### How It Works
+
 1. **Create Resource File**: Define your logic in a JS or TS file.
 2. **Export Handlers**: Export functions like `GET`, `POST`, etc.
 3. **Registration**: Ensure the resource is correctly registered in your application configuration.
@@ -209,7 +239,8 @@ How to define custom REST endpoints using JavaScript or TypeScript.
 
 Adding custom logic to automatically generated table resources.
 
-#### Steps
+#### How It Works
+
 1. **Define Extension**: Create a resource file that targets an existing table.
 2. **Intercept Requests**: Use handlers to add custom validation or data transformation.
 3. **No `@export`**: If extending, remember not to `@export` the table in the schema.
@@ -219,6 +250,7 @@ Adding custom logic to automatically generated table resources.
 How to use filters, operators, sorting, and pagination in programmatic table requests.
 
 #### Usage
+
 When writing custom resources, use the internal API to query tables with full support for advanced filtering and sorting.
 
 ### 3.4 TypeScript Type Stripping
@@ -226,6 +258,7 @@ When writing custom resources, use the internal API to query tables with full su
 Using TypeScript directly without build tools via Node.js Type Stripping.
 
 #### Configuration
+
 Harper supports native TypeScript type stripping, allowing you to run `.ts` files directly. Ensure your environment is configured to take advantage of this for faster development cycles.
 
 ### 3.5 Caching
@@ -233,6 +266,7 @@ Harper supports native TypeScript type stripping, allowing you to run `.ts` file
 How caching is defined and implemented in Harper applications.
 
 #### Strategies
+
 - **In-memory**: For fast access to frequently used data.
 - **Distributed**: For scaling across multiple nodes in Harper Fabric.
 
@@ -247,22 +281,27 @@ How caching is defined and implemented in Harper applications.
 The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
 
 #### When to Use
+
 Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
 
 #### Commands
+
 Initialize a project using your preferred package manager:
 
 **NPM**
+
 ```bash
 npm create harper@latest
 ```
 
 **PNPM**
+
 ```bash
 pnpm create harper@latest
 ```
 
 **Bun**
+
 ```bash
 bun create harper@latest
 ```
@@ -271,7 +310,7 @@ bun create harper@latest
 
 Follow these steps to set up your Harper Fabric environment for deployment.
 
-#### Steps
+#### How It Works
 
 1. **Sign Up/In**: Go to [https://fabric.harper.fast/](https://fabric.harper.fast/) and sign up or sign in.
 2. **Create an Organization**: Create an organization (org) to manage your projects.
@@ -290,11 +329,13 @@ Follow these steps to set up your Harper Fabric environment for deployment.
 Globally scaling your Harper application.
 
 #### Benefits
+
 - **Global Distribution**: Low latency for users everywhere.
 - **Automatic Sync**: Data is synced across the fabric automatically.
 - **Free Tier**: Start for free and scale as you grow.
 
-#### Steps
+#### How It Works
+
 1. **Sign up**: Follow the [Creating a Fabric Account and Cluster](#42-creating-a-fabric-account-and-cluster) steps to create a Harper Fabric account, organization, and cluster.
 2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
    ```bash
@@ -309,33 +350,33 @@ Globally scaling your Harper application.
 
 If your application was not created with `npm create harper`, you'll need to manually configure the deployment scripts and CI/CD workflow.
 
-##### 1. Update `package.json`
+#### 1. Update `package.json`
 
 Add the following scripts and dependencies to your `package.json`:
 
 ```json
 {
-  "scripts": {
-    "deploy": "dotenv -- npm run deploy:component",
-    "deploy:component": "harperdb deploy_component . restart=rolling replicated=true"
-  },
-  "devDependencies": {
-    "dotenv-cli": "^11.0.0",
-    "harperdb": "^4.7.20"
-  }
+	"scripts": {
+		"deploy": "dotenv -- npm run deploy:component",
+		"deploy:component": "harperdb deploy_component . restart=rolling replicated=true"
+	},
+	"devDependencies": {
+		"dotenv-cli": "^11.0.0",
+		"harperdb": "^4.7.20"
+	}
 }
 ```
 
-###### Why split the scripts?
+#### Why split the scripts?
 
-The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI. 
+The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI.
 
 - `deploy`: Uses `dotenv-cli` to load environment variables (like `CLI_TARGET`, `CLI_TARGET_USERNAME`, and `CLI_TARGET_PASSWORD`) before executing the next command.
-- `deploy:component`: The actual command that performs the deployment. 
+- `deploy:component`: The actual command that performs the deployment.
 
 By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harperdb deploy_component` is called, allowing it to authenticate with your cluster.
 
-##### 2. Configure GitHub Actions
+#### 2. Configure GitHub Actions
 
 Create a `.github/workflows/deploy.yaml` file with the following content:
 
@@ -368,9 +409,14 @@ jobs:
         run: npm run lint
       - name: Deploy
         run: npm run deploy
+        env:
+          CLI_TARGET: ${{ secrets.CLI_TARGET }}
+          CLI_TARGET_USERNAME: ${{ secrets.CLI_TARGET_USERNAME }}
+          CLI_TARGET_PASSWORD: ${{ secrets.CLI_TARGET_PASSWORD }}
 ```
 
 Be sure to set the following repository secrets in your GitHub repository:
+
 - `CLI_TARGET`
 - `CLI_TARGET_USERNAME`
 - `CLI_TARGET_PASSWORD`
@@ -380,5 +426,6 @@ Be sure to set the following repository secrets in your GitHub repository:
 Two ways to serve web content from a Harper application.
 
 #### Methods
-1. **Static Serving**: Serve HTML, CSS, and JS files directly.
+
+1. **Static Serving**: Serve HTML, CSS, and JS files directly. If using the Vite plugin for development, ensure Harper is running (e.g., `harperdb run .`) to allow for Hot Module Replacement (HMR).
 2. **Dynamic Rendering**: Use custom resources to render content on the fly.

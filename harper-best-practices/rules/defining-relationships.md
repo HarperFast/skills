@@ -11,7 +11,7 @@ Instructions for the agent to follow when defining relationships between Harper 
 
 Use this skill when you need to link data across different tables, enabling automatic joins and efficient related-data fetching via REST APIs.
 
-## Steps
+## How It Works
 
 1. **Identify the Relationship Type**: Determine if it's one-to-one, many-to-one, or one-to-many.
 2. **Use the `@relationship` Directive**: Apply it to a field in your GraphQL schema.

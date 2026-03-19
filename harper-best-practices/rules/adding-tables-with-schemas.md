@@ -11,7 +11,7 @@ Instructions for the agent to follow when adding tables to a Harper database.
 
 Use this skill when you need to define new data structures or modify existing ones in a Harper database.
 
-## Steps
+## How It Works
 
 1. **Create Dedicated Schema Files**: Prefer having a dedicated schema `.graphql` file for each table. Check the `config.yaml` file under `graphqlSchema.files` to see how it's configured. It typically accepts wildcards (e.g., `schemas/*.graphql`), but may be configured to point at a single file.
 2. **Use Directives**: All available directives for defining your schema are defined in `node_modules/harperdb/schema.graphql`. Common directives include `@table`, `@export`, `@primaryKey`, `@indexed`, and `@relationship`.
@@ -27,7 +27,7 @@ Use this skill when you need to define new data structures or modify existing on
    - `DELETE /{TableName}/{id}`: Deletes a single record by its ID.
 5. **Consider Table Extensions**: If you are going to [extend the table](./extending-tables.md) in your resources, then do not `@export` the table from the schema.
 
-### Example
+## Examples
 
 In a hypothetical `schemas/ExamplePerson.graphql`:
 

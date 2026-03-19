@@ -15,7 +15,9 @@ Re-run this command later if you want to get the latest updates from us.
 ## Available Skills
 
 ### [Harper Best Practices](harper-best-practices/SKILL.md)
+
 Comprehensive guidelines for building, extending, and deploying Harper applications. Covers:
+
 - Schema design and relationships.
 - Automatic REST and WebSocket APIs.
 - Custom resources and table extensions.

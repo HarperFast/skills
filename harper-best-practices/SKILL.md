@@ -1,7 +1,6 @@
 ---
 name: harper-best-practices
-description: 
-  Best practices for building Harper applications, covering schema definition,
+description: Best practices for building Harper applications, covering schema definition,
   automatic APIs, authentication, custom resources, and data handling.
   Triggers on tasks involving Harper database design, API implementation,
   and deployment.
@@ -26,7 +25,7 @@ Reference these guidelines when:
 - Optimizing data storage and retrieval (Blobs, Vector Indexing)
 - Deploying applications to Harper Fabric
 
-## Steps
+## How It Works
 
 1. Review the requirements for the task (schema design, API needs, or infrastructure setup).
 2. Consult the relevant category under "Rule Categories by Priority" to understand the impact of your decisions.
@@ -35,14 +34,18 @@ Reference these guidelines when:
 5. If you're extending functionality, consult the `logic-` and `api-` rules.
 6. Validate your implementation against the `ops-` rules before deployment.
 
+## Examples
+
+See the concrete examples embedded in each rule subsection below (GraphQL schemas, REST query patterns, and deployment workflow snippets).
+
 ## Rule Categories by Priority
 
-| Priority | Category                | Impact | Prefix          |
-| -------- | ----------------------- | ------ | --------------- |
-| 1        | Schema & Data Design    | HIGH   | `schema-`       |
-| 2        | API & Communication     | HIGH   | `api-`          |
-| 3        | Logic & Extension       | MEDIUM | `logic-`        |
-| 4        | Infrastructure & Ops    | MEDIUM | `ops-`          |
+| Priority | Category             | Impact | Prefix    |
+| -------- | -------------------- | ------ | --------- |
+| 1        | Schema & Data Design | HIGH   | `schema-` |
+| 2        | API & Communication  | HIGH   | `api-`    |
+| 3        | Logic & Extension    | MEDIUM | `logic-`  |
+| 4        | Infrastructure & Ops | MEDIUM | `ops-`    |
 
 ## Quick Reference
 
@@ -58,7 +61,7 @@ Reference these guidelines when:
 
 - `automatic-apis` - Leverage automatically generated CRUD endpoints
 - `querying-rest-apis` - Filters, sorting, and pagination in REST requests
-- `real-time-apps` - WebSockets and Pub/Sub for live data updates
+- `real-time-apps` - WebSockets and Pub/Sub for Real-Time Apps
 - `checking-authentication` - Secure apps with session-based identity verification
 
 ### 3. Logic & Extension (MEDIUM)

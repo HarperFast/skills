@@ -11,7 +11,7 @@ Instructions for the agent to follow when interacting with Harper tables via cod
 
 Use this skill when you need to perform database operations (CRUD, search, subscribe) from within Harper Resources or scripts.
 
-## Steps
+## How It Works
 
 1. **Access the Table**: Use the global `tables` object followed by your table name (e.g., `tables.MyTable`).
 2. **Perform CRUD Operations**:

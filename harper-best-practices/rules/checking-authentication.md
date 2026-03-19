@@ -11,7 +11,7 @@ Instructions for the agent to follow when handling authentication and sessions.
 
 Use this skill when you need to implement sign-in/sign-out functionality, protect specific resource endpoints, or identify the currently logged-in user in a Harper application.
 
-## Steps
+## How It Works
 
 1. **Configure Harper for Sessions**: Ensure `harperdb-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
    ```yaml
@@ -20,19 +20,19 @@ Use this skill when you need to implement sign-in/sign-out functionality, protec
      enableSessions: true
    ```
 2. **Implement Sign In**: Use `this.getContext().login(username, password)` to create a session:
-   ```ts
+   ```typescript
    async post(_target, data) {
-     const context = this.getContext();
-     try {
-       await context.login(data.username, data.password);
-     } catch {
-       return new Response('Invalid credentials', { status: 403 });
-     }
-     return new Response('Logged in', { status: 200 });
+    const context = this.getContext();
+    try {
+      await context.login(data.username, data.password);
+    } catch {
+      return new Response('Invalid credentials', { status: 403 });
+    }
+    return new Response('Logged in', { status: 200 });
    }
    ```
 3. **Identify Current User**: Use `this.getCurrentUser()` to access session data:
-   ```ts
+   ```typescript
    async get() {
      const user = this.getCurrentUser?.();
      if (!user) return new Response(null, { status: 401 });
@@ -40,7 +40,7 @@ Use this skill when you need to implement sign-in/sign-out functionality, protec
    }
    ```
 4. **Implement Sign Out**: Use `this.getContext().logout()` or delete the session from context:
-   ```ts
+   ```typescript
    async post() {
      const context = this.getContext();
      await context.session?.delete?.(context.session.id);
@@ -48,6 +48,42 @@ Use this skill when you need to implement sign-in/sign-out functionality, protec
    }
    ```
 5. **Protect Routes**: In your Resource, use `allowRead()`, `allowUpdate()`, etc., to enforce authorization logic based on `this.getCurrentUser()`. For privileged actions, verify `user.role.permission.super_user`.
+
+## Examples
+
+### Sign In Implementation
+
+```typescript
+async post(_target, data) {
+  const context = this.getContext();
+  try {
+    await context.login(data.username, data.password);
+  } catch {
+    return new Response('Invalid credentials', { status: 403 });
+  }
+  return new Response('Logged in', { status: 200 });
+}
+```
+
+### Identify Current User
+
+```typescript
+async get() {
+  const user = this.getCurrentUser?.();
+  if (!user) return new Response(null, { status: 401 });
+  return { username: user.username, role: user.role };
+}
+```
+
+### Sign Out Implementation
+
+```typescript
+async post() {
+  const context = this.getContext();
+  await context.session?.delete?.(context.session.id);
+  return new Response('Logged out', { status: 200 });
+}
+```
 
 ## Status code conventions used here
 
@@ -77,9 +113,9 @@ This project includes two Resource patterns for that flow:
 - with an existing Authorization token (either Basic Auth or a JWT) and you want to issue new tokens, or
 - from an explicit `{ username, password }` payload (useful for direct “login” from a CLI/mobile client).
 
-```js
+```javascript
 export class IssueTokens extends Resource {
-static loadAsInstance = false;
+	static loadAsInstance = false;
 
 	async get(target) {
 		const { refresh_token: refreshToken, operation_token: jwt } =
@@ -118,9 +154,9 @@ static loadAsInstance = false;
 
 **Description / use case:** When the JWT expires, the client uses the refresh token to get a new JWT without re-supplying username/password.
 
-```js
+```javascript
 export class RefreshJWT extends Resource {
-static loadAsInstance = false;
+	static loadAsInstance = false;
 
 	async post(target, data) {
 		if (!data.refreshToken) {

@@ -11,7 +11,7 @@ Instructions for the agent to follow when querying Harper's REST APIs.
 
 Use this skill when you need to perform advanced data retrieval (filtering, sorting, pagination, joins) using Harper's automatic REST endpoints.
 
-## Steps
+## How It Works
 
 1. **Basic Filtering**: Use attribute names as query parameters: `GET /Table/?key=value`.
 2. **Use Comparison Operators**: Append operators like `gt`, `ge`, `lt`, `le`, `ne` using FIQL-style syntax: `GET /Table/?price=gt=100`.

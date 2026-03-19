@@ -93,8 +93,11 @@ allFiles.forEach((file) => {
 		if (!body.includes('## When to Use')) {
 			errors.push('Missing "## When to Use" section');
 		}
-		if (!body.includes('## Steps')) {
-			errors.push('Missing "## Steps" section');
+		if (!body.includes('## How It Works')) {
+			errors.push('Missing "## How It Works" section');
+		}
+		if (!body.includes('## Examples')) {
+			errors.push('Missing "## Examples" section');
 		}
 	} else if (file.includes(path.sep + 'rules' + path.sep)) {
 		const { data, content: body } = matter(content);

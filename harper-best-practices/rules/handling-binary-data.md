@@ -13,11 +13,9 @@ Use this skill when you need to store binary files (images, audio, etc.) in the 
 
 ## How It Works
 
-1. **Store Binary Data**: In your resource's `post` or `put` method, convert incoming data to Buffers and then to Blobs using `createBlob`. Include the MIME type if available:
+1. **Store Binary Data**: In your resource's `post` or `put` method, convert incoming data to Buffers and then to Blobs using `createBlob` from Harper's globals. Include the MIME type if available:
 
    ```typescript
-   import { createBlob } from 'harperdb';
-
    async post(target, record) {
      if (record.data) {
        record.data = createBlob(Buffer.from(record.data, record.encoding || 'base64'), {

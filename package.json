@@ -13,10 +13,21 @@
 		"email": "support@harperdb.io"
 	},
 	"repository": "github:HarperFast/skills",
+	"files": [
+		"dist",
+		"harper-best-practices"
+	],
 	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
 	"scripts": {
+		"build": "node scripts/build.mjs",
 		"format": "oxfmt",
-		"validate": "oxfmt --check && node scripts/validate-skills.mjs"
+		"validate": "npm run build && oxfmt --check && node scripts/validate-skills.mjs"
 	},
 	"devDependencies": {
 		"@commitlint/cli": "^20.4.1",

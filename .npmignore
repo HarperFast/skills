@@ -1,5 +1,6 @@
 *
 !harper-best-practices/**/*
+!dist/**/*
 !AGENTS.md
 !LICENSE
 !README.md

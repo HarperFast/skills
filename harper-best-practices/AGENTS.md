@@ -116,7 +116,7 @@ Use this when you need to perform similarity searches on high-dimensional data, 
 #### How It Works
 
 1. **Define the Vector Field**: In your GraphQL schema, define a field with a list of floats (e.g., `[Float]`).
-2. **Apply the `@indexed` Directive**: Use the `@indexed` directive on the vector field and specify the index type as `vector`.
+2. **Apply the `@indexed` Directive**: Use the `@indexed` directive on the vector field and specify the index type as `HNSW`.
 3. **Configure the Index (Optional)**: You can provide additional configuration for the vector index, such as the distance metric (e.g., `cosine`, `euclidean`).
 4. **Querying**: Use the `vector` operator in your REST or programmatic requests to perform similarity searches.
 
@@ -126,7 +126,7 @@ Use this when you need to perform similarity searches on high-dimensional data, 
 type Document @table @export {
 	id: ID @primaryKey
 	content: String
-	embedding: [Float] @indexed(type: "vector", options: { dims: 1536, metric: "cosine" })
+	embedding: [Float] @indexed(type: "HNSW")
 }
 ```
 

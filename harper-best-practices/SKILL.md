@@ -52,6 +52,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 ### 1. Schema & Data Design (HIGH)
 
 - `adding-tables-with-schemas` - Define tables using GraphQL schemas and directives
+- `schema-design-tooling` - Core directives and GraphQL IDE/agent configuration
 - `defining-relationships` - Link tables using the `@relationship` directive
 - `vector-indexing` - Efficient similarity search with vector indexes
 - `using-blob-datatype` - Store and retrieve large data (Blobs)
@@ -85,6 +86,7 @@ Read individual rule files for detailed explanations and code examples:
 
 ```
 rules/adding-tables-with-schemas.md
+rules/schema-design-tooling.md
 rules/automatic-apis.md
 rules/creating-harper-apps.md
 ```

@@ -8,10 +8,11 @@ Guidelines for building scalable, secure, and performant applications on Harper.
 
 1. [Schema & Data Design](#1-schema--data-design) — **HIGH**
    - 1.1 [Adding Tables with Schemas](#11-adding-tables-with-schemas)
-   - 1.2 [Defining Relationships](#12-defining-relationships)
-   - 1.3 [Vector Indexing](#13-vector-indexing)
-   - 1.4 [Using Blobs](#14-using-blobs)
-   - 1.5 [Handling Binary Data](#15-handling-binary-data)
+   - 1.2 [Schema Design & Tooling](#12-schema-design--tooling)
+   - 1.3 [Defining Relationships](#13-defining-relationships)
+   - 1.4 [Vector Indexing](#14-vector-indexing)
+   - 1.5 [Using Blobs](#15-using-blobs)
+   - 1.6 [Handling Binary Data](#16-handling-binary-data)
 2. [API & Communication](#2-api--communication) — **HIGH**
    - 2.1 [Automatic REST APIs](#21-automatic-rest-apis)
    - 2.2 [Querying REST APIs](#22-querying-rest-apis)
@@ -61,7 +62,66 @@ type ExamplePerson @table @export {
 }
 ```
 
-### 1.2 Defining Relationships
+### 1.2 Schema Design & Tooling
+
+Harper uses GraphQL schemas to define database tables, relationships, and APIs. To ensure the best development experience for both humans and AI agents, it's important to understand the core directives and configure your project tooling correctly.
+
+#### Core Harper Directives
+
+Harper extends GraphQL with custom directives that define database behavior. These are typically defined in `node_modules/harperdb/schema.graphql`. If you don't have access to that file, here is a reference of the most important ones:
+
+##### Table Definition
+- `@table`: Marks a GraphQL type as a Harper database table.
+- `@export`: Automatically generates REST and WebSocket APIs for the table.
+- `@table(expiration: Int)`: Configures a time-to-expire for records in the table (useful for caching).
+
+##### Attribute Constraints & Indexing
+- `@primaryKey`: Specifies the unique identifier for the table.
+- `@indexed`: Creates a standard index on the field for faster lookups.
+- `@indexed(type: "HNSW", distance: "cosine" | "euclidean" | "dot")`: Creates a vector index for similarity search.
+
+##### Relationships
+- `@relationship(from: String)`: Defines a relationship to another table. `from` specifies the local field holding the foreign key.
+
+##### Authentication & Authorization
+- `@auth(role: String)`: Restricts access to a table or field based on user roles.
+
+#### Configuring GraphQL Tooling
+
+To get the best IDE support (autocompletion, validation) and to help AI agents understand your schema context, you should create a `graphql.config.yml` file in your project root.
+
+This file tells GraphQL tools where to find Harper's built-in types and directives alongside your own schema files.
+
+##### Creating `graphql.config.yml`
+
+Create a file named `graphql.config.yml` in your project root with the following content:
+
+```yaml
+schema:
+  - "node_modules/harperdb/schema.graphql"
+  - "schema.graphql"
+  - "schemas/*.graphql"
+```
+
+##### Why this is important:
+1. **Shared Directives**: It includes `@table`, `@primaryKey`, etc., so they aren't marked as "unknown directives".
+2. **Context for Agents**: When an agent reads your project, seeing this config helps it locate the core Harper definitions, leading to more accurate code generation.
+3. **Consistency**: The `npm create harper@latest` command includes this by default. Manually adding it to existing projects ensures they follow the same standards.
+
+#### Example Project Structure
+
+A typical Harper project with proper schema tooling:
+
+```text
+my-harper-app/
+├── config.yaml
+├── graphql.config.yml
+├── package.json
+├── schema.graphql
+└── resources.js
+```
+
+### 1.3 Defining Relationships
 
 Using the `@relationship` directive to link tables.
 
@@ -105,7 +165,7 @@ type Category @table @export {
 }
 ```
 
-### 1.3 Vector Indexing
+### 1.4 Vector Indexing
 
 How to define and use vector indexes for efficient similarity search.
 
@@ -130,7 +190,7 @@ type Document @table @export {
 }
 ```
 
-### 1.4 Using Blobs
+### 1.5 Using Blobs
 
 How to store and retrieve large data in Harper.
 
@@ -144,7 +204,7 @@ Use this when you need to store large, unstructured data such as files, images, 
 2. **Storing Data**: Send the data as a buffer or a stream when creating or updating a record.
 3. **Retrieving Data**: Access the blob field, which will return the data as a stream or buffer.
 
-### 1.5 Handling Binary Data
+### 1.6 Handling Binary Data
 
 How to store and serve binary data like images or MP3s.
 

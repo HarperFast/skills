@@ -292,8 +292,13 @@ How to define custom REST endpoints using JavaScript or TypeScript.
 #### How It Works
 
 1. **Create Resource File**: Define your logic in a JS or TS file.
-2. **Export Handlers**: Export functions like `GET`, `POST`, etc.
-3. **Registration**: Ensure the resource is correctly registered in your application configuration.
+2. **Define Resource Class**: Export a class extending `Resource` from `harperdb`.
+3. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests.
+4. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
+   - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
+   - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.
+   - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
+5. **Registration**: Ensure the resource is correctly registered in your application configuration.
 
 ### 3.2 Extending Table Resources
 

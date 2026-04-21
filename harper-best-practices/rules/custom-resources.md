@@ -27,11 +27,15 @@ Use this skill when the automatic CRUD operations provided by `@table @export` a
    }
    ```
 
-4. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests. Note that paths are **case-sensitive** and match the class name.
-5. **Access Tables (Optional)**: Import and use the `tables` object to interact with your data:
+4. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests.
+5. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
+   - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
+   - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.
+   - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
+6. **Access Tables (Optional)**: Import and use the `tables` object to interact with your data:
    ```typescript
    import { tables } from 'harperdb';
    // ... inside a method
    const results = await tables.MyTable.list();
    ```
-6. **Configure Loading**: Ensure `config.yaml` points to your resource files (e.g., `jsResource: { files: 'resources/*.ts' }`).
+7. **Configure Loading**: Ensure `config.yaml` points to your resource files (e.g., `jsResource: { files: 'resources/*.ts' }`).

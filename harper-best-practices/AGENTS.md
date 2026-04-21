@@ -245,11 +245,12 @@ How to use filters, operators, sorting, and pagination in REST requests.
 
 #### Query Parameters
 
-- `limit`: Number of records to return.
-- `offset`: Number of records to skip.
-- `sort`: Field to sort by.
-- `order`: `asc` or `desc`.
-- `filter`: JSON object for filtering.
+- `limit(count)` or `limit(offset, count)`: Number of records to return and optional skip. Example: `?limit(10)`, `?limit(10, 20)`.
+- `sort(+field1, -field2)`: Fields to sort by. Use `+` for ascending and `-` for descending. Example: `?sort(+name)`, `?sort(-price, +name)`.
+- `select(field1, field2)`: Specific fields to return. Example: `?select(id, name)`.
+- `filter`: Advanced filtering using comparison operators and logic.
+  - Operators: `gt`, `ge`, `lt`, `le`, `ne`. Example: `?price=gt=100`.
+  - Logic: `&` (AND), `|` (OR), `()` (grouping). Example: `?(category=electronics|category=books)&price=lt=500`.
 
 ### 2.3 Real-time Applications
 

@@ -4,6 +4,16 @@ This repository provides specialized "skills" for AI agents (like Cursor, Windsu
 
 ## Installation
 
+### GH Skills
+
+Make sure you have the GitHub CLI installed, then you can `skill add` and `skill update` these skills:
+```
+brew install gh
+gh skill add harperfast/skills
+gh skill update
+```
+
+### NPX Skills 
 Add these skills to your local project using the [skills](https://skills.sh/) CLI:
 
 ```bash

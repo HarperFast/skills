@@ -37,3 +37,7 @@ Use this skill when you need to perform database operations (CRUD, search, subsc
    }
    ```
 6. **Publish Events**: Use `publish(id, message)` to trigger subscriptions without necessarily persisting data.
+
+## Cautions
+
+Be very careful when performing updates and deletions! You may be dealing with live production data. The wrong request to delete, without approval from a human, could be devastating to a business. Always use the proper approval process.

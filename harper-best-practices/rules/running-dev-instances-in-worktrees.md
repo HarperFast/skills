@@ -150,6 +150,28 @@ If you skip this step, the wrapper fails with a `LoopbackAddressValidationError`
 
 `.harper-instance` is per-running-process metadata — never check it in. The `.claude/worktrees/` line is convention-dependent; see §4 below.
 
+### AI-agent sandboxes: allow writes to `~/.harper-dev/`
+
+If you run Harper dev under a sandboxed AI agent (Claude Code, Cursor, etc.) that enforces a write-path allowlist, add the shared data-root path so the agent can scaffold and use per-worktree data roots without per-project tweaks. With the data root nested under `~/.harper-dev/<project>/`, one literal allowlist entry covers every Harper project on the host.
+
+**Claude Code** (`~/.claude/settings.json`):
+
+```json
+{
+  "filesystem": {
+    "allowWrite": ["/Users/<user>/.harper-dev"]
+  }
+}
+```
+
+The dir itself must exist before the sandbox can write subdirs into it (sandboxes typically don't allow creating the allowlisted parent itself). One-time, outside the sandbox:
+
+```sh
+mkdir -p ~/.harper-dev
+```
+
+Without this, the sub-agent's first call to `setup-harper.js` fails with `EPERM: operation not permitted, mkdir '/Users/.../.harper-dev/<project>/hdb-<sha12>'`.
+
 ---
 
 ## 4. Per-worktree workflow

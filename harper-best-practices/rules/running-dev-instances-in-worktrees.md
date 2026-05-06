@@ -74,7 +74,7 @@ cp ../../.env .                       # copy (do not symlink) .env
 ln -s ../../models models             # symlink models/ if you have one
 npm install                           # real install — do NOT symlink node_modules
 npm run dev                           # → scripts/start-harper-dev.js
-                                      #     ├── ensures ~/.<project>-dev/hdb-<sha12>/ exists
+                                      #     ├── ensures ~/.harper-dev/<project>/hdb-<sha12>/ exists
                                       #     │   (calls setup-harper.js if not)
                                       #     ├── allocates 127.0.0.N from the loopback pool
                                       #     ├── writes .harper-instance for tooling
@@ -86,14 +86,14 @@ npm run dev                           # → scripts/start-harper-dev.js
 
 1. **Scrub empty inherited env shadows.** Harper's `loadEnv` refuses to override anything already set on `process.env`, even an empty string. If your shell exported `FOO=` before you ran `npm run dev`, the value in `.env` will be silently lost. The wrapper reads `.env`, identifies any var whose live value is the empty string, and `delete`s it from `process.env` so `loadEnv` can populate it from the file.
 
-2. **Ensure the per-worktree data root exists.** The data root path is `~/.<project>-dev/hdb-<sha12>/`, where `<sha12>` is the first 12 hex chars of `SHA-256(realpathSync(cwd))`. Same cwd → same dir; different cwd (i.e. a different worktree) → different dir. If `harper-config.yaml` doesn't exist inside that dir, the wrapper synchronously runs `setup-harper.js`.
+2. **Ensure the per-worktree data root exists.** The data root path is `~/.harper-dev/<project>/hdb-<sha12>/`, where `<sha12>` is the first 12 hex chars of `SHA-256(realpathSync(cwd))`. Same cwd → same dir; different cwd (i.e. a different worktree) → different dir. If `harper-config.yaml` doesn't exist inside that dir, the wrapper synchronously runs `setup-harper.js`.
 
 3. **Allocate a loopback address.** Calls `getNextAvailableLoopbackAddress()` from `@harperfast/integration-testing`. That function grabs a file-locked slot from a shared pool at `<os.tmpdir()>/harper-integration-test-loopback-pool.json`, returns `127.0.0.N`, and tracks the holding PID. Slots auto-free when the holding process dies (the next allocation observes the dead PID via `process.kill(pid, 0)` and reclaims it). Default pool size is 32 — bump via `HARPER_INTEGRATION_TEST_LOOPBACK_POOL_COUNT`.
 
 4. **Write `.harper-instance`** to cwd so QA agents, IDE plugins, and other tooling can discover this worktree's URL without scraping logs:
 
    ```json
-   { "hostname": "127.0.0.3", "hdbDir": "/Users/you/.<project>-dev/hdb-...", "pid": 12345 }
+   { "hostname": "127.0.0.3", "hdbDir": "/Users/you/.harper-dev/<project>/hdb-...", "pid": 12345 }
    ```
 
 5. **Exec Harper.** Builds Pro's `host:port` argument syntax for every listener:
@@ -116,14 +116,14 @@ npm run dev                           # → scripts/start-harper-dev.js
 
 Spawns `harper install` non-interactively — once per worktree, idempotent. The trick is making Harper Pro's "already installed" guard _not_ trip on the system-wide install:
 
-- `HOME` is overridden to `~/.<project>-dev/install-home-<sha12>/` for the duration of the install. Pro's guard reads `~/.harperdb/harperdb.properties` to decide whether to skip; with a fresh isolated `HOME`, the file doesn't exist and install proceeds.
+- `HOME` is overridden to `~/.harper-dev/<project>/install-home-<sha12>/` for the duration of the install. Pro's guard reads `~/.harperdb/harperdb.properties` to decide whether to skip; with a fresh isolated `HOME`, the file doesn't exist and install proceeds.
 - `ROOTPATH=<HDB_DIR>` directs install's output into the per-worktree dir.
 - `HDB_ADMIN_USERNAME`/`HDB_ADMIN_PASSWORD`/`NODE_HOSTNAME`/`DEFAULTS_MODE` satisfy Pro's interactive prompts. The admin password is throwaway random — typical app-level auth (session cookies, JWTs, etc.) doesn't depend on Harper's super_user.
 - After install lands `harper-config.yaml` + the `database/`, `components/`, `log/`, `keys/`, `backup/` subdirs, the isolated HOME is deleted (the runtime doesn't need it — `start-harper-dev.js` sets `ROOTPATH` directly).
 
 ### Why outside the project tree, again
 
-Restating because this is the single biggest gotcha: Harper's component watcher will watch _anywhere under your application directory_ that isn't in `node_modules` or `.git`. If you put the data root at `<cwd>/hdb/`, every log line Harper writes is a "code change" to its own watcher → reload → infinite loop. The data root must live somewhere chokidar won't notice. `~/.<project>-dev/` is the convention here, but anywhere outside cwd works.
+Restating because this is the single biggest gotcha: Harper's component watcher will watch _anywhere under your application directory_ that isn't in `node_modules` or `.git`. If you put the data root at `<cwd>/hdb/`, every log line Harper writes is a "code change" to its own watcher → reload → infinite loop. The data root must live somewhere chokidar won't notice. `~/.harper-dev/<project>/` is the convention here, but anywhere outside cwd works.
 
 ---
 
@@ -199,7 +199,7 @@ First run in a new worktree triggers `setup-harper.js`, which takes 10–30 seco
 
 ```
 Starting Harper dev server on http://127.0.0.3:9926
-  rootPath: /Users/you/.<project>-dev/hdb-a1b2c3d4e5f6
+  rootPath: /Users/you/.harper-dev/<project>/hdb-a1b2c3d4e5f6
   loopback: 127.0.0.3 (default ports — http 9926, ops 9925, mqtt 1883/8883)
 ```
 
@@ -238,7 +238,7 @@ If you `cd` into a worktree and then spawn a subagent (Claude Code, an LSP, etc.
 # From the main checkout:
 git worktree remove .claude/worktrees/my-feature
 git branch -d my-feature                                      # if merged
-rm -rf ~/.<project>-dev/hdb-<the-sha12-for-that-worktree>/    # optional — frees ~100 MB+
+rm -rf ~/.harper-dev/<project>/hdb-<the-sha12-for-that-worktree>/    # optional — frees ~100 MB+
 ```
 
 Per-worktree data roots are _not_ automatically deleted when you remove the worktree. They're cheap to keep around (handy if you reuse the branch name later) but easy to wipe.
@@ -247,14 +247,14 @@ Per-worktree data roots are _not_ automatically deleted when you remove the work
 
 ```bash
 # Fresh database, same code:
-rm -rf ~/.<project>-dev/hdb-<sha12>/
+rm -rf ~/.harper-dev/<project>/hdb-<sha12>/
 npm run dev   # setup-harper.js will rebuild it
 ```
 
 ### Wiping every worktree's data
 
 ```bash
-rm -rf ~/.<project>-dev/
+rm -rf ~/.harper-dev/<project>/
 ```
 
 Only touches Harper data roots — your worktrees, source code, and `.env` files stay put.
@@ -278,7 +278,7 @@ When you copy `scripts/start-harper-dev.js` and `scripts/setup-harper.js` into a
 
 ```js
 // in both scripts:
-const HDB_DIR = join(homedir(), '.<your-project>-dev', `hdb-${ID}`);
+const HDB_DIR = join(homedir(), '.harper-dev/<your-project>', `hdb-${ID}`);
 ```
 
 Pick a kebab-case project name. Everything else — the SHA-keyed subdir, the loopback allocation, the install flags, the runtime CLI args — is identical across Harper apps.
@@ -315,7 +315,7 @@ That's it. The scripts have no other project-specific assumptions.
 
 - `.harper-instance` in cwd while Harper is running, gone after graceful exit.
 - One `harper` child process per active worktree, each bound to its own `127.0.0.N`. Verify with `lsof -iTCP -sTCP:LISTEN | grep ^harper` — each row holds 9926/9925/1883/8883 on a distinct address.
-- `~/.<project>-dev/hdb-<sha12>/harper-application-lock.json` exists while that Harper is running. Per-worktree, not machine-wide.
+- `~/.harper-dev/<project>/hdb-<sha12>/harper-application-lock.json` exists while that Harper is running. Per-worktree, not machine-wide.
 - `npm run dev` resolves to `node scripts/start-harper-dev.js`, NOT `harper dev .` directly.
 - `APP_BASE_URL` env var on the harper child differs from `.env`'s value when bound to a non-default loopback (the wrapper exports the actual address-bearing URL).
 - `<os.tmpdir()>/harper-integration-test-loopback-pool.json` and `.lock` files — shared with Harper's own integration tests, intentional.
@@ -327,4 +327,4 @@ That's it. The scripts have no other project-specific assumptions.
 - `harper dev .` invoked directly (bypassing the wrapper) → won't allocate from the pool, won't set `ROOTPATH`, will use the global data root, will bind `0.0.0.0`, will likely collide with wrapper-managed Harpers. Always go through `npm run dev`.
 - Repeated reload loops with `Reloaded Harper components, changed files: [...hdb/log/hdb.log...]` → data root somehow ended up under cwd (someone overrode `HDB_DIR` manually, or symlinked `hdb/` into the project). Move it back outside cwd.
 - Mystery `ERR_MODULE_NOT_FOUND` from `~/hdb/components/<project>/` paths → there's a stale copy of the project in the _global_ Harper components dir from a past `harperdb deploy .` against localhost. `rm -rf ~/hdb/components/<project>` and use only `npm run dev`.
-- `setup-harper` exits with "harper install failed" → the global `harper` binary isn't on PATH, the disk is out of space, or Pro changed its install prompt schema. Partial state in `~/.<project>-dev/` is safe to `rm -rf` and retry.
+- `setup-harper` exits with "harper install failed" → the global `harper` binary isn't on PATH, the disk is out of space, or Pro changed its install prompt schema. Partial state in `~/.harper-dev/<project>/` is safe to `rm -rf` and retry.

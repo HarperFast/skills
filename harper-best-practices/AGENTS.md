@@ -13,6 +13,7 @@ Guidelines for building scalable, secure, and performant applications on Harper.
    - 1.4 [Vector Indexing](#14-vector-indexing)
    - 1.5 [Using Blobs](#15-using-blobs)
    - 1.6 [Handling Binary Data](#16-handling-binary-data)
+   - 1.7 [Bulk Writes](#17-bulk-writes)
 2. [API & Communication](#2-api--communication) — **HIGH**
    - 2.1 [Automatic REST APIs](#21-automatic-rest-apis)
    - 2.2 [Querying REST APIs](#22-querying-rest-apis)
@@ -71,19 +72,23 @@ Harper uses GraphQL schemas to define database tables, relationships, and APIs. 
 Harper extends GraphQL with custom directives that define database behavior. These are typically defined in `node_modules/harperdb/schema.graphql`. If you don't have access to that file, here is a reference of the most important ones:
 
 ##### Table Definition
+
 - `@table`: Marks a GraphQL type as a Harper database table.
 - `@export`: Automatically generates REST and WebSocket APIs for the table.
 - `@table(expiration: Int)`: Configures a time-to-expire for records in the table (useful for caching).
 
 ##### Attribute Constraints & Indexing
+
 - `@primaryKey`: Specifies the unique identifier for the table.
 - `@indexed`: Creates a standard index on the field for faster lookups.
 - `@indexed(type: "HNSW", distance: "cosine" | "euclidean" | "dot")`: Creates a vector index for similarity search.
 
 ##### Relationships
+
 - `@relationship(from: String)`: Defines a relationship to another table. `from` specifies the local field holding the foreign key.
 
 ##### Authentication & Authorization
+
 - `@auth(role: String)`: Restricts access to a table or field based on user roles.
 
 #### Configuring GraphQL Tooling
@@ -98,12 +103,13 @@ Create a file named `graphql.config.yml` in your project root with the following
 
 ```yaml
 schema:
-  - "node_modules/harperdb/schema.graphql"
-  - "schema.graphql"
-  - "schemas/*.graphql"
+  - 'node_modules/harperdb/schema.graphql'
+  - 'schema.graphql'
+  - 'schemas/*.graphql'
 ```
 
 ##### Why this is important:
+
 1. **Shared Directives**: It includes `@table`, `@primaryKey`, etc., so they aren't marked as "unknown directives".
 2. **Context for Agents**: When an agent reads your project, seeing this config helps it locate the core Harper definitions, leading to more accurate code generation.
 3. **Consistency**: The `npm create harper@latest` command includes this by default. Manually adding it to existing projects ensures they follow the same standards.
@@ -217,6 +223,96 @@ Use this when your application needs to handle binary files, particularly for st
 1. **Use the `Blob` type**: As with general large data, the `Blob` type is best for binary files. Ensure you store and retrieve the appropriate MIME type (e.g., `image/jpeg`, `audio/mpeg`) for the data.
 2. **Streaming**: For large files, use streaming to minimize memory usage during upload and download.
 3. **MIME Types**: Store the MIME type alongside the binary data to ensure it is served correctly by your application logic.
+
+### 1.7 Bulk Writes
+
+Guidelines for efficiently importing or updating large volumes of data in Harper.
+
+#### When to Use
+
+Use these methods when you need to:
+
+- Seed a new database with initial data.
+- Perform large-scale migrations from other systems.
+- Periodically synchronize data from external sources.
+- Handle high-volume write operations from within a Harper application.
+
+#### 1. Import CSV (Studio & Operations API)
+
+The fastest way to import CSV data is through the Harper Studio UI or the Operations API. This creates an import job that processes records efficiently.
+
+- **Studio UI**: Use the "Import CSV" feature in the Studio for one-off manual imports.
+- **Operations API**: Use the [CSV Import](https://docs.harperdb.io/reference/v5/database/data-loader) (Operations API) for regular, programmatic ingestion.
+- **Best Practice**: Use this when you have existing CSV files that need to be ingested into tables, especially for large datasets.
+
+#### 2. Data Loader
+
+The Data Loader is a built-in component that loads data from JSON or YAML files into Harper tables as part of component deployment. It is designed for seeding tables with initial records — configuration data, reference data, default users, or other records that should exist when a component is first deployed or updated.
+
+##### Configuration
+
+In your component's `config.yaml`, use the `dataLoader` key to specify the data files to load:
+
+```yaml
+dataLoader:
+  files: 'data/*.json'
+```
+
+`dataLoader` is a plugin and supports the standard `files` configuration option, including glob patterns.
+
+##### Data File Format
+
+Each data file loads records into a single table. The file specifies the target database, table, and an array of records.
+
+#### 3. Local Scripting (Remote Seed)
+
+For more complex logic during seeding (e.g., handling binary data, conditional updates), you can use a local script to push data via the REST API.
+
+- **Authentication**: Use Basic Auth with your Harper credentials.
+- **Batching**: While individual `PUT` or `PATCH` requests work, consider batching if the API supports it, or using concurrent requests with limiters to avoid overwhelming the network.
+- **Binary Data**: For fields like images or audio, encode them as Base64 in your JSON payload.
+
+##### Example: Local Restore Script
+
+```javascript
+async function putRecord(baseUrl, table, id, data) {
+	const res = await fetch(`${baseUrl}/${table}/${id}`, {
+		method: 'PUT',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Basic ${Buffer.from('user:pass').toString('base64')}`,
+		},
+		body: JSON.stringify(data),
+	});
+	return res.json();
+}
+```
+
+#### 4. Programmatic Table Requests
+
+Inside a Harper application or Resource, you can use the `tables` object to perform bulk writes.
+
+- **Iterative Writes**: Use `await tables.MyTable.post(record)` or `put(id, record)` in a loop.
+- **Streaming**: If reading from another table to perform a bulk write, use `search()` with `for await` to handle large datasets without memory exhaustion.
+- **Startup Seeding**: You can invoke seeding logic in your application's `start` function or when a specific "setup" resource is triggered.
+
+##### Example: Programmatic Seed
+
+```javascript
+export class Seeder extends Resource {
+	async post(data) {
+		for (const item of data) {
+			await tables.MyTable.put(item.id, item);
+		}
+	}
+}
+```
+
+#### Cautions
+
+- **Atomicity**: Bulk operations via the REST API or multiple `tables` calls are not automatically wrapped in a single transaction unless explicitly managed (if the underlying storage engine supports it).
+- **Performance**: Very large bulk writes can impact the performance of concurrent reads. Monitor your cluster health during massive imports.
+- **ID Management**: Ensure your source data has consistent primary keys (hash attributes) to avoid accidental duplicates or overwrites.
 
 ---
 

@@ -57,6 +57,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `vector-indexing` - Efficient similarity search with vector indexes
 - `using-blob-datatype` - Store and retrieve large data (Blobs)
 - `handling-binary-data` - Manage binary data like images or MP3s
+- `bulk-writes` - Import large datasets via Data Loader, scripting, or code
 
 ### 2. API & Communication (HIGH)
 
@@ -88,6 +89,7 @@ Read individual rule files for detailed explanations and code examples:
 rules/adding-tables-with-schemas.md
 rules/schema-design-tooling.md
 rules/automatic-apis.md
+rules/bulk-writes.md
 rules/creating-harper-apps.md
 ```
 

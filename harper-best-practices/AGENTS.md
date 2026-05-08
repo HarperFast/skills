@@ -29,6 +29,7 @@ Guidelines for building scalable, secure, and performant applications on Harper.
    - 4.2 [Creating a Fabric Account and Cluster](#42-creating-a-fabric-account-and-cluster)
    - 4.3 [Deploying to Harper Fabric](#43-deploying-to-harper-fabric)
    - 4.4 [Serving Web Content](#44-serving-web-content)
+   - 4.5 [Logging Best Practices](#45-logging-best-practices)
 
 ---
 
@@ -71,19 +72,23 @@ Harper uses GraphQL schemas to define database tables, relationships, and APIs. 
 Harper extends GraphQL with custom directives that define database behavior. These are typically defined in `node_modules/harperdb/schema.graphql`. If you don't have access to that file, here is a reference of the most important ones:
 
 ##### Table Definition
+
 - `@table`: Marks a GraphQL type as a Harper database table.
 - `@export`: Automatically generates REST and WebSocket APIs for the table.
 - `@table(expiration: Int)`: Configures a time-to-expire for records in the table (useful for caching).
 
 ##### Attribute Constraints & Indexing
+
 - `@primaryKey`: Specifies the unique identifier for the table.
 - `@indexed`: Creates a standard index on the field for faster lookups.
 - `@indexed(type: "HNSW", distance: "cosine" | "euclidean" | "dot")`: Creates a vector index for similarity search.
 
 ##### Relationships
+
 - `@relationship(from: String)`: Defines a relationship to another table. `from` specifies the local field holding the foreign key.
 
 ##### Authentication & Authorization
+
 - `@auth(role: String)`: Restricts access to a table or field based on user roles.
 
 #### Configuring GraphQL Tooling
@@ -98,12 +103,13 @@ Create a file named `graphql.config.yml` in your project root with the following
 
 ```yaml
 schema:
-  - "node_modules/harperdb/schema.graphql"
-  - "schema.graphql"
-  - "schemas/*.graphql"
+  - 'node_modules/harperdb/schema.graphql'
+  - 'schema.graphql'
+  - 'schemas/*.graphql'
 ```
 
 ##### Why this is important:
+
 1. **Shared Directives**: It includes `@table`, `@primaryKey`, etc., so they aren't marked as "unknown directives".
 2. **Context for Agents**: When an agent reads your project, seeing this config helps it locate the core Harper definitions, leading to more accurate code generation.
 3. **Consistency**: The `npm create harper@latest` command includes this by default. Manually adding it to existing projects ensures they follow the same standards.
@@ -495,3 +501,91 @@ Two ways to serve web content from a Harper application.
 
 1. **Static Serving**: Serve HTML, CSS, and JS files directly. If using the Vite plugin for development, ensure Harper is running (e.g., `harperdb run .`) to allow for Hot Module Replacement (HMR).
 2. **Dynamic Rendering**: Use custom resources to render content on the fly.
+
+### 4.5 Logging Best Practices
+
+Harper provides a robust logging system that captures standard output and offers a granular, tagged logging interface for both local and deployed environments.
+
+#### Standard Console Logging
+
+The simplest way to log in Harper is using standard JavaScript console methods. `console.log()`, `console.warn()`, `console.error()`, and `console.trace()` are automatically captured by Harper and can be viewed in the logs.
+
+- `console.log(...)`: Captured as `stdout` level in Harper logs.
+- `console.warn(...)`: Captured as `stderr` level in Harper logs.
+- `console.error(...)`: Captured as `stderr` level in Harper logs.
+- `console.trace(...)`: Captured as `stdout` level in Harper logs (includes stack trace).
+
+#### Harper Logger
+
+For more granularity and better organization, use Harper's built-in `logger`. You can use the global `logger` object or import it from the `harper` package.
+
+##### Log Levels
+
+The Harper `logger` supports the following levels (ordered by increasing severity):
+
+- `trace`
+- `debug`
+- `info`
+- `warn`
+- `error`
+- `fatal`
+- `notify`
+
+##### Usage
+
+```typescript
+import { logger, loggerWithTag } from 'harper';
+
+// Basic logging
+logger.info('Application started');
+logger.error('An error occurred', error);
+
+// Tagged logging for better filtering (Namespacing)
+const authLogger = loggerWithTag('auth');
+authLogger.debug('User login attempt', { userId: '123' });
+```
+
+Using `loggerWithTag` is highly recommended for grouping related logs, making them much easier to filter and analyze in the Harper Studio or via the API.
+
+#### Programmatic Log Retrieval
+
+You can programmatically read logs from a deployed Harper instance using the `read_log` operation. This is useful for building custom monitoring tools or debugging dashboards.
+
+##### `read_log` Operation
+
+The `read_log` operation is a POST request to the Harper instance.
+
+**Example Request:**
+
+```json
+{
+	"operation": "read_log",
+	"limit": 100,
+	"start": 0,
+	"level": "error",
+	"order": "desc",
+	"from": "2024-01-01T00:00:00.000Z",
+	"until": "2024-01-02T00:00:00.000Z"
+}
+```
+
+##### Parameters
+
+- `limit`: Number of log entries to return.
+- `start`: Offset for pagination.
+- `level`: Filter by log level (`info`, `error`, `warn`, `debug`, `trace`, `notify`, `fatal`, `stdout`, `stderr`).
+- `from`: ISO 8601 timestamp to start reading from.
+- `until`: ISO 8601 timestamp to stop reading at.
+- `order`: Sort order, either `asc` or `desc`.
+- `replicated`: (Boolean) Include logs from replicated nodes in a cluster.
+
+##### Log Entry Structure
+
+Each log entry returned by `read_log` typically includes:
+
+- `level`: The severity level of the log.
+- `timestamp`: When the log was recorded.
+- `thread`: The execution thread.
+- `tags`: An array of tags (e.g., from `loggerWithTag`).
+- `node`: The node name in a Harper cluster.
+- `message`: The logged content.

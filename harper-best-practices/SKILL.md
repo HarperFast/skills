@@ -79,6 +79,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `creating-a-fabric-account-and-cluster` - Setting up your Harper Fabric cloud infrastructure
 - `creating-harper-apps` - Quickstart with `npm create harper@latest`
 - `serving-web-content` - Ways to serve web content from Harper
+- `logging` - Use standard console and Harper's granular logger
 
 ## How to Use
 
@@ -89,6 +90,7 @@ rules/adding-tables-with-schemas.md
 rules/schema-design-tooling.md
 rules/automatic-apis.md
 rules/creating-harper-apps.md
+rules/logging.md
 ```
 
 ## Full Compiled Document

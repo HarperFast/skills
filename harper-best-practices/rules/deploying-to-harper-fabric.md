@@ -35,11 +35,11 @@ Add the following scripts and dependencies to your `package.json`:
 {
 	"scripts": {
 		"deploy": "dotenv -- npm run deploy:component",
-		"deploy:component": "harperdb deploy_component . restart=rolling replicated=true"
+		"deploy:component": "harper deploy_component . restart=rolling replicated=true"
 	},
 	"devDependencies": {
 		"dotenv-cli": "^11.0.0",
-		"harperdb": "^4.7.20"
+		"harper": "^5.0.0"
 	}
 }
 ```
@@ -51,7 +51,7 @@ The `deploy` script is separated from `deploy:component` to ensure environment v
 - `deploy`: Uses `dotenv-cli` to load environment variables (like `CLI_TARGET`, `CLI_TARGET_USERNAME`, and `CLI_TARGET_PASSWORD`) before executing the next command.
 - `deploy:component`: The actual command that performs the deployment.
 
-By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harperdb deploy_component` is called, allowing it to authenticate with your cluster.
+By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harper deploy_component` is called, allowing it to authenticate with your cluster.
 
 ### 2. Configure GitHub Actions
 

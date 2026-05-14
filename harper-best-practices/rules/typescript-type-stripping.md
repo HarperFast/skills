@@ -17,7 +17,7 @@ Use this skill when you want to write Harper Resources in TypeScript and have th
 2. **Name Files with `.ts`**: Create your resource files in the `resources/` directory with a `.ts` extension.
 3. **Use TypeScript Syntax**: Write your resource classes using standard TypeScript (interfaces, types, etc.).
    ```typescript
-   import { Resource } from 'harperdb';
+   import { Resource } from 'harper';
    export class MyResource extends Resource {
    	async get(): Promise<{ message: string }> {
    		return { message: 'Running TS directly!' };

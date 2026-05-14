@@ -24,7 +24,7 @@ Use this skill when you need to add custom validation, side effects (like webhoo
 3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName`:
 
    ```typescript
-   import { type RequestTargetOrId, tables } from 'harperdb';
+   import { type RequestTargetOrId, tables } from 'harper';
 
    export class MyTable extends tables.MyTable {
    	async post(target: RequestTargetOrId, record: any) {

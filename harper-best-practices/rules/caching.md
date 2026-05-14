@@ -32,7 +32,7 @@ type MyCache @table(expiration: 3600) @export {
 ### Resource Implementation
 
 ```js
-import { Resource, tables } from 'harperdb';
+import { Resource, tables } from 'harper';
 
 export class ThirdPartyAPI extends Resource {
 	async get() {

@@ -15,10 +15,10 @@ Use this skill when the automatic CRUD operations provided by `@table @export` a
 
 1. **Check if a Custom Resource is Necessary**: Verify if [Automatic APIs](./automatic-apis.md) or [Extending Tables](./extending-tables.md) can satisfy the requirement first.
 2. **Create the Resource File**: Create a `.ts` or `.js` file in the directory specified by `jsResource` in `config.yaml` (typically `resources/`).
-3. **Define the Resource Class**: Export a class extending `Resource` from `harperdb`:
+3. **Define the Resource Class**: Export a class extending `Resource` from `harper`:
 
    ```typescript
-   import { type RequestTargetOrId, Resource } from 'harperdb';
+   import { type RequestTargetOrId, Resource } from 'harper';
 
    export class MyResource extends Resource {
    	async get(target?: RequestTargetOrId) {
@@ -34,7 +34,7 @@ Use this skill when the automatic CRUD operations provided by `@table @export` a
    - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
 6. **Access Tables (Optional)**: Import and use the `tables` object to interact with your data:
    ```typescript
-   import { tables } from 'harperdb';
+   import { tables } from 'harper';
    // ... inside a method
    const results = await tables.MyTable.list();
    ```

@@ -22,7 +22,7 @@ Use this skill when you need to store unstructured or large binary data (media, 
    ```
 2. **Create and Store Blobs**: Use `createBlob()` from Harper's globals to wrap Buffers or Streams:
    ```javascript
-   import { tables } from 'harperdb';
+   import { tables } from 'harper';
    const blob = createBlob(largeBuffer);
    await tables.MyTable.put('my-id', { data: blob });
    ```

@@ -24,7 +24,7 @@ Use this skill when you need to stream live updates to clients, implement chat f
 ### Bi-directional WebSocket Resource
 
 ```typescript
-import { Resource, tables } from 'harperdb';
+import { Resource, tables } from 'harper';
 
 export class MySocket extends Resource {
 	async *connect(target, incomingMessages) {

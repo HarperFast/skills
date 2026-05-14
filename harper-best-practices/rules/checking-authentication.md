@@ -13,7 +13,7 @@ Use this skill when you need to implement sign-in/sign-out functionality, protec
 
 ## How It Works
 
-1. **Configure Harper for Sessions**: Ensure `harperdb-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
+1. **Configure Harper for Sessions**: Ensure `harper-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
    ```yaml
    authentication:
      authorizeLocal: false

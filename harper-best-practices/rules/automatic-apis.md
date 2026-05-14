@@ -13,11 +13,16 @@ Use this skill when you want to interact with Harper tables via REST or WebSocke
 
 ## How It Works
 
-1. **Enable Automatic APIs**: Ensure your GraphQL schema includes the `@export` directive for the table.
-2. **Access REST Endpoints**: Use the standard endpoints for your table (Note: Paths are case-sensitive).
-3. **Use Automatic WebSockets**: Connect to `wss://your-harper-instance/{TableName}` to receive events whenever updates are made to that table. This is the easiest way to add real-time capabilities. (Use `ws://` for local development without SSL). For more complex needs, see [Real-time Apps](real-time-apps.md).
-4. **Apply Filtering and Querying**: Use query parameters with `GET /{TableName}/` and `DELETE /{TableName}/`. See the [Querying REST APIs](querying-rest-apis.md) skill for advanced details.
-5. **Customize if Needed**: If the automatic APIs don't meet your requirements, [customize the resources](./custom-resources.md).
+1. **Enable REST in `config.yaml`**: REST endpoints are **not active by default**. You must explicitly enable them:
+   ```yaml
+   rest: true
+   ```
+   Without this, `@export`ed tables will not respond to HTTP requests.
+2. **Enable Automatic APIs**: Ensure your GraphQL schema includes the `@export` directive for the table.
+3. **Access REST Endpoints**: Use the standard endpoints for your table (Note: Paths are case-sensitive).
+4. **Use Automatic WebSockets**: Connect to `wss://your-harper-instance/{TableName}` to receive events whenever updates are made to that table. This is the easiest way to add real-time capabilities. (Use `ws://` for local development without SSL). For more complex needs, see [Real-time Apps](real-time-apps.md).
+5. **Apply Filtering and Querying**: Use query parameters with `GET /{TableName}/` and `DELETE /{TableName}/`. See the [Querying REST APIs](querying-rest-apis.md) skill for advanced details.
+6. **Customize if Needed**: If the automatic APIs don't meet your requirements, [customize the resources](./custom-resources.md).
 
 ## Examples
 

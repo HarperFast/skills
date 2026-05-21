@@ -30,6 +30,7 @@ Use this skill when you need to perform database operations (CRUD, search, subsc
      // process record
    }
    ```
+   See the [Query Conditions](#query-conditions) section below for the full query object reference.
 5. **Real-time Subscriptions**: Use `subscribe(query)` to listen for changes:
    ```typescript
    for await (const event of tables.MyTable.subscribe(query)) {
@@ -37,6 +38,90 @@ Use this skill when you need to perform database operations (CRUD, search, subsc
    }
    ```
 6. **Publish Events**: Use `publish(id, message)` to trigger subscriptions without necessarily persisting data.
+
+## Query Conditions
+
+When passing a query to `search()`, `get()`, or `subscribe()`, use a query object with a `conditions` array.
+
+### Condition Object Shape
+
+| Property | Description |
+|---|---|
+| `attribute` | Field name, or array of field names to traverse a relationship (e.g., `['brand', 'name']`) |
+| `value` | The value to compare against |
+| `comparator` | One of the comparator strings below (default: `equals`) |
+| `operator` | `and` (default) or `or` — applies to a nested `conditions` block |
+| `conditions` | Nested array of condition objects for complex AND/OR logic |
+
+### Comparator Values
+
+Use these exact strings — incorrect comparator names will silently fail or error:
+
+| Comparator | Meaning |
+|---|---|
+| `equals` | Exact match (default) |
+| `not_equal` | Not equal |
+| `greater_than` | `>` |
+| `greater_than_equal` | `>=` |
+| `less_than` | `<` |
+| `less_than_equal` | `<=` |
+| `starts_with` | String starts with value |
+| `contains` | String contains value |
+| `ends_with` | String ends with value |
+| `between` | Value is between two bounds (pass `value` as `[min, max]`) |
+
+### Query Object Parameters
+
+| Property | Description |
+|---|---|
+| `conditions` | Array of condition objects |
+| `limit` | Maximum number of records to return |
+| `offset` | Number of records to skip (for pagination) |
+| `select` | Array of attribute names to return; supports `$id` and `$updatedtime` |
+| `sort` | Object with `attribute`, `descending` (bool), and optional `next` for secondary sort |
+
+### Examples
+
+**Simple filter:**
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+  limit: 20,
+})) { ... }
+```
+
+**AND + nested OR:**
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [
+    { attribute: 'price', comparator: 'less_than', value: 100 },
+    {
+      operator: 'or',
+      conditions: [
+        { attribute: 'rating', comparator: 'greater_than', value: 4 },
+        { attribute: 'featured', value: true },
+      ],
+    },
+  ],
+})) { ... }
+```
+
+**Relationship traversal:**
+```javascript
+for await (const record of tables.Book.search({
+  conditions: [{ attribute: ['brand', 'name'], comparator: 'equals', value: 'Harper' }],
+})) { ... }
+```
+
+**Sort and paginate:**
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [{ attribute: 'inStock', value: true }],
+  sort: { attribute: 'price', descending: false },
+  limit: 10,
+  offset: 20,
+})) { ... }
+```
 
 ## Cautions
 

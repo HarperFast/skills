@@ -59,7 +59,6 @@ Use this skill when you need to serve a frontend (HTML, CSS, JS, or a React app)
 4. **Deploy for Production**: For Vite apps, use a build script to generate static files into a `web/` folder and deploy them using the static handler pattern. For example, these scripts in a package.json can perform the necessary steps:
    ```json
    "build": "vite build",
-   "deploy": "rm -Rf deploy && npm run build && mkdir deploy && mv web deploy/ && cp -R deploy-template/* deploy/ && cp -R schemas resources deploy/ && dotenv -- npm run deploy:component && rm -Rf deploy",
-   "deploy:component": "(cd deploy && harper deploy_component . project=web restart=rolling replicated=true)"
+   "deploy": "rm -Rf deploy && npm run build && mkdir deploy && mv web deploy/ && cp -R deploy-template/* deploy/ && cp -R schemas resources deploy/ && (cd deploy && harper deploy_component . project=web restart=rolling replicated=true) && rm -Rf deploy",
    ```
    Then in production, the "Static Plugin" option will performantly and securely serve your assets. `npm create harper@latest` scaffolds all of this for you.

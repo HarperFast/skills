@@ -41,7 +41,19 @@ rules:
     category: schema
     priority: 1
     order: 4
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/schema.md
+        section: 'Vector Indexing'
+        role: primary
+    must_cover:
+      - '@indexed(type: "HNSW")'
+      - 'sort'
+      - 'target'
+      - 'cosine'
+      - 'efConstruction'
+    cross_links:
+      - adding-tables-with-schemas
 
   - rule: using-blob-datatype
     description: How to use the Blob data type for efficient binary storage in Harper.

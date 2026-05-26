@@ -1,0 +1,139 @@
+name: Generate Rules from Docs
+
+# Regenerates docs-driven skill rules and opens a sync PR. Triggered when the
+# documentation repo deploys (repository_dispatch), on a weekly safety-net
+# cron, or manually. See docs/plans/docs-driven-skills.md (Phase 2).
+#
+# Offline-first: the docs repo is checked out and built in-job; the generator
+# reads the local build output and never fetches docs over the network.
+
+on:
+  repository_dispatch:
+    types: [docs-updated]
+  schedule:
+    # Mondays 09:17 UTC — safety net in case a dispatch is missed.
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      docs_ref:
+        description: 'Docs ref to build (branch, tag, or commit SHA)'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: generate-rules
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate and open sync PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SKILLS_SYNC_APP_ID }}
+          private-key: ${{ secrets.SKILLS_SYNC_APP_PRIVATE_KEY }}
+
+      - name: Checkout skills
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: skills
+          fetch-depth: 0
+          # Use the App token so the branch push (and thus the auto-PR) is
+          # attributed to the App and triggers the validate workflow.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Resolve docs ref
+        id: docsref
+        run: |
+          REF="${{ github.event.client_payload.sha || github.event.inputs.docs_ref || 'main' }}"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Docs ref: $REF"
+
+      - name: Checkout documentation
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: HarperFast/documentation
+          ref: ${{ steps.docsref.outputs.ref }}
+          path: documentation
+          # documentation is a public repo, so the default job token reads it.
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version-file: skills/.nvmrc
+
+      - name: Build documentation (produces flat-markdown under build/)
+        working-directory: documentation
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install skills dependencies
+        working-directory: skills
+        run: npm ci
+
+      - name: Generate rules
+        working-directory: skills
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run generate -- --docs-path ../documentation
+
+      - name: Validate
+        working-directory: skills
+        run: |
+          npm run format:check
+          npm run build
+          node scripts/validate-skills.mjs
+          node scripts/generation/validate-generated.mjs --docs-path ../documentation
+
+      - name: Open or update sync PR
+        working-directory: skills
+        env:
+          # The App token (not the default job token) ensures the auto-PR
+          # triggers the validate workflow — PRs opened by the job token do
+          # not trigger other workflows.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # The generator only writes rule bodies + AGENTS.md under this path.
+          if git diff --quiet -- harper-best-practices; then
+            echo "No changes — skills are already in sync with docs."
+            exit 0
+          fi
+
+          DOCS_SHA=$(git -C ../documentation rev-parse HEAD)
+          SHORT=${DOCS_SHA:0:7}
+          BRANCH="auto/docs-sync"
+
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+          # Single rolling branch: at most one open auto-sync PR at a time. If
+          # docs change again before it merges, the same PR is force-updated.
+          git checkout -B "$BRANCH"
+          git add harper-best-practices
+          git commit -m "docs: regenerate rules from documentation@${SHORT}"
+          # Force is intentional: each run replaces the rolling branch's prior
+          # commit in place so the open sync PR always reflects the latest docs.
+          git push --force origin "$BRANCH"
+
+          STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
+          if [ "$STATE" = "OPEN" ]; then
+            echo "Existing sync PR updated."
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "docs: regenerate rules from documentation@${SHORT}" \
+              --body "Automated regeneration of docs-driven skill rules from \`HarperFast/documentation@${SHORT}\`.
+
+          Produced by \`.github/workflows/generate.yaml\`. Review the diff as you would any rule change — the generator reads the docs build output and rewrites \`mode: generate\` / imports \`mode: direct\` rule bodies, then reassembles AGENTS.md. See docs/plans/docs-driven-skills.md.
+
+          🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+          fi

@@ -2,40 +2,7 @@
 
 Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.
 
----
-
-## Table of Contents
-
-1. [Schema & Data Design](#1-schema--data-design) — **HIGH**
-   - 1.1 [Adding Tables with Schemas](#11-adding-tables-with-schemas)
-   - 1.2 [Schema Design & Tooling](#12-schema-design--tooling)
-   - 1.3 [Defining Relationships](#13-defining-relationships)
-   - 1.4 [Vector Indexing](#14-vector-indexing)
-   - 1.5 [Using Blobs](#15-using-blobs)
-   - 1.6 [Handling Binary Data](#16-handling-binary-data)
-2. [API & Communication](#2-api--communication) — **HIGH**
-   - 2.1 [Automatic REST APIs](#21-automatic-rest-apis)
-   - 2.2 [Querying REST APIs](#22-querying-rest-apis)
-   - 2.3 [Real-time Applications](#23-real-time-applications)
-   - 2.4 [Checking Authentication](#24-checking-authentication)
-3. [Logic & Extension](#3-logic--extension) — **MEDIUM**
-   - 3.1 [Custom Resources](#31-custom-resources)
-   - 3.2 [Extending Table Resources](#32-extending-table-resources)
-   - 3.3 [Programmatic Table Requests](#33-programmatic-table-requests)
-   - 3.4 [TypeScript Type Stripping](#34-typescript-type-stripping)
-   - 3.5 [Caching](#35-caching)
-4. [Infrastructure & Ops](#4-infrastructure--ops) — **MEDIUM**
-   - 4.1 [Creating Harper Applications](#41-creating-harper-applications)
-   - 4.2 [Creating a Fabric Account and Cluster](#42-creating-a-fabric-account-and-cluster)
-   - 4.3 [Deploying to Harper Fabric](#43-deploying-to-harper-fabric)
-   - 4.4 [Serving Web Content](#44-serving-web-content)
-   - 4.5 [Logging Best Practices](#45-logging-best-practices)
-
----
-
 ## 1. Schema & Data Design
-
-**Impact: HIGH**
 
 ### 1.1 Adding Tables with Schemas
 
@@ -49,11 +16,21 @@ Use this skill when you need to define new data structures or modify existing on
 
 1. **Create Dedicated Schema Files**: Prefer having a dedicated schema `.graphql` file for each table. Check the `config.yaml` file under `graphqlSchema.files` to see how it's configured. It typically accepts wildcards (e.g., `schemas/*.graphql`), but may be configured to point at a single file.
 2. **Use Directives**: All available directives for defining your schema are defined in `node_modules/harper/schema.graphql`. Common directives include `@table`, `@export`, `@primaryKey`, `@indexed`, and `@relationship`.
-3. **Define Relationships**: Link tables together using the `@relationship` directive.
-4. **Enable Automatic APIs**: If you add `@table @export` to a schema type, Harper automatically sets up REST and WebSocket APIs for basic CRUD operations against that table. **Important**: REST endpoints also require `rest: true` in `config.yaml` — without it, `@export`ed tables will not respond to HTTP requests.
-5. **Consider Table Extensions**: If you are going to extend the table in your resources, then do not `@export` the table from the schema.
+3. **Define Relationships**: Link tables together using the `@relationship` directive. For more details, see the [Defining Relationships](defining-relationships.md) skill.
+4. **Enable Automatic APIs**: If you add `@table @export` to a schema type, Harper automatically sets up REST and WebSocket APIs for basic CRUD operations against that table. **Important**: REST endpoints also require `rest: true` in `config.yaml` — without it, `@export`ed tables will not respond to HTTP requests. For a detailed list of available endpoints and how to use them, see the [Automatic REST APIs](automatic-apis.md) skill.
+   - `GET /{TableName}`: Describes the schema itself.
+   - `GET /{TableName}/`: Lists all records (supports filtering, sorting, and pagination via query parameters). See the [Querying REST APIs](querying-rest-apis.md) skill for details.
+   - `GET /{TableName}/{id}`: Retrieves a single record by its ID.
+   - `POST /{TableName}/`: Creates a new record.
+   - `PUT /{TableName}/{id}`: Updates an existing record.
+   - `PATCH /{TableName}/{id}`: Performs a partial update on a record.
+   - `DELETE /{TableName}/`: Deletes all records or filtered records.
+   - `DELETE /{TableName}/{id}`: Deletes a single record by its ID.
+5. **Consider Table Extensions**: If you are going to [extend the table](./extending-tables.md) in your resources, then do not `@export` the table from the schema.
 
-#### Example
+#### Examples
+
+In a hypothetical `schemas/ExamplePerson.graphql`:
 
 ```graphql
 type ExamplePerson @table @export {
@@ -129,16 +106,16 @@ my-harper-app/
 
 ### 1.3 Defining Relationships
 
-Using the `@relationship` directive to link tables.
+Instructions for the agent to follow when defining relationships between Harper tables.
 
 #### When to Use
 
-Use this when you have two or more tables that need to be logically linked (e.g., a "Product" table and a "Category" table).
+Use this skill when you need to link data across different tables, enabling automatic joins and efficient related-data fetching via REST APIs.
 
 #### How It Works
 
 1. **Identify the Relationship Type**: Determine if it's one-to-one, many-to-one, or one-to-many.
-2. **Apply the `@relationship` Directive**: In your GraphQL schema, use the `@relationship` directive on the field that links to another table.
+2. **Use the `@relationship` Directive**: Apply it to a field in your GraphQL schema.
    - **Many-to-One (Current table holds FK)**: Use `from`.
      ```graphql
      type Book @table @export {
@@ -153,262 +130,755 @@ Use this when you have two or more tables that need to be logically linked (e.g.
      }
      ```
 3. **Query with Relationships**: Use dot syntax in REST API calls for filtering or the `select()` operator for including related data.
-
-#### Example
-
-```graphql
-type Product @table @export {
-	id: ID @primaryKey
-	name: String
-	categoryId: ID
-	category: Category @relationship(from: "categoryId")
-}
-
-type Category @table @export {
-	id: ID @primaryKey
-	name: String
-	products: [Product] @relationship(to: "categoryId")
-}
-```
+   - Example Filter: `GET /Book/?author.name=Harper`
+   - Example Select: `GET /Author/?select(name,books(title))`
 
 ### 1.4 Vector Indexing
 
-How to define and use vector indexes for efficient similarity search.
+Instructions for the agent to follow when enabling and querying vector indexes for similarity search in Harper using the HNSW algorithm.
 
 #### When to Use
 
-Use this when you need to perform similarity searches on high-dimensional data, such as image embeddings, text embeddings, or any other numeric vectors.
+Apply this rule when adding a vector index to a Harper table schema to support approximate nearest-neighbor (similarity) search on high-dimensional float arrays. Use it whenever a query requires ranking results by vector similarity, optionally combined with filter conditions.
 
 #### How It Works
 
-1. **Define the Vector Field**: In your GraphQL schema, define a field with a list of floats (e.g., `[Float]`).
-2. **Apply the `@indexed` Directive**: Use the `@indexed` directive on the vector field and specify the index type as `HNSW`.
-3. **Configure the Index (Optional)**: You can provide additional configuration for the vector index, such as the distance metric (e.g., `cosine`, `euclidean`).
-4. **Querying**: Use the `vector` operator in your REST or programmatic requests to perform similarity searches.
+1. **Define the table schema with a vector index**: Add `@indexed(type: "HNSW")` to a `[Float]` attribute on a `@table` type. See [adding-tables-with-schemas](adding-tables-with-schemas.md) for general schema setup.
 
-#### Example
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float] @indexed(type: "HNSW")
+   }
+   ```
+
+2. **Query by nearest neighbors**: Call `.search()` with a `sort` parameter specifying the indexed `attribute` and a `target` vector. The `target` is the query vector to compare against.
+
+   ```javascript
+   let results = Document.search({
+   	sort: { attribute: 'textEmbeddings', target: searchVector },
+   	limit: 5,
+   });
+   ```
+
+3. **Combine with filter conditions**: Add a `conditions` array alongside `sort` to filter results before ranking by similarity.
+
+   ```javascript
+   let results = Document.search({
+   	conditions: [{ attribute: 'price', comparator: 'lt', value: 50 }],
+   	sort: { attribute: 'textEmbeddings', target: searchVector },
+   	limit: 5,
+   });
+   ```
+
+4. **Tune HNSW parameters**: Pass additional parameters directly in the `@indexed` directive to control index quality and performance.
+
+   | Parameter              | Default           | Description                                                                                         |
+   | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
+   | `distance`             | `"cosine"`        | Distance function: `"euclidean"` or `"cosine"` (negative cosine similarity)                         |
+   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance    |
+   | `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data |
+   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)          |
+   | `mL`                   | computed from `M` | Normalization factor for level generation                                                           |
+   | `efSearchConstruction` | `50`              | Max nodes explored during search                                                                    |
+
+#### Examples
+
+Schema with default settings:
 
 ```graphql
-type Document @table @export {
-	id: ID @primaryKey
-	content: String
-	embedding: [Float] @indexed(type: "HNSW")
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float] @indexed(type: "HNSW")
 }
 ```
 
-### 1.5 Using Blobs
+Schema with custom parameters (euclidean distance, routing disabled, higher search recall):
 
-How to store and retrieve large data in Harper.
+```graphql
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float]
+		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efSearchConstruction: 100)
+}
+```
+
+Filtered nearest-neighbor search:
+
+```javascript
+let results = Document.search({
+	conditions: [{ attribute: 'price', comparator: 'lt', value: 50 }],
+	sort: { attribute: 'textEmbeddings', target: searchVector },
+	limit: 5,
+});
+```
+
+#### Notes
+
+- The default `distance` function is `cosine`. Use `"euclidean"` when your vectors are not normalized or when Euclidean geometry better fits your use case.
+- Increasing `efConstruction` improves index recall at the cost of build performance.
+- `mL` is computed automatically from `M` unless explicitly overridden.
+- Always pair `sort` with a `limit` to bound the number of nearest-neighbor results returned.
+
+### 1.5 Using Blob Datatype
+
+Instructions for the agent to follow when working with the Blob data type in Harper.
 
 #### When to Use
 
-Use this when you need to store large, unstructured data such as files, images, or large text documents that exceed the typical size of a standard database field.
+Use this skill when you need to store unstructured or large binary data (media, documents) that is too large for standard JSON fields. Blobs provide efficient storage and integrated streaming support.
 
 #### How It Works
 
-1. **Define the Blob Field**: Use the `Blob` scalar type in your GraphQL schema.
-2. **Storing Data**: Send the data as a buffer or a stream when creating or updating a record.
-3. **Retrieving Data**: Access the blob field, which will return the data as a stream or buffer.
+1. **Define Blob Fields**: In your GraphQL schema, use the `Blob` type:
+   ```graphql
+   type MyTable @table {
+   	id: ID @primaryKey
+   	data: Blob
+   }
+   ```
+2. **Create and Store Blobs**: Use `createBlob()` from Harper's globals to wrap Buffers or Streams:
+   ```javascript
+   import { tables } from 'harper';
+   const blob = createBlob(largeBuffer);
+   await tables.MyTable.put('my-id', { data: blob });
+   ```
+3. **Use Streaming (Optional)**: For very large files, pass a stream to `createBlob()` to avoid loading the entire file into memory.
+4. **Read Blob Data**: Retrieve the record and use `.bytes()` or streaming interfaces on the blob field:
+   ```javascript
+   const record = await tables.MyTable.get('my-id');
+   const buffer = await record.data.bytes();
+   ```
+5. **Ensure Write Completion**: Use `saveBeforeCommit: true` in `createBlob` options if you need the blob fully written before the record is committed.
+6. **Handle Errors**: Attach error listeners to the blob object to handle streaming failures.
 
 ### 1.6 Handling Binary Data
 
-How to store and serve binary data like images or MP3s.
+Instructions for the agent to follow when handling binary data in Harper.
 
 #### When to Use
 
-Use this when your application needs to handle binary files, particularly for storage and retrieval.
+Use this skill when you need to store binary files (images, audio, etc.) in the database or serve them back to clients via REST endpoints.
 
 #### How It Works
 
-1. **Use the `Blob` type**: As with general large data, the `Blob` type is best for binary files. Ensure you store and retrieve the appropriate MIME type (e.g., `image/jpeg`, `audio/mpeg`) for the data.
-2. **Streaming**: For large files, use streaming to minimize memory usage during upload and download.
-3. **MIME Types**: Store the MIME type alongside the binary data to ensure it is served correctly by your application logic.
+1. **Store Binary Data**: In your resource's `post` or `put` method, convert incoming data to Buffers and then to Blobs using `createBlob` from Harper's globals. Include the MIME type if available:
 
----
+   ```typescript
+   async post(target, record) {
+     if (record.data) {
+       record.data = createBlob(Buffer.from(record.data, record.encoding || 'base64'), {
+         type: record.contentType || 'application/octet-stream',
+       });
+     }
+     return super.post(target, record);
+   }
+   ```
+
+2. **Serve Binary Data**: In your resource's `get` method, return a response object with the appropriate `Content-Type` and the binary data in the `body`:
+   ```typescript
+   async get(target) {
+    const record = await super.get(target);
+    if (record?.data) {
+      return {
+        status: 200,
+        headers: { 'Content-Type': record.data.type || 'application/octet-stream' },
+        body: record.data,
+      };
+    }
+    return record;
+   }
+   ```
+3. **Use the Blob Type**: Ensure your GraphQL schema uses the `Blob` scalar for binary fields.
 
 ## 2. API & Communication
 
-**Impact: HIGH**
+### 2.1 Automatic APIs
 
-### 2.1 Automatic REST APIs
+Instructions for the agent to follow when utilizing Harper's automatic APIs.
 
-Details on the CRUD endpoints automatically generated for exported tables.
+#### When to Use
 
-#### Endpoints
+Use this skill when you want to interact with Harper tables via REST or WebSockets without writing custom resource logic. This is ideal for basic CRUD operations and real-time updates.
 
-- `GET /{TableName}`: Describes the schema.
-- `GET /{TableName}/`: Lists records (supports filtering/sorting).
-- `GET /{TableName}/{id}`: Gets a record by ID.
-- `POST /{TableName}/`: Creates a record.
-- `PUT /{TableName}/{id}`: Updates a record.
-- `PATCH /{TableName}/{id}`: Partial update.
-- `DELETE /{TableName}/`: Deletes records.
-- `DELETE /{TableName}/{id}`: Deletes by ID.
+#### How It Works
+
+1. **Enable REST in `config.yaml`**: REST endpoints are **not active by default**. You must explicitly enable them:
+   ```yaml
+   rest: true
+   ```
+   Without this, `@export`ed tables will not respond to HTTP requests.
+2. **Enable Automatic APIs**: Ensure your GraphQL schema includes the `@export` directive for the table.
+3. **Access REST Endpoints**: Use the standard endpoints for your table (Note: Paths are case-sensitive).
+4. **Use Automatic WebSockets**: Connect to `wss://your-harper-instance/{TableName}` to receive events whenever updates are made to that table. This is the easiest way to add real-time capabilities. (Use `ws://` for local development without SSL). For more complex needs, see [Real-time Apps](real-time-apps.md).
+5. **Apply Filtering and Querying**: Use query parameters with `GET /{TableName}/` and `DELETE /{TableName}/`. See the [Querying REST APIs](querying-rest-apis.md) skill for advanced details.
+6. **Customize if Needed**: If the automatic APIs don't meet your requirements, [customize the resources](./custom-resources.md).
+
+#### Examples
+
+##### Schema Configuration
+
+```graphql
+type MyTable @table @export {
+	id: ID @primaryKey
+	name: String
+}
+```
+
+##### Common REST Operations
+
+- **List Records**: `GET /MyTable/`
+- **Create Record**: `POST /MyTable/`
+- **Update Record**: `PATCH /MyTable/{id}`
 
 ### 2.2 Querying REST APIs
 
-How to use filters, operators, sorting, and pagination in REST requests.
+Instructions for the agent to follow when querying Harper's REST APIs.
 
-#### Query Parameters
+#### When to Use
 
-- `limit(count)` or `limit(offset, count)`: Number of records to return and optional skip. Example: `?limit(10)`, `?limit(10, 20)`.
-- `sort(+field1, -field2)`: Fields to sort by. Use `+` for ascending and `-` for descending. Example: `?sort(+name)`, `?sort(-price, +name)`.
-- `select(field1, field2)`: Specific fields to return. Example: `?select(id, name)`.
-- `filter`: Advanced filtering using comparison operators and logic.
-  - Operators: `gt`, `ge`, `lt`, `le`, `ne`. Example: `?price=gt=100`.
-  - Logic: `&` (AND), `|` (OR), `()` (grouping). Example: `?(category=electronics|category=books)&price=lt=500`.
+Use this skill when you need to perform advanced data retrieval (filtering, sorting, pagination, joins) using Harper's automatic REST endpoints.
+
+#### How It Works
+
+1. **Basic Filtering**: Use attribute names as query parameters: `GET /Table/?key=value`.
+2. **Use Comparison Operators**: Append operators like `gt`, `ge`, `lt`, `le`, `ne` using FIQL-style syntax: `GET /Table/?price=gt=100`.
+3. **Apply Logic and Grouping**: Use `&` for AND, `|` for OR, and `()` for grouping: `GET /Table/?(rating=5|featured=true)&price=lt=50`.
+4. **Select Specific Fields**: Use `select()` to limit returned attributes: `GET /Table/?select(name,price)`.
+5. **Paginate Results**: Use `limit(count)` or `limit(offset, count)` to set the number of records to return and skip.
+   - Example (first 10): `GET /Table/?limit(10)`
+   - Example (skip 20, return 10): `GET /Table/?limit(20, 10)`
+6. **Sort Results**: Use `sort()` with `+` (asc) or `-` (desc) before the field name. Avoid `sort=field` format.
+   - Example (asc): `GET /Table/?sort(+name)`
+   - Example (desc): `GET /Table/?sort(-price)`
+   - Example (combined): `GET /Table/?sort(-price,+name)`
+7. **Query Relationships**: Use dot syntax for tables linked with `@relationship`: `GET /Book/?author.name=Harper`.
 
 ### 2.3 Real-time Applications
 
-Implementing WebSockets and Pub/Sub for live data updates.
+Instructions for the agent to follow when building real-time applications in Harper.
 
 #### When to Use
 
-Use this for applications that require live updates, such as chat apps, live dashboards, or collaborative tools.
+Use this skill when you need to stream live updates to clients, implement chat features, or provide real-time data synchronization between the database and a frontend.
 
 #### How It Works
 
-1. **WebSocket Connection**: Connect to the Harper WebSocket endpoint. Use `wss://` for secure connections over HTTPS, or `ws://` for local development.
-2. **Subscribing**: Subscribe to table updates or specific records.
-3. **Pub/Sub**: Use the internal bus to publish and subscribe to custom events.
+1. **Check Automatic WebSockets**: If you only need to stream table changes, use [Automatic APIs](automatic-apis.md) which provide a WebSocket endpoint for every `@export`ed table.
+2. **Implement `connect` in a Resource**: For custom bi-directional logic, implement the `connect` method.
+3. **Use Pub/Sub**: Use `tables.TableName.subscribe(query)` to listen for specific data changes and stream them to the client.
+4. **Handle SSE**: Ensure your `connect` method gracefully handles cases where `incomingMessages` is null (Server-Sent Events).
+5. **Connect from Client**: Use standard WebSockets (`new WebSocket('wss://...')`) to connect to your resource endpoint. Ensure you use the appropriate scheme (`ws://` for HTTP, `wss://` for HTTPS).
+
+#### Examples
+
+##### Bi-directional WebSocket Resource
+
+```typescript
+import { Resource, tables } from 'harper';
+
+export class MySocket extends Resource {
+	async *connect(target, incomingMessages) {
+		// Subscribe to table changes
+		const subscription = await tables.MyTable.subscribe(target);
+		if (!incomingMessages) {
+			return subscription; // SSE mode
+		}
+
+		// Handle incoming client messages
+		for await (let message of incomingMessages) {
+			yield { received: message };
+		}
+	}
+}
+```
 
 ### 2.4 Checking Authentication
 
-How to use sessions to verify user identity and roles.
+Instructions for the agent to follow when handling authentication and sessions.
 
 #### When to Use
 
-Use this to secure your application by ensuring that only authorized users can access certain resources or perform specific actions.
+Use this skill when you need to implement sign-in/sign-out functionality, protect specific resource endpoints, or identify the currently logged-in user in a Harper application.
 
 #### How It Works
 
-1. **Session Handling**: Access the session object from the request context.
-2. **Identity Verification**: Check for the presence of a user ID or token.
-3. **Role Checks**: Verify if the user has the required roles for the action.
+1. **Configure Harper for Sessions**: Ensure `harper-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
+   ```yaml
+   authentication:
+     authorizeLocal: false
+     enableSessions: true
+   ```
+2. **Implement Sign In**: Use `this.getContext().login(username, password)` to create a session:
+   ```typescript
+   async post(_target, data) {
+    const context = this.getContext();
+    try {
+      await context.login(data.username, data.password);
+    } catch {
+      return new Response('Invalid credentials', { status: 403 });
+    }
+    return new Response('Logged in', { status: 200 });
+   }
+   ```
+3. **Identify Current User**: Use `this.getCurrentUser()` to access session data:
+   ```typescript
+   async get() {
+     const user = this.getCurrentUser?.();
+     if (!user) return new Response(null, { status: 401 });
+     return { username: user.username, role: user.role };
+   }
+   ```
+4. **Implement Sign Out**: Use `this.getContext().logout()` or delete the session from context:
+   ```typescript
+   async post() {
+     const context = this.getContext();
+     await context.session?.delete?.(context.session.id);
+     return new Response('Logged out', { status: 200 });
+   }
+   ```
+5. **Protect Routes**: In your Resource, use `allowRead()`, `allowUpdate()`, etc., to enforce authorization logic based on `this.getCurrentUser()`. For privileged actions, verify `user.role.permission.super_user`.
 
----
+#### Examples
+
+##### Sign In Implementation
+
+```typescript
+async post(_target, data) {
+  const context = this.getContext();
+  try {
+    await context.login(data.username, data.password);
+  } catch {
+    return new Response('Invalid credentials', { status: 403 });
+  }
+  return new Response('Logged in', { status: 200 });
+}
+```
+
+##### Identify Current User
+
+```typescript
+async get() {
+  const user = this.getCurrentUser?.();
+  if (!user) return new Response(null, { status: 401 });
+  return { username: user.username, role: user.role };
+}
+```
+
+##### Sign Out Implementation
+
+```typescript
+async post() {
+  const context = this.getContext();
+  await context.session?.delete?.(context.session.id);
+  return new Response('Logged out', { status: 200 });
+}
+```
+
+#### Status code conventions used here
+
+- 200: Successful operation. For `GET /me`, a `200` with empty body means “not signed in”.
+- 400: Missing required fields (e.g., username/password on sign-in).
+- 401: No current session for an action that requires one (e.g., sign out when not signed in).
+- 403: Authenticated but not authorized (bad credentials on login attempt, or insufficient privileges).
+
+#### Client considerations
+
+- Sessions are cookie-based; the server handles setting and reading the cookie via Harper. If you make cross-origin requests, ensure the appropriate `credentials` mode and CORS settings.
+- If developing locally, double-check the server config still has `authentication.authorizeLocal: false` to avoid accidental superuser bypass.
+
+#### Token-based auth (JWT + refresh token) for non-browser clients
+
+Cookie-backed sessions are great for browser flows. For CLI tools, mobile apps, or other non-browser clients, it’s often easier to use **explicit tokens**:
+
+- **JWT (`operation_token`)**: short-lived bearer token used to authorize API requests.
+- **Refresh token (`refresh_token`)**: longer-lived token used to mint a new JWT when it expires.
+
+This project includes two Resource patterns for that flow:
+
+##### Issuing tokens: `IssueTokens`
+
+**Description / use case:** Generate `{ refreshToken, jwt }` either:
+
+- with an existing Authorization token (either Basic Auth or a JWT) and you want to issue new tokens, or
+- from an explicit `{ username, password }` payload (useful for direct “login” from a CLI/mobile client).
+
+```javascript
+export class IssueTokens extends Resource {
+	static loadAsInstance = false;
+
+	async get(target) {
+		const { refresh_token: refreshToken, operation_token: jwt } =
+			await databases.system.hdb_user.operation(
+				{ operation: 'create_authentication_tokens' },
+				this.getContext(),
+			);
+		return { refreshToken, jwt };
+	}
+
+	async post(target, data) {
+		if (!data.username || !data.password) {
+			throw new Error('username and password are required');
+		}
+
+		const { refresh_token: refreshToken, operation_token: jwt } =
+			await databases.system.hdb_user.operation({
+				operation: 'create_authentication_tokens',
+				username: data.username,
+				password: data.password,
+			});
+		return { refreshToken, jwt };
+	}
+}
+```
+
+**Recommended documentation notes to include:**
+
+- `GET` variant: intended for “I already have an Authorization token, give me new tokens”.
+- `POST` variant: intended for “I have credentials, give me tokens”.
+- Response shape:
+  - `refreshToken`: store securely (long-lived).
+  - `jwt`: attach to requests (short-lived).
+
+##### Refreshing a JWT: `RefreshJWT`
+
+**Description / use case:** When the JWT expires, the client uses the refresh token to get a new JWT without re-supplying username/password.
+
+```javascript
+export class RefreshJWT extends Resource {
+	static loadAsInstance = false;
+
+	async post(target, data) {
+		if (!data.refreshToken) {
+			throw new Error('refreshToken is required');
+		}
+
+		const { operation_token: jwt } = await databases.system.hdb_user.operation({
+			operation: 'refresh_operation_token',
+			refresh_token: data.refreshToken,
+		});
+		return { jwt };
+	}
+}
+```
+
+**Recommended documentation notes to include:**
+
+- Requires `refreshToken` in the request body.
+- Returns a new `{ jwt }`.
+- If refresh fails (expired/revoked), client must re-authenticate (e.g., call `IssueTokens.post` again).
+
+##### Suggested client flow (high-level)
+
+1. **Sign in (token flow)**
+   - POST /IssueTokens/ with a body of `{ "username": "your username", "password": "your password" }` or GET /IssueTokens/ with an existing Authorization token.
+   - Receive `{ jwt, refreshToken }` in the response
+2. **Call protected APIs**
+   - Send the JWT with each request in the Authorization header (as your auth mechanism expects)
+3. **JWT expires**
+   - POST /RefreshJWT/ with a body of `{ "refreshToken": "your refresh token" }`.
+   - Receive `{ jwt }` in the response and continue
+
+#### Quick checklist
+
+- [ ] Public endpoints explicitly `allowRead`/`allowCreate` as needed.
+- [ ] Sign-in uses `context.login` and handles 400/403 correctly.
+- [ ] Protected routes call `ensureSuperUser(this.getCurrentUser())` (or another role check) before doing work.
+- [ ] Sign-out verifies a session and deletes it.
+- [ ] `authentication.authorizeLocal` is `false` and `enableSessions` is `true` in Harper config.
+- [ ] If using tokens: `IssueTokens` issues `{ jwt, refreshToken }`, `RefreshJWT` refreshes `{ jwt }` with a `refreshToken`.
 
 ## 3. Logic & Extension
 
-**Impact: MEDIUM**
-
 ### 3.1 Custom Resources
 
-How to define custom REST endpoints using JavaScript or TypeScript.
-
-#### How It Works
-
-1. **Create Resource File**: Define your logic in a JS or TS file.
-2. **Define Resource Class**: Export a class extending `Resource` from `harper`.
-3. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests.
-4. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
-   - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
-   - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.
-   - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
-5. **Registration**: Ensure the resource is correctly registered in your application configuration.
-
-### 3.2 Extending Table Resources
-
-Adding custom logic to automatically generated table resources.
-
-#### How It Works
-
-1. **Define Extension**: Create a resource file that targets an existing table.
-2. **Intercept Requests**: Use handlers to add custom validation or data transformation.
-3. **No `@export`**: If extending, remember not to `@export` the table in the schema.
-
-### 3.3 Programmatic Table Requests
-
-How to use filters, operators, sorting, and pagination in programmatic table requests.
-
-#### Usage
-
-When writing custom resources, use the internal API to query tables with full support for advanced filtering and sorting.
-
-### 3.4 TypeScript Type Stripping
-
-Using TypeScript directly without build tools via Node.js Type Stripping.
-
-#### Configuration
-
-Harper supports native TypeScript type stripping, allowing you to run `.ts` files directly. Ensure your environment is configured to take advantage of this for faster development cycles.
-
-### 3.5 Caching
-
-How caching is defined and implemented in Harper applications.
-
-#### Strategies
-
-- **In-memory**: For fast access to frequently used data.
-- **Distributed**: For scaling across multiple nodes in Harper Fabric.
-
----
-
-## 4. Infrastructure & Ops
-
-**Impact: MEDIUM**
-
-### 4.1 Creating Harper Applications
-
-The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
+Instructions for the agent to follow when creating custom resources in Harper.
 
 #### When to Use
 
-Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
-
-#### Commands
-
-Initialize a project using your preferred package manager:
-
-**NPM**
-
-```bash
-npm create harper@latest
-```
-
-**PNPM**
-
-```bash
-pnpm create harper@latest
-```
-
-**Bun**
-
-```bash
-bun create harper@latest
-```
-
-### 4.2 Creating a Fabric Account and Cluster
-
-Follow these steps to set up your Harper Fabric environment for deployment.
+Use this skill when the automatic CRUD operations provided by `@table @export` are insufficient, and you need custom logic, third-party API integration, or specialized data handling for your REST endpoints.
 
 #### How It Works
 
-1. **Sign Up/In**: Go to [https://fabric.harper.fast/](https://fabric.harper.fast/) and sign up or sign in.
-2. **Create an Organization**: Create an organization (org) to manage your projects.
-3. **Create a Cluster**: Create a new cluster. This can be on the free tier, no credit card required.
-4. **Set Credentials**: During setup, set the cluster username and password to finish configuring it.
-5. **Get Application URL**: Navigate to the **Config** tab and copy the **Application URL**.
-6. **Configure Environment**: Update your `.env` file or GitHub Actions secrets with these cluster-specific credentials:
-   ```bash
-   CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
-   CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
-   CLI_TARGET='YOUR_CLUSTER_URL'
+1. **Check if a Custom Resource is Necessary**: Verify if [Automatic APIs](./automatic-apis.md) or [Extending Tables](./extending-tables.md) can satisfy the requirement first.
+2. **Create the Resource File**: Create a `.ts` or `.js` file in the directory specified by `jsResource` in `config.yaml` (typically `resources/`).
+3. **Define the Resource Class**: Export a class extending `Resource` from `harper`:
+
+   ```typescript
+   import { type RequestTargetOrId, Resource } from 'harper';
+
+   export class MyResource extends Resource {
+   	async get(target?: RequestTargetOrId) {
+   		return { message: 'Hello from custom GET!' };
+   	}
+   }
    ```
 
-### 4.3 Deploying to Harper Fabric
+4. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests.
+5. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
+   - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
+   - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.
+   - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
+6. **Access Tables (Optional)**: Import and use the `tables` object to interact with your data:
+   ```typescript
+   import { tables } from 'harper';
+   // ... inside a method
+   const results = await tables.MyTable.list();
+   ```
+7. **Configure Loading**: Ensure `config.yaml` points to your resource files (e.g., `jsResource: { files: 'resources/*.ts' }`).
 
-Globally scaling your Harper application.
+### 3.2 Extending Tables
 
-#### Benefits
+Instructions for the agent to follow when extending table resources in Harper.
 
-- **Global Distribution**: Low latency for users everywhere.
-- **Automatic Sync**: Data is synced across the fabric automatically.
-- **Free Tier**: Start for free and scale as you grow.
+#### When to Use
+
+Use this skill when you need to add custom validation, side effects (like webhooks), data transformation, or custom access control to the standard CRUD operations of a Harper table.
 
 #### How It Works
 
-1. **Sign up**: Follow the [Creating a Fabric Account and Cluster](#42-creating-a-fabric-account-and-cluster) steps to create a Harper Fabric account, organization, and cluster.
+1. **Define the Table in GraphQL**: In your `.graphql` schema, define the table using the `@table` directive. **Do not** use `@export` if you plan to extend it.
+   ```graphql
+   type MyTable @table {
+   	id: ID @primaryKey
+   	name: String
+   }
+   ```
+2. **Create the Extension File**: Create a `.ts` file in your `resources/` directory.
+3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName`:
+
+   ```typescript
+   import { type RequestTargetOrId, tables } from 'harper';
+
+   export class MyTable extends tables.MyTable {
+   	async post(target: RequestTargetOrId, record: any) {
+   		// Custom logic here
+   		if (!record.name) {
+   			throw new Error('Name required');
+   		}
+   		return super.post(target, record);
+   	}
+   }
+   ```
+
+4. **Override Methods**: Override `get`, `post`, `put`, `patch`, or `delete` as needed. Always call `super[method]` to maintain default Harper functionality unless you intend to replace it entirely.
+5. **Implement Logic**: Use overrides for validation, side effects, or transforming data before/after database operations.
+
+### 3.3 Programmatic Table Requests
+
+Instructions for the agent to follow when interacting with Harper tables via code.
+
+#### When to Use
+
+Use this skill when you need to perform database operations (CRUD, search, subscribe) from within Harper Resources or scripts.
+
+#### How It Works
+
+1. **Access the Table**: Use the global `tables` object followed by your table name (e.g., `tables.MyTable`).
+2. **Perform CRUD Operations**:
+   - **Get**: `await tables.MyTable.get(id)` for a single record or `await tables.MyTable.get({ conditions: [...] })` for multiple.
+   - **Create**: `await tables.MyTable.post(record)` (auto-generates ID) or `await tables.MyTable.put(id, record)`.
+   - **Update**: `await tables.MyTable.patch(id, partialRecord)` for partial updates.
+   - **Delete**: `await tables.MyTable.delete(id)`.
+3. **Use Updatable Records for Atomic Ops**: Call `update(id)` to get a reference, then use `addTo` or `subtractFrom` for atomic increments/decrements:
+   ```typescript
+   const stats = await tables.Stats.update('daily');
+   stats.addTo('viewCount', 1);
+   ```
+4. **Search and Stream**: Use `search(query)` for efficient streaming of large result sets:
+   ```typescript
+   for await (const record of tables.MyTable.search({ conditions: [...] })) {
+     // process record
+   }
+   ```
+   See the [Query Conditions](#query-conditions) section below for the full query object reference.
+5. **Real-time Subscriptions**: Use `subscribe(query)` to listen for changes:
+   ```typescript
+   for await (const event of tables.MyTable.subscribe(query)) {
+   	// handle event
+   }
+   ```
+6. **Publish Events**: Use `publish(id, message)` to trigger subscriptions without necessarily persisting data.
+
+#### Query Conditions
+
+When passing a query to `search()`, `get()`, or `subscribe()`, use a query object with a `conditions` array.
+
+##### Condition Object Shape
+
+| Property     | Description                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| `attribute`  | Field name, or array of field names to traverse a relationship (e.g., `['brand', 'name']`) |
+| `value`      | The value to compare against                                                               |
+| `comparator` | One of the comparator strings below (default: `equals`)                                    |
+| `operator`   | `and` (default) or `or` — applies to a nested `conditions` block                           |
+| `conditions` | Nested array of condition objects for complex AND/OR logic                                 |
+
+##### Comparator Values
+
+Use these exact strings — incorrect comparator names will silently fail or error:
+
+| Comparator           | Meaning                                                    |
+| -------------------- | ---------------------------------------------------------- |
+| `equals`             | Exact match (default)                                      |
+| `not_equal`          | Not equal                                                  |
+| `greater_than`       | `>`                                                        |
+| `greater_than_equal` | `>=`                                                       |
+| `less_than`          | `<`                                                        |
+| `less_than_equal`    | `<=`                                                       |
+| `starts_with`        | String starts with value                                   |
+| `contains`           | String contains value                                      |
+| `ends_with`          | String ends with value                                     |
+| `between`            | Value is between two bounds (pass `value` as `[min, max]`) |
+
+##### Query Object Parameters
+
+| Property     | Description                                                                          |
+| ------------ | ------------------------------------------------------------------------------------ |
+| `conditions` | Array of condition objects                                                           |
+| `limit`      | Maximum number of records to return                                                  |
+| `offset`     | Number of records to skip (for pagination)                                           |
+| `select`     | Array of attribute names to return; supports `$id` and `$updatedtime`                |
+| `sort`       | Object with `attribute`, `descending` (bool), and optional `next` for secondary sort |
+
+##### Examples
+
+**Simple filter:**
+
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+  limit: 20,
+})) { ... }
+```
+
+**AND + nested OR:**
+
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [
+    { attribute: 'price', comparator: 'less_than', value: 100 },
+    {
+      operator: 'or',
+      conditions: [
+        { attribute: 'rating', comparator: 'greater_than', value: 4 },
+        { attribute: 'featured', value: true },
+      ],
+    },
+  ],
+})) { ... }
+```
+
+**Relationship traversal:**
+
+```javascript
+for await (const record of tables.Book.search({
+  conditions: [{ attribute: ['brand', 'name'], comparator: 'equals', value: 'Harper' }],
+})) { ... }
+```
+
+**Sort and paginate:**
+
+```javascript
+for await (const record of tables.Product.search({
+  conditions: [{ attribute: 'inStock', value: true }],
+  sort: { attribute: 'price', descending: false },
+  limit: 10,
+  offset: 20,
+})) { ... }
+```
+
+#### Cautions
+
+Be very careful when performing updates and deletions! You may be dealing with live production data. The wrong request to delete, without approval from a human, could be devastating to a business. Always use the proper approval process.
+
+### 3.4 TypeScript Type Stripping
+
+Instructions for the agent to follow when using TypeScript in Harper.
+
+#### When to Use
+
+Use this skill when you want to write Harper Resources in TypeScript and have them execute directly in Node.js without an intermediate build or compilation step.
+
+#### How It Works
+
+1. **Verify Node.js Version**: Ensure you are using Node.js v22.6.0 or higher.
+2. **Name Files with `.ts`**: Create your resource files in the `resources/` directory with a `.ts` extension.
+3. **Use TypeScript Syntax**: Write your resource classes using standard TypeScript (interfaces, types, etc.).
+   ```typescript
+   import { Resource } from 'harper';
+   export class MyResource extends Resource {
+   	async get(): Promise<{ message: string }> {
+   		return { message: 'Running TS directly!' };
+   	}
+   }
+   ```
+4. **Use Explicit Extensions in Imports**: When importing other local modules, include the `.ts` extension: `import { helper } from './helper.ts'`.
+5. **Configure `config.yaml`**: Ensure `jsResource` points to your `.ts` files:
+   ```yaml
+   jsResource:
+     files: 'resources/*.ts'
+   ```
+
+### 3.5 Caching
+
+Instructions for the agent to follow when implementing caching in Harper.
+
+#### When to Use
+
+Use this skill when you need high-performance, low-latency storage for data from external sources. It's ideal for reducing API calls to third-party services, preventing cache stampedes, and making external data queryable as if it were native Harper tables.
+
+#### How It Works
+
+1. **Configure a Cache Table**: Define a table in your `schema.graphql` with an `expiration` (in seconds).
+2. **Define an External Source**: Create a Resource class that fetches the data from your source.
+3. **Attach Source to Table**: Use `sourcedFrom` to link your resource to the table.
+4. **Implement Active Caching (Optional)**: Use `subscribe()` for proactive updates. See [Real-Time Apps](real-time-apps.md).
+5. **Implement Write-Through Caching (Optional)**: Define `put` or `post` in your resource to propagate updates upstream.
+
+#### Examples
+
+##### Schema Configuration
+
+```graphql
+type MyCache @table(expiration: 3600) @export {
+	id: ID @primaryKey
+}
+```
+
+##### Resource Implementation
+
+```js
+import { Resource, tables } from 'harper';
+
+export class ThirdPartyAPI extends Resource {
+	async get() {
+		const id = this.getId();
+		const response = await fetch(`https://api.example.com/items/${id}`);
+		if (!response.ok) {
+			throw new Error('Source fetch failed');
+		}
+		return await response.json();
+	}
+}
+
+// Attach source to table
+tables.MyCache.sourcedFrom(ThirdPartyAPI);
+```
+
+## 4. Infrastructure & Ops
+
+### 4.1 Deploying to Harper Fabric
+
+Instructions for the agent to follow when deploying to Harper Fabric.
+
+#### When to Use
+
+Use this skill when you are ready to move your Harper application from local development to a cloud-hosted environment.
+
+#### How It Works
+
+1. **Sign up**: Follow the [creating-a-fabric-account-and-cluster](creating-a-fabric-account-and-cluster.md) rule to create a Harper Fabric account, organization, and cluster.
 2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
    ```bash
    CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
@@ -422,7 +892,7 @@ Globally scaling your Harper application.
 
 If your application was not created with `npm create harper`, you'll need to manually configure the deployment scripts and CI/CD workflow.
 
-#### 1. Update `package.json`
+##### 1. Update `package.json`
 
 Add the following scripts and dependencies to your `package.json`:
 
@@ -439,7 +909,7 @@ Add the following scripts and dependencies to your `package.json`:
 }
 ```
 
-#### Why split the scripts?
+###### Why split the scripts?
 
 The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI.
 
@@ -448,7 +918,7 @@ The `deploy` script is separated from `deploy:component` to ensure environment v
 
 By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harper deploy_component` is called, allowing it to authenticate with your cluster.
 
-#### 2. Configure GitHub Actions
+##### 2. Configure GitHub Actions
 
 Create a `.github/workflows/deploy.yaml` file with the following content:
 
@@ -467,12 +937,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           cache: 'npm'
-          node-version: '20'
+          node-version-file: '.nvmrc'
       - name: Install dependencies
         run: npm ci
       - name: Run unit tests
@@ -487,20 +960,140 @@ jobs:
           CLI_TARGET_PASSWORD: ${{ secrets.CLI_TARGET_PASSWORD }}
 ```
 
-Be sure to set the following repository secrets in your GitHub repository:
+Be sure to set the following repository secrets in your GitHub repository's /settings/secrets/actions:
 
 - `CLI_TARGET`
 - `CLI_TARGET_USERNAME`
 - `CLI_TARGET_PASSWORD`
 
+### 4.2 Creating a Harper Fabric Account and Cluster
+
+Follow these steps to set up your Harper Fabric environment for deployment.
+
+#### How It Works
+
+1. **Sign Up/In**: Go to [https://fabric.harper.fast/](https://fabric.harper.fast/) and sign up or sign in.
+2. **Create an Organization**: Create an organization (org) to manage your projects.
+3. **Create a Cluster**: Create a new cluster. This can be on the free tier, no credit card required.
+4. **Set Credentials**: During setup, set the cluster username and password to finish configuring it.
+5. **Get Application URL**: Navigate to the **Config** tab and copy the **Application URL**.
+6. **Configure Environment**: Update your `.env` file or GitHub Actions secrets with cluster-specific credentials.
+7. **Next Steps**: See the [deploying-to-harper-fabric](deploying-to-harper-fabric.md) rule for detailed instructions on deploying your application successfully.
+
+#### Examples
+
+##### Environment Configuration
+
+```bash
+CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
+CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
+CLI_TARGET='YOUR_CLUSTER_URL'
+```
+
+### 4.3 Creating Harper Applications
+
+The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
+
+#### When to Use
+
+Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
+
+#### Commands
+
+Initialize a project using your preferred package manager:
+
+##### NPM
+
+```bash
+npm create harper@latest
+```
+
+##### PNPM
+
+```bash
+pnpm create harper@latest
+```
+
+##### Bun
+
+```bash
+bun create harper@latest
+```
+
+#### Options
+
+You can specify the project name and template directly:
+
+```bash
+npm create harper@latest my-app --template default
+```
+
+#### Next Steps
+
+1. **Configure Environment**: Set up your `.env` file with local or cloud credentials.
+2. **Define Schema**: Modify `schema.graphql` to fit your application's data model.
+3. **Start Development**: Run `npm run dev` to start the local Harper instance.
+4. **Deploy**: Use `npm run deploy` to push your application to Harper Fabric.
+
 ### 4.4 Serving Web Content
 
-Two ways to serve web content from a Harper application.
+Instructions for the agent to follow when serving web content from Harper.
 
-#### Methods
+#### When to Use
 
-1. **Static Serving**: Serve HTML, CSS, and JS files directly. If using the Vite plugin for development, ensure Harper is running (e.g., `harper run .`) to allow for Hot Module Replacement (HMR).
-2. **Dynamic Rendering**: Use custom resources to render content on the fly.
+Use this skill when you need to serve a frontend (HTML, CSS, JS, or a React app) directly from your Harper instance.
+
+#### How It Works
+
+1. **Choose a Method**: Decide between the simple Static Plugin or the integrated Vite Plugin.
+2. **Option A: Static Plugin (Simple)**:
+   - Add to `config.yaml`:
+     ```yaml
+     static:
+       files: 'web/*'
+     ```
+   - Place files in a `web/` folder in the project root.
+   - Files are served at the root URL (e.g., `http://localhost:9926/index.html`).
+3. **Option B: Vite Plugin (Advanced/Development)**:
+   - Add to `config.yaml`:
+     ```yaml
+     '@harperfast/vite-plugin':
+       package: '@harperfast/vite-plugin'
+     ```
+   - Ensure `vite.config.ts` and `index.html` are in the project root.
+
+   ```javascript
+   import vue from '@vitejs/plugin-vue';
+   import path from 'node:path';
+   import { defineConfig } from 'vite';
+
+   // https://vite.dev/config/
+   export default defineConfig({
+   	plugins: [vue()],
+   	resolve: {
+   		alias: {
+   			'@': path.resolve(import.meta.dirname, './src'),
+   		},
+   	},
+   	build: {
+   		outDir: 'web',
+   		emptyOutDir: true,
+   		rolldownOptions: {
+   			external: ['**/*.test.*', '**/*.spec.*'],
+   		},
+   	},
+   });
+   ```
+
+   - Install dependencies: `npm install --save-dev vite @harperfast/vite-plugin`.
+   - Then `harper run .` will start up Harper and Vite with HMR. Vite does _not_ need to be executed separately.
+
+4. **Deploy for Production**: For Vite apps, use a build script to generate static files into a `web/` folder and deploy them using the static handler pattern. For example, these scripts in a package.json can perform the necessary steps:
+   ```json
+   "build": "vite build",
+   "deploy": "rm -Rf deploy && npm run build && mkdir deploy && mv web deploy/ && cp -R deploy-template/* deploy/ && cp -R schemas resources deploy/ && (cd deploy && harper deploy_component . project=web restart=rolling replicated=true) && rm -Rf deploy",
+   ```
+   Then in production, the "Static Plugin" option will performantly and securely serve your assets. `npm create harper@latest` scaffolds all of this for you.
 
 ### 4.5 Logging Best Practices
 

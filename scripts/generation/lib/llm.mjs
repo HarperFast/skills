@@ -13,10 +13,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
+const TEMPLATES_DIR = path.join(import.meta.dirname, '..', 'templates');
 
 const MODEL = process.env.GENERATE_MODEL || 'claude-sonnet-4-6';
 const MAX_TOKENS = 8192;

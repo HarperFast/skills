@@ -71,12 +71,12 @@ export declare const skillSummary: string;
 `,
 		);
 
-		try {
-			const { execSync } = await import('node:child_process');
-			execSync('npm run format', { stdio: 'inherit' });
-		} catch (error) {
-			console.warn('Could not run format after build:', error.message);
-		}
+		// Intentionally no formatter pass. dist/ is in .gitignore and consumed
+		// by npm; it is machine-generated output, not source. Running the
+		// formatter from here previously had the unintended side effect of
+		// silently reformatting source files in CI working trees, which
+		// masked formatting drift in committed files. Use `npm run format`
+		// explicitly when you want to format source.
 
 		console.log('Build completed successfully.');
 	} catch (error) {

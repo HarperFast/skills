@@ -16,7 +16,11 @@ npm install
 
 ## Development workflow
 
-- Validate changes: `npm run validate`
+- Format source files: `npm run format` — formats in place using oxfmt. Run this before committing if you've edited markdown, JSON, or other formatter-managed files.
+- Check formatting without writing: `npm run format:check` — exits non-zero if any file would be changed by `npm run format`. This is the gate enforced by CI.
+- Validate everything: `npm run validate` — runs `format:check`, then `build`, then both skill validators (`validate-skills.mjs` for the legacy schema checks, `validate-generated.mjs` for manifest ↔ frontmatter reconciliation defined under `scripts/generation/`).
+
+The pipeline is intentionally ordered so `format:check` runs first. CI will fail loudly on formatting drift rather than silently auto-fixing it.
 
 ## Creating Skills
 

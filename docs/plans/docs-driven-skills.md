@@ -2,7 +2,7 @@
 
 ## Goal
 
-Eliminate drift between `@harperfast/skills` and `HarperFast/documentation`. Today rule bodies are maintained by hand — sometimes with agent assistance, but a human still has to notice a docs change, prompt the rewrite, and open a PR. As the docs evolve, skills silently fall behind. We're moving to a model where rule bodies are **generated from docs automatically** and humans only intervene to shape the *taxonomy* — which rules exist, what docs feed them, and what each rule must assert.
+Eliminate drift between `@harperfast/skills` and `HarperFast/documentation`. Today rule bodies are maintained by hand — sometimes with agent assistance, but a human still has to notice a docs change, prompt the rewrite, and open a PR. As the docs evolve, skills silently fall behind. We're moving to a model where rule bodies are **generated from docs automatically** and humans only intervene to shape the _taxonomy_ — which rules exist, what docs feed them, and what each rule must assert.
 
 ## Guiding Principle
 
@@ -12,20 +12,20 @@ Anything that decides _what rules exist or what they map to_ flows through a hum
 
 ## Concepts
 
-| Term | What it is | Where it lives |
-|---|---|---|
-| **Rule** | Atomic instruction file for one topic (e.g., `vector-indexing`). Loaded on demand by the agent. | `harper-best-practices/rules/*.md` |
-| **Skill** | A coherent bundle of rules + trigger metadata + navigation guidance for a domain. | `harper-best-practices/SKILL.md` |
-| **AGENTS.md** | Derived flat-file view of an entire skill (all rules concatenated). For consumers that want one file rather than many. | `harper-best-practices/AGENTS.md` |
-| **Manifest** | Source-of-truth mapping from rules to docs files, with `must_cover` invariants and generation `mode`. Owned by humans. | `harper-best-practices/rules.manifest.yaml` |
-| **Rule frontmatter `metadata`** | Per-rule snapshot of what the body was last generated from (`mode`, `sources`, `sourceCommit`, `inputHash`). Used to skip no-op regenerations and to make provenance inspectable from the rule file. | YAML frontmatter of each `rules/*.md` |
+| Term                            | What it is                                                                                                                                                                                           | Where it lives                              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Rule**                        | Atomic instruction file for one topic (e.g., `vector-indexing`). Loaded on demand by the agent.                                                                                                      | `harper-best-practices/rules/*.md`          |
+| **Skill**                       | A coherent bundle of rules + trigger metadata + navigation guidance for a domain.                                                                                                                    | `harper-best-practices/SKILL.md`            |
+| **AGENTS.md**                   | Derived flat-file view of an entire skill (all rules concatenated). For consumers that want one file rather than many.                                                                               | `harper-best-practices/AGENTS.md`           |
+| **Manifest**                    | Source-of-truth mapping from rules to docs files, with `must_cover` invariants and generation `mode`. Owned by humans.                                                                               | `harper-best-practices/rules.manifest.yaml` |
+| **Rule frontmatter `metadata`** | Per-rule snapshot of what the body was last generated from (`mode`, `sources`, `sourceCommit`, `inputHash`). Used to skip no-op regenerations and to make provenance inspectable from the rule file. | YAML frontmatter of each `rules/*.md`       |
 
 ### Rule vs. Skill
 
 - A **rule** answers "what should the agent do for this specific subtask?"
 - A **skill** answers "what is this bundle for, and how does an agent navigate it?"
 
-A skill is the right unit when you want a distinct *trigger* — a different description of work an agent is doing — to load a different set of rules. Today there's one skill (`harper-best-practices`); plausible future siblings: `harper-fabric-ops`, `harper-v4`, `harper-migrations`.
+A skill is the right unit when you want a distinct _trigger_ — a different description of work an agent is doing — to load a different set of rules. Today there's one skill (`harper-best-practices`); plausible future siblings: `harper-fabric-ops`, `harper-v4`, `harper-migrations`.
 
 ### Generation modes
 
@@ -91,20 +91,20 @@ rules:
       - automatic-apis
 ```
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `rule` | yes | string | Slug. Matches `rules/<slug>.md`. Lowercase letters, digits, and hyphens only. Must be unique within the manifest. |
-| `description` | yes | string | Agent-facing trigger description. Written into the rule's frontmatter `description` verbatim. |
-| `category` | yes | enum | One of `schema` / `api` / `logic` / `ops`. Determines AGENTS.md grouping. |
-| `priority` | yes | int | 1–4. Category-level priority used for AGENTS.md ordering. |
-| `order` | yes | int | Position within the category. Determines AGENTS.md sequencing. |
-| `mode` | yes | enum | One of `generate` / `direct` / `synthesized`. |
-| `sources` | conditional | array | Required for `generate` and `direct`. Omitted for `synthesized`. |
-| `sources[].path` | yes | string | Path within the docs build output (`<docs>/build/<path>`), matching the route URL + `.md`. Often identical to the source filename for `.md` sources, but `.mdx` sources produce `.md` outputs and Docusaurus drops `index` from path segments. E.g. `reference/database/schema.md` (rendered from the same path) or `learn/getting-started.md` (rendered from `learn/getting-started/index.mdx`). |
-| `sources[].section` | no | string | H2/H3 heading text. If present, the extractor slices that section out of the source rather than importing the whole page. |
-| `sources[].role` | no | enum | `primary` (default) or `supplemental`. Hint to the generator; supplemental sources provide context but aren't required to be summarized. |
-| `must_cover` | no | array | Strings that must appear in the rule body after generation. Applies only to `mode: generate` — guards against LLM regressions. |
-| `cross_links` | no | array | Slugs of related rules. Used by the rule template to produce "See also" links. |
+| Field               | Required    | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------- | ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rule`              | yes         | string | Slug. Matches `rules/<slug>.md`. Lowercase letters, digits, and hyphens only. Must be unique within the manifest.                                                                                                                                                                                                                                                                                 |
+| `description`       | yes         | string | Agent-facing trigger description. Written into the rule's frontmatter `description` verbatim.                                                                                                                                                                                                                                                                                                     |
+| `category`          | yes         | enum   | One of `schema` / `api` / `logic` / `ops`. Determines AGENTS.md grouping.                                                                                                                                                                                                                                                                                                                         |
+| `priority`          | yes         | int    | 1–4. Category-level priority used for AGENTS.md ordering.                                                                                                                                                                                                                                                                                                                                         |
+| `order`             | yes         | int    | Position within the category. Determines AGENTS.md sequencing.                                                                                                                                                                                                                                                                                                                                    |
+| `mode`              | yes         | enum   | One of `generate` / `direct` / `synthesized`.                                                                                                                                                                                                                                                                                                                                                     |
+| `sources`           | conditional | array  | Required for `generate` and `direct`. Omitted for `synthesized`.                                                                                                                                                                                                                                                                                                                                  |
+| `sources[].path`    | yes         | string | Path within the docs build output (`<docs>/build/<path>`), matching the route URL + `.md`. Often identical to the source filename for `.md` sources, but `.mdx` sources produce `.md` outputs and Docusaurus drops `index` from path segments. E.g. `reference/database/schema.md` (rendered from the same path) or `learn/getting-started.md` (rendered from `learn/getting-started/index.mdx`). |
+| `sources[].section` | no          | string | H2/H3 heading text. If present, the extractor slices that section out of the source rather than importing the whole page.                                                                                                                                                                                                                                                                         |
+| `sources[].role`    | no          | enum   | `primary` (default) or `supplemental`. Hint to the generator; supplemental sources provide context but aren't required to be summarized.                                                                                                                                                                                                                                                          |
+| `must_cover`        | no          | array  | Strings that must appear in the rule body after generation. Applies only to `mode: generate` — guards against LLM regressions.                                                                                                                                                                                                                                                                    |
+| `cross_links`       | no          | array  | Slugs of related rules. Used by the rule template to produce "See also" links.                                                                                                                                                                                                                                                                                                                    |
 
 ## Rule Frontmatter Schema
 
@@ -123,14 +123,14 @@ metadata:
 ---
 ```
 
-| Field | Required | Origin | Description |
-|---|---|---|---|
-| `name` | yes | manifest `rule` | Slug. Must match the file basename. |
-| `description` | yes | manifest `description` | Agent-facing trigger description. |
-| `metadata.mode` | yes | manifest `mode` | The mode used to produce this body. |
-| `metadata.sources` | for generate/direct | manifest `sources[]` | Array of `path[#section]` strings. Snapshot of resolved sources at last generation. |
-| `metadata.sourceCommit` | for generate/direct | generator | Docs commit SHA at last generation. Inspectable provenance. |
-| `metadata.inputHash` | for generate/direct | generator | Hash of resolved source content at last generation. Drives the no-op skip. |
+| Field                   | Required            | Origin                 | Description                                                                         |
+| ----------------------- | ------------------- | ---------------------- | ----------------------------------------------------------------------------------- |
+| `name`                  | yes                 | manifest `rule`        | Slug. Must match the file basename.                                                 |
+| `description`           | yes                 | manifest `description` | Agent-facing trigger description.                                                   |
+| `metadata.mode`         | yes                 | manifest `mode`        | The mode used to produce this body.                                                 |
+| `metadata.sources`      | for generate/direct | manifest `sources[]`   | Array of `path[#section]` strings. Snapshot of resolved sources at last generation. |
+| `metadata.sourceCommit` | for generate/direct | generator              | Docs commit SHA at last generation. Inspectable provenance.                         |
+| `metadata.inputHash`    | for generate/direct | generator              | Hash of resolved source content at last generation. Drives the no-op skip.          |
 
 The generator writes the full frontmatter on every successful regen, so manual edits to `metadata.*` will be overwritten. The `name` and `description` fields are also overwritten from the manifest — to change those, edit the manifest.
 
@@ -181,11 +181,11 @@ Harper ships a new feature, _streaming bulk uploads_. An engineer wants agents t
      priority: 2
      sources:
        - path: reference/database/api.md
-         section: "Bulk Streaming"
+         section: 'Bulk Streaming'
          role: primary
      must_cover:
-       - "PUT with chunked transfer encoding"
-       - "back-pressure handling"
+       - 'PUT with chunked transfer encoding'
+       - 'back-pressure handling'
      mode: generate
    ```
 2. With a local checkout of `HarperFast/documentation` (built once via `npm run build`), runs `npm run generate` against it (`--docs-path=../documentation` or via `DOCS_PATH`). The script produces `rules/streaming-uploads.md` with `metadata.mode`, `metadata.sources`, `metadata.sourceCommit`, and `metadata.inputHash` filled in by the generator, and rebuilds `AGENTS.md`. No network needed.
@@ -238,7 +238,7 @@ An engineer is migrating the `automatic-apis` rule from `synthesized` to a docs-
      priority: 2
      sources:
        - path: reference/rest/overview.md
-         section: "How the REST Interface Works"
+         section: 'How the REST Interface Works'
      mode: direct
    ```
 2. Runs `npm run generate` locally against a built docs checkout. The generator reads the flat-markdown for that section from the docs build output, writes `rules/automatic-apis.md` with the manifest-declared frontmatter (plus `metadata.mode: direct`, `metadata.sourceCommit`, `metadata.inputHash`), and inlines the flat-markdown verbatim as the body. No LLM call, no network call. Refreshes `AGENTS.md`.
@@ -277,7 +277,7 @@ Work in `HarperFast/documentation`:
 - Add a verification step to `deploy.yaml` that fails the build if expected `.md` artifacts are missing under `build/`.
 - Optionally adopt `@signalwire/docusaurus-theme-llms-txt` for the user-facing "Copy Page" button. Independent of the skills work, but a nice UX bonus for docs visitors.
 
-This phase ships nothing skills-side. It produces the artifact (per-route `.md` files in `build/`) that every later phase consumes. The plugin's deployed `.md` files (at `https://docs.harperdb.io/<path>.md`) and `llms.txt` index also become available at the docs site for *third-party* consumers — anyone outside Harper who wants to feed our docs into their own LLM tooling can use them. The skills repo doesn't consume those URLs; it reads the same files from a local docs build instead (see Phase 2).
+This phase ships nothing skills-side. It produces the artifact (per-route `.md` files in `build/`) that every later phase consumes. The plugin's deployed `.md` files (at `https://docs.harperdb.io/<path>.md`) and `llms.txt` index also become available at the docs site for _third-party_ consumers — anyone outside Harper who wants to feed our docs into their own LLM tooling can use them. The skills repo doesn't consume those URLs; it reads the same files from a local docs build instead (see Phase 2).
 
 **Fallback if the plugin can't be made to fit.** If a Harper-specific edge case turns up that the plugin's `remarkPlugins` / `rehypePlugins` / `RouteRule` hooks can't address, the fallback is to build our own pipeline using the same architectural pattern (postBuild route iteration + HTML→MD via `unified`). The two-layer override-handler design we sketched in earlier discussion remains the documented fallback approach. This is unlikely to be needed but is recorded here so the team isn't blocked if it is.
 
@@ -373,15 +373,15 @@ When this layer fails, the error message names the specific divergent field and 
 
 Once the manifest and frontmatter agree, body content is checked according to mode:
 
-| Check | `generate` | `direct` | `synthesized` |
-|---|:---:|:---:|:---:|
-| AGENTS.md round-trip equality | ✓ | ✓ | ✓ |
-| Cross-link integrity (`rules/<slug>.md` body links resolve) | ✓ | ✓ | ✓ |
-| Source-exists (every manifest source resolves in docs) | ✓ | ✓ | — |
-| Must-cover assertions (every manifest string appears in body) | ✓ | — | — |
-| Minimum body length (sanity floor against degenerate LLM output) | ✓ | — | — |
-| No leaked MDX (no stray JSX in body) | ✓ | ✓ | — |
-| Body byte-identical to fetched flat-markdown | — | ✓ | — |
+| Check                                                            | `generate` | `direct` | `synthesized` |
+| ---------------------------------------------------------------- | :--------: | :------: | :-----------: |
+| AGENTS.md round-trip equality                                    |     ✓      |    ✓     |       ✓       |
+| Cross-link integrity (`rules/<slug>.md` body links resolve)      |     ✓      |    ✓     |       ✓       |
+| Source-exists (every manifest source resolves in docs)           |     ✓      |    ✓     |       —       |
+| Must-cover assertions (every manifest string appears in body)    |     ✓      |    —     |       —       |
+| Minimum body length (sanity floor against degenerate LLM output) |     ✓      |    —     |       —       |
+| No leaked MDX (no stray JSX in body)                             |     ✓      |    ✓     |       —       |
+| Body byte-identical to fetched flat-markdown                     |     —      |    ✓     |       —       |
 
 Notes:
 
@@ -400,4 +400,3 @@ Each question is annotated with the earliest phase it blocks; resolve before tha
 - **(Phase 2)** Anthropic API key provisioning for the skills repo's Actions runner — who owns it.
 - **(Phase 2)** Confirm `SKILL.md` is "authored top + generated index at the bottom" — i.e., the rule list table is regenerated, the upper prose is not.
 - **(Phase 4)** Slack channel + webhook for stale-PR and failure notifications.
-

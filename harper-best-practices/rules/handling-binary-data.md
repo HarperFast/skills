@@ -1,6 +1,8 @@
 ---
 name: handling-binary-data
 description: How to store and serve binary data like images or audio in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Handling Binary Data

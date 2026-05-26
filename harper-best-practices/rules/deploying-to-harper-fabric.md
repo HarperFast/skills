@@ -1,6 +1,8 @@
 ---
 name: deploying-to-harper-fabric
 description: How to deploy a Harper application to the Harper Fabric cloud.
+metadata:
+  mode: synthesized
 ---
 
 # Deploying to Harper Fabric

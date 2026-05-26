@@ -1,6 +1,8 @@
 ---
 name: custom-resources
 description: How to define custom REST endpoints with JavaScript or TypeScript in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Custom Resources

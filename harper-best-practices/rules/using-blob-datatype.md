@@ -1,6 +1,8 @@
 ---
 name: using-blob-datatype
 description: How to use the Blob data type for efficient binary storage in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Using Blob Datatype

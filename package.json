@@ -27,7 +27,7 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"format": "oxfmt",
-		"validate": "npm run build && oxfmt --check && node scripts/validate-skills.mjs"
+		"validate": "npm run build && oxfmt --check && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
 	},
 	"devDependencies": {
 		"@commitlint/cli": "^20.4.1",
@@ -41,6 +41,7 @@
 		"conventional-changelog-conventionalcommits": "^9.1.0",
 		"dprint": "^0.51.1",
 		"gray-matter": "^4.0.3",
+		"js-yaml": "^4.1.1",
 		"oxfmt": "^0.41.0",
 		"semantic-release": "^25.0.3"
 	}

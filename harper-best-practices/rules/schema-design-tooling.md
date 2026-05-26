@@ -1,6 +1,8 @@
 ---
 name: schema-design-tooling
 description: Best practices for Harper schema design, including core directives and GraphQL tooling configuration.
+metadata:
+  mode: synthesized
 ---
 
 # Schema Design & Tooling

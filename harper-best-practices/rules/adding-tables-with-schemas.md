@@ -1,6 +1,8 @@
 ---
 name: adding-tables-with-schemas
 description: Guidelines for adding tables to a Harper database using GraphQL schemas.
+metadata:
+  mode: synthesized
 ---
 
 # Adding Tables with Schemas

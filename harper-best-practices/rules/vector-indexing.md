@@ -2,160 +2,96 @@
 name: vector-indexing
 description: How to enable and query vector indexes for similarity search in Harper.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/database/schema.md#Vector Indexing
+  sourceCommit: e8fc9e51c7c04637b8ec02d073eed42d495034f1
+  inputHash: 9c47b18c8795e403
 ---
 
 # Vector Indexing
 
-Instructions for the agent to follow when implementing vector search in Harper.
+Instructions for the agent to follow when enabling and querying vector indexes for similarity search in Harper using the HNSW algorithm.
 
 ## When to Use
 
-Use this skill when you need to perform similarity searches on high-dimensional data, such as AI embeddings for semantic search, recommendations, or image retrieval.
+Apply this rule when adding a vector index to a Harper table schema to support approximate nearest-neighbor (similarity) search on high-dimensional float arrays. Use it whenever a query requires ranking results by vector similarity, optionally combined with filter conditions.
 
 ## How It Works
 
-1. **Enable Vector Indexing**: In your GraphQL schema, add `@indexed(type: "HNSW")` to a numeric array field:
+1. **Define the table schema with a vector index**: Add `@indexed(type: "HNSW")` to a `[Float]` attribute on a `@table` type. See [adding-tables-with-schemas](adding-tables-with-schemas.md) for general schema setup.
+
    ```graphql
-   type Product @table {
-   	id: ID @primaryKey
+   type Document @table {
+   	id: Long @primaryKey
    	textEmbeddings: [Float] @indexed(type: "HNSW")
    }
    ```
-2. **Configure Index Options (Optional)**: Fine-tune the index with parameters like `distance` (`cosine` or `euclidean`), `M`, and `efConstruction`.
-3. **Query with Vector Search**: Use `tables.Table.search()` with a `sort` object containing the `target` vector:
+
+2. **Query by nearest neighbors**: Call `.search()` with a `sort` parameter specifying the indexed `attribute` and a `target` vector. The `target` is the query vector to compare against.
+
    ```javascript
-   const results = await tables.Product.search({
-     select: ['name', '$distance'],
-     sort: {
-       attribute: 'textEmbeddings',
-       target: [0.1, 0.2, ...], // query vector
-     },
-     limit: 5,
+   let results = Document.search({
+   	sort: { attribute: 'textEmbeddings', target: searchVector },
+   	limit: 5,
    });
    ```
-4. **Filter by Distance**: Use `conditions` with a `target` vector and a `comparator` (e.g., `lt`) to return results within a similarity threshold:
+
+3. **Combine with filter conditions**: Add a `conditions` array alongside `sort` to filter results before ranking by similarity.
+
    ```javascript
-   const results = await tables.Product.search({
-   	conditions: {
-   		attribute: 'textEmbeddings',
-   		comparator: 'lt',
-   		value: 0.1,
-   		target: searchVector,
-   	},
+   let results = Document.search({
+   	conditions: [{ attribute: 'price', comparator: 'lt', value: 50 }],
+   	sort: { attribute: 'textEmbeddings', target: searchVector },
+   	limit: 5,
    });
    ```
-5. **Generate Embeddings**: Use external services (OpenAI, Ollama) to generate the numeric vectors before storing or searching them in Harper.
 
-```typescript
-import OpenAI from 'openai';
-import ollama from 'ollama';
+4. **Tune HNSW parameters**: Pass additional parameters directly in the `@indexed` directive to control index quality and performance.
 
-const { Product } = tables;
-const openai = new OpenAI();
-// the name of the OpenAI embedding model
-const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
-
-// the name of the Ollama embedding model
-const OLLAMA_EMBEDDING_MODEL = 'llama3';
-
-const SIMILARITY_THRESHOLD = 0.5;
-
-export class ProductSearch extends Resource {
-	// based on env variable we choose the appropriate embedding generator
-	generateEmbedding =
-		process.env.EMBEDDING_GENERATOR === 'ollama'
-			? this._generateOllamaEmbedding
-			: this._generateOpenAIEmbedding;
-
-	/**
-	 * Executes a search query using a generated text embedding and returns the matching products.
-	 *
-	 * @param {Object} data - The input data for the request.
-	 * @param {string} data.prompt - The prompt to generate the text embedding from.
-	 * @return {Promise<Array>} Returns a promise that resolves to an array of products matching the conditions,
-	 * including fields: name, description, price, and $distance.
-	 */
-	async post(data) {
-		const embedding = await this.generateEmbedding(data.prompt);
-
-		return await Product.search({
-			select: ['name', 'description', 'price', '$distance'],
-			conditions: {
-				attribute: 'textEmbeddings',
-				comparator: 'lt',
-				value: SIMILARITY_THRESHOLD,
-				target: embedding[0],
-			},
-			limit: 5,
-		});
-	}
-
-	/**
-	 * Generates an embedding using the Ollama API.
-	 *
-	 * @param {string} promptData - The input data for which the embedding is to be generated.
-	 * @return {Promise<number[][]>} A promise that resolves to the generated embedding as an array of numbers.
-	 */
-	async _generateOllamaEmbedding(promptData) {
-		const embedding = await ollama.embed({
-			model: OLLAMA_EMBEDDING_MODEL,
-			input: promptData,
-		});
-		return embedding?.embeddings;
-	}
-
-	/**
-	 * Generates OpenAI embeddings based on the given prompt data.
-	 *
-	 * @param {string} promptData - The input data used for generating the embedding.
-	 * @return {Promise<number[][]>} A promise that resolves to an array of embeddings, where each embedding is an array of floats.
-	 */
-	async _generateOpenAIEmbedding(promptData) {
-		const embedding = await openai.embeddings.create({
-			model: OPENAI_EMBEDDING_MODEL,
-			input: promptData,
-			encoding_format: 'float',
-		});
-
-		let embeddings = [];
-		embedding.data.forEach((embeddingData) => {
-			embeddings.push(embeddingData.embedding);
-		});
-
-		return embeddings;
-	}
-}
-```
+   | Parameter              | Default           | Description                                                                                         |
+   | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
+   | `distance`             | `"cosine"`        | Distance function: `"euclidean"` or `"cosine"` (negative cosine similarity)                         |
+   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance    |
+   | `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data |
+   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)          |
+   | `mL`                   | computed from `M` | Normalization factor for level generation                                                           |
+   | `efSearchConstruction` | `50`              | Max nodes explored during search                                                                    |
 
 ## Examples
 
-Sample request to the `ProductSearch` resource which prompts to find "shorts for the gym":
+Schema with default settings:
 
-```bash
-curl -X POST "http://localhost:9926/ProductSearch/" \
--H "Accept: application/json" \
--H "Content-Type: application/json" \
--H "Authorization: Basic <YOUR_AUTH>" \
--d '{"prompt": "shorts for the gym"}'
+```graphql
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float] @indexed(type: "HNSW")
+}
 ```
 
----
+Schema with custom parameters (euclidean distance, routing disabled, higher search recall):
 
-## When to Use Vector Indexing
+```graphql
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float]
+		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efSearchConstruction: 100)
+}
+```
 
-Vector indexing is ideal when:
+Filtered nearest-neighbor search:
 
-- Storing embedding vectors from ML models
-- Performing semantic or similarity-based search
-- Working with high-dimensional numeric data
-- Exact-match indexes are insufficient
+```javascript
+let results = Document.search({
+	conditions: [{ attribute: 'price', comparator: 'lt', value: 50 }],
+	sort: { attribute: 'textEmbeddings', target: searchVector },
+	limit: 5,
+});
+```
 
----
+## Notes
 
-## Summary
-
-- Vector indexing enables fast similarity search on numeric arrays
-- Defined using `@indexed(type: "HNSW")`
-- Queried using a target vector in search sorting
-- Tunable for performance and accuracy
+- The default `distance` function is `cosine`. Use `"euclidean"` when your vectors are not normalized or when Euclidean geometry better fits your use case.
+- Increasing `efConstruction` improves index recall at the cost of build performance.
+- `mL` is computed automatically from `M` unless explicitly overridden.
+- Always pair `sort` with a `limit` to bound the number of nearest-neighbor results returned.

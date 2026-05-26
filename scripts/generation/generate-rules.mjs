@@ -195,9 +195,10 @@ async function main() {
 			await fs.writeFile(agentsPath, agentsMd, 'utf-8');
 			// Format AGENTS.md itself so the committed file equals
 			// oxfmt(assemble(formatted bodies)) — the exact value the validator
-			// recomputes for its round-trip equality check.
+			// recomputes for its round-trip equality check. execFileSync (no
+			// shell) avoids any quoting concern with the path argument.
 			try {
-				execSync(`npx oxfmt ${JSON.stringify(agentsPath)}`, { stdio: 'inherit' });
+				execFileSync('npx', ['oxfmt', agentsPath], { stdio: 'inherit' });
 			} catch (err) {
 				console.warn(`Could not format ${skill.agentsFile}: ${err.message}`);
 			}

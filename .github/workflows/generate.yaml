@@ -121,6 +121,8 @@ jobs:
           git checkout -B "$BRANCH"
           git add harper-best-practices
           git commit -m "docs: regenerate rules from documentation@${SHORT}"
+          # Force is intentional: each run replaces the rolling branch's prior
+          # commit in place so the open sync PR always reflects the latest docs.
           git push --force origin "$BRANCH"
 
           STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")

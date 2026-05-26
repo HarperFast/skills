@@ -27,10 +27,18 @@ export function composeRuleFile(frontmatter, body) {
 
 // Shift every Markdown ATX heading in `body` down by `delta` levels, capping at
 // h6. Used to nest rule bodies under category/rule headings in AGENTS.md.
+// Skips lines inside fenced code blocks so that `#`-leading code (YAML/bash/
+// GraphQL comments) is never mistaken for a heading.
 function shiftHeadings(body, delta) {
+	let inFence = false;
 	return body
 		.split('\n')
 		.map((line) => {
+			if (/^\s*(`{3,}|~{3,})/.test(line)) {
+				inFence = !inFence;
+				return line;
+			}
+			if (inFence) return line;
 			const m = line.match(/^(#{1,6})(\s+.*)$/);
 			if (!m) return line;
 			const level = Math.min(6, m[1].length + delta);

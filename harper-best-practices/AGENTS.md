@@ -926,9 +926,9 @@ Create a `.github/workflows/deploy.yaml` file with the following content:
 name: Deploy to Harper Fabric
 on:
   workflow_dispatch:
-###  push:
-###    branches:
-###      - main
+#  push:
+#    branches:
+#      - main
 concurrency:
   group: main
   cancel-in-progress: false

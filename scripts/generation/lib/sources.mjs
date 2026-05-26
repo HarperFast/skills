@@ -35,15 +35,24 @@ export async function resolveSources(docsBuildDir, sources) {
 
 // Extract the Markdown subtree under the heading whose text matches `section`.
 // The slice runs from the matching heading up to (but not including) the next
-// heading at the same or shallower level. Throws if the heading isn't found.
+// heading at the same or shallower level. Lines inside fenced code blocks are
+// not considered headings (a `## foo` inside a ``` block is code, not a
+// boundary). Throws if the heading isn't found.
 export function sliceSection(markdown, section, sourcePathForError = '') {
 	const lines = markdown.split('\n');
 	const headingRe = /^(#{1,6})\s+(.*?)\s*$/;
+	const fenceRe = /^\s*(`{3,}|~{3,})/;
 	const target = normalizeHeading(section);
 
+	let inFence = false;
 	let start = -1;
 	let startLevel = 0;
 	for (let i = 0; i < lines.length; i++) {
+		if (fenceRe.test(lines[i])) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
 		const m = lines[i].match(headingRe);
 		if (m && normalizeHeading(m[2]) === target) {
 			start = i;
@@ -56,8 +65,16 @@ export function sliceSection(markdown, section, sourcePathForError = '') {
 		throw new Error(`Section heading "${section}" not found${where}`);
 	}
 
+	// The start line is a heading (never inside a fence), so fence state at
+	// start+1 is closed.
+	inFence = false;
 	let end = lines.length;
 	for (let i = start + 1; i < lines.length; i++) {
+		if (fenceRe.test(lines[i])) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
 		const m = lines[i].match(headingRe);
 		if (m && m[1].length <= startLevel) {
 			end = i;

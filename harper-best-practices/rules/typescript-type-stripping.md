@@ -1,6 +1,8 @@
 ---
 name: typescript-type-stripping
 description: How to run TypeScript files directly in Harper without a build step.
+metadata:
+  mode: synthesized
 ---
 
 # TypeScript Type Stripping

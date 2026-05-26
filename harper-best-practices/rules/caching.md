@@ -1,6 +1,8 @@
 ---
 name: caching
 description: How to implement integrated data caching in Harper from external sources.
+metadata:
+  mode: synthesized
 ---
 
 # Caching

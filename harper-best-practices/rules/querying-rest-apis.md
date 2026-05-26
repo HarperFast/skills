@@ -1,6 +1,8 @@
 ---
 name: querying-rest-apis
 description: How to use query parameters to filter, sort, and paginate Harper REST APIs.
+metadata:
+  mode: synthesized
 ---
 
 # Querying REST APIs

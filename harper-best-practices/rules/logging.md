@@ -1,6 +1,8 @@
 ---
 name: logging
 description: Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
+metadata:
+  mode: synthesized
 ---
 
 # Logging Best Practices

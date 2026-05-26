@@ -1,6 +1,8 @@
 ---
 name: extending-tables
 description: How to add custom logic to automatically generated table resources in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Extending Tables

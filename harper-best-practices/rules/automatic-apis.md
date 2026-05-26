@@ -1,6 +1,8 @@
 ---
 name: automatic-apis
 description: How to use Harper's automatically generated REST and WebSocket APIs.
+metadata:
+  mode: synthesized
 ---
 
 # Automatic APIs

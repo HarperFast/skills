@@ -1,6 +1,8 @@
 ---
 name: creating-a-fabric-account-and-cluster
 description: How to create a Harper Fabric account, organization, and cluster.
+metadata:
+  mode: synthesized
 ---
 
 # Creating a Harper Fabric Account and Cluster

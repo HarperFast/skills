@@ -1,6 +1,8 @@
 ---
 name: defining-relationships
 description: How to define and use relationships between tables in Harper using GraphQL.
+metadata:
+  mode: synthesized
 ---
 
 # Defining Relationships

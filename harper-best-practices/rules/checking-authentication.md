@@ -1,6 +1,8 @@
 ---
 name: checking-authentication
 description: How to handle user authentication and sessions in Harper Resources.
+metadata:
+  mode: synthesized
 ---
 
 # Checking Authentication

@@ -1,6 +1,8 @@
 ---
 name: vector-indexing
 description: How to enable and query vector indexes for similarity search in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Vector Indexing

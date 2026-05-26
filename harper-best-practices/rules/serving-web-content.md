@@ -1,6 +1,8 @@
 ---
 name: serving-web-content
 description: How to serve static files and integrated Vite/React applications in Harper.
+metadata:
+  mode: synthesized
 ---
 
 # Serving Web Content

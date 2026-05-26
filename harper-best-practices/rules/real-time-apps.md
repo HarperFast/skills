@@ -1,6 +1,8 @@
 ---
 name: real-time-apps
 description: How to build real-time features in Harper using WebSockets and Pub/Sub.
+metadata:
+  mode: synthesized
 ---
 
 # Real-time Applications

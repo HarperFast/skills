@@ -1,6 +1,8 @@
 ---
 name: programmatic-table-requests
 description: How to interact with Harper tables programmatically using the `tables` object.
+metadata:
+  mode: synthesized
 ---
 
 # Programmatic Table Requests

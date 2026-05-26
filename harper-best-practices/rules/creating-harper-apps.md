@@ -1,6 +1,8 @@
 ---
 name: creating-harper-apps
 description: How to initialize a new Harper application using the CLI.
+metadata:
+  mode: synthesized
 ---
 
 # Creating Harper Applications

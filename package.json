@@ -27,7 +27,8 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"format": "oxfmt",
-		"validate": "npm run build && oxfmt --check && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
+		"format:check": "oxfmt --check",
+		"validate": "npm run format:check && npm run build && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
 	},
 	"devDependencies": {
 		"@commitlint/cli": "^20.4.1",

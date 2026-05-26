@@ -63,19 +63,17 @@ function resolveDocsSha(docsRepoPath) {
 	}
 }
 
-async function exists(p) {
-	try {
-		await fs.access(p);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-// Read the existing rule file's frontmatter metadata, if the file exists.
+// Read the existing rule file's frontmatter metadata, or null if the file
+// doesn't exist yet. Attempt the read and handle ENOENT rather than checking
+// for existence first — a separate check would race with the read.
 async function readExistingMeta(filePath) {
-	if (!(await exists(filePath))) return null;
-	const raw = await fs.readFile(filePath, 'utf-8');
+	let raw;
+	try {
+		raw = await fs.readFile(filePath, 'utf-8');
+	} catch (err) {
+		if (err.code === 'ENOENT') return null;
+		throw err;
+	}
 	return matter(raw).data?.metadata ?? null;
 }
 
@@ -83,15 +81,6 @@ async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const docsRepoPath = path.resolve(args.docsPath);
 	const docsBuildDir = path.join(docsRepoPath, 'build');
-
-	if (!(await exists(docsBuildDir))) {
-		console.error(
-			`Docs build directory not found: ${docsBuildDir}\n` +
-				`Check out HarperFast/documentation and run \`npm ci && npm run build\` there,\n` +
-				`then re-run with --docs-path <that-checkout> (or set DOCS_PATH).`,
-		);
-		process.exit(1);
-	}
 
 	const docsSha = resolveDocsSha(docsRepoPath);
 	console.log(`Docs build: ${docsBuildDir}`);
@@ -122,12 +111,19 @@ async function main() {
 				continue;
 			}
 
-			// Resolve + hash sources.
+			// Resolve + hash sources. A missing source surfaces here at the
+			// point of use (rather than via an upfront existence check).
 			let sourceContent;
 			try {
 				sourceContent = await resolveSources(docsBuildDir, entry.sources);
 			} catch (err) {
 				console.error(`✗ ${entry.rule}: failed to resolve sources — ${err.message}`);
+				if (err.code === 'ENOENT') {
+					console.error(
+						`  No flat-markdown found under ${docsBuildDir}. ` +
+							`Run \`npm ci && npm run build\` in the docs checkout (or fix --docs-path).`,
+					);
+				}
 				process.exit(1);
 			}
 			const inputHash = computeInputHash(sourceContent);

@@ -143,7 +143,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
 
 #### How It Works
 
-1. **Declare a vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
+1. **Declare the vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
 
    ```graphql
    type Document @table {
@@ -152,7 +152,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    }
    ```
 
-2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object specifying `attribute` (the indexed field) and `target` (the query vector). Include `limit` to cap results.
+2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object containing `attribute` (the indexed field name) and `target` (the query vector). Include `limit` to cap results.
 
    ```javascript
    let results = Document.search({
@@ -161,7 +161,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-3. **Combine HNSW with filter conditions**: Add a `conditions` array alongside `sort` to pre-filter records before ranking by similarity.
+3. **Combine with filter conditions**: Add a `conditions` array alongside `sort` to pre-filter records before ranking by similarity.
 
    ```javascript
    let results = Document.search({
@@ -171,7 +171,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-4. **Filter by distance threshold**: Place `target` directly on a condition (alongside `attribute`, `comparator`, and `value`) to return only records whose distance to the target vector is below a threshold. Use this form to bound result quality by a similarity cutoff rather than ranking.
+4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. Omit `sort`.
 
    ```javascript
    let results = Document.search({
@@ -184,7 +184,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-5. **Include computed distance in results**: Add `'$distance'` to the `select` array to return the computed distance from the target vector alongside each record. `$distance` works in both `sort`-based and `conditions`-based queries.
+5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Works with both `sort`-based and `conditions`-based queries.
 
    ```javascript
    let results = Document.search({
@@ -194,7 +194,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance:
+6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance.
 
    | Parameter              | Default           | Description                                                                                         |
    | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
@@ -217,7 +217,7 @@ type Document @table {
 }
 ```
 
-**Nearest-neighbor search with distance output:**
+**Nearest-neighbor search with distance score:**
 
 ```javascript
 let results = Document.search({
@@ -242,10 +242,10 @@ let results = Document.search({
 
 #### Notes
 
-- The default `distance` function is `cosine`. To use Euclidean distance, set `distance: "euclidean"` in the `@indexed` directive.
-- `efConstruction` controls index build quality; increase it to improve recall at the cost of slower indexing.
-- `$distance` is a special field — prefix it with `$` exactly as shown; it is not a schema attribute.
-- `target` is required in both `sort`-based and threshold-based condition queries to identify the reference vector for distance computation.
+- The default `distance` function is `cosine`. Pass `distance: "euclidean"` to switch.
+- `efConstruction` controls index build quality; raising it improves recall at the cost of build time.
+- `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.
+- Use the threshold (`conditions` + `target`) form when you want to bound result quality by a similarity cutoff rather than ranking by similarity.
 
 ### 1.5 Using Blob Datatype
 
@@ -322,298 +322,617 @@ Use this skill when you need to store binary files (images, audio, etc.) in the 
 
 ### 2.1 Automatic APIs
 
-Instructions for the agent to follow when utilizing Harper's automatic APIs.
+Instructions for the agent to follow when enabling and using Harper's automatically generated REST and WebSocket APIs.
 
 #### When to Use
 
-Use this skill when you want to interact with Harper tables via REST or WebSockets without writing custom resource logic. This is ideal for basic CRUD operations and real-time updates.
+Apply this rule when adding REST or WebSocket API access to Harper tables or custom resources. Use it when configuring `config.yaml` to expose endpoints, mapping HTTP methods to resource operations, or implementing real-time WebSocket connections on a resource class.
 
 #### How It Works
 
-1. **Enable REST in `config.yaml`**: REST endpoints are **not active by default**. You must explicitly enable them:
+1. **Enable the REST plugin**: Add `rest: true` to your application's `config.yaml`. This activates the HTTP REST interface and enables WebSocket support by default.
+
    ```yaml
    rest: true
    ```
-   Without this, `@export`ed tables will not respond to HTTP requests.
-2. **Enable Automatic APIs**: Ensure your GraphQL schema includes the `@export` directive for the table.
-3. **Access REST Endpoints**: Use the standard endpoints for your table (Note: Paths are case-sensitive).
-4. **Use Automatic WebSockets**: Connect to `wss://your-harper-instance/{TableName}` to receive events whenever updates are made to that table. This is the easiest way to add real-time capabilities. (Use `ws://` for local development without SSL). For more complex needs, see [Real-time Apps](real-time-apps.md).
-5. **Apply Filtering and Querying**: Use query parameters with `GET /{TableName}/` and `DELETE /{TableName}/`. See the [Querying REST APIs](querying-rest-apis.md) skill for advanced details.
-6. **Customize if Needed**: If the automatic APIs don't meet your requirements, [customize the resources](./custom-resources.md).
+
+   To configure optional behavior:
+
+   ```yaml
+   rest:
+     lastModified: true # enables Last-Modified response header support
+     webSocket: false # disables automatic WebSocket support (enabled by default)
+   ```
+
+2. **Export your resource in the schema**: Tables are not exposed by default. Use the `@export` directive in your schema definition to make a table available as a REST endpoint. The exported name defines the base URL path, served on the application HTTP server port (default `9926`).
+
+3. **Use the correct URL structure**: The REST interface follows a consistent path convention.
+
+   | Path                                         | Description                                                                        |
+   | -------------------------------------------- | ---------------------------------------------------------------------------------- |
+   | `/my-resource`                               | Returns a description of the resource (e.g., table metadata)                       |
+   | `/my-resource/`                              | Trailing slash — represents the full collection; append query parameters to search |
+   | `/my-resource/record-id`                     | A specific record identified by its primary key                                    |
+   | `/my-resource/record-id/`                    | Trailing slash — collection of records with the given id prefix                    |
+   | `/my-resource/record-id/with/multiple/parts` | Record id with multiple path segments                                              |
+
+4. **Map HTTP methods to operations**: Each HTTP method maps to a resource method and operation.
+   - **GET** — Retrieve a record or search. Calls `get()`.
+
+     ```
+     GET /MyTable/123
+     GET /MyTable/?name=Harper
+     GET /MyTable/123.propertyName
+     ```
+
+     Responses include an `ETag` header. Clients may send `If-None-Match` to receive `304 Not Modified` when the record is unchanged.
+
+   - **PUT** — Create or replace a record (upsert). Calls `put(record)`. Properties not in the body are removed.
+
+     ```
+     PUT /MyTable/123
+     Content-Type: application/json
+
+     { "name": "some data" }
+     ```
+
+   - **POST** — Create a new record without specifying a primary key. Calls `post(data)`. The assigned key is returned in the `Location` response header.
+
+     ```
+     POST /MyTable/
+     Content-Type: application/json
+
+     { "name": "some data" }
+     ```
+
+   - **PATCH** — Partially update a record, merging only provided properties. Unspecified properties are preserved.
+
+     ```
+     PATCH /MyTable/123
+     Content-Type: application/json
+
+     { "status": "active" }
+     ```
+
+   - **DELETE** — Delete a record or all records matching a query.
+     ```
+     DELETE /MyTable/123
+     DELETE /MyTable/?status=archived
+     ```
+
+5. **Access the auto-generated OpenAPI spec**: Harper generates an OpenAPI specification for all exported resources. Retrieve it at:
+
+   ```
+   GET /openapi
+   ```
+
+6. **Connect via WebSocket**: When `rest` is enabled, WebSocket support is on by default. Connect to a resource URL to subscribe to change events for that resource.
+
+   ```javascript
+   let ws = new WebSocket('wss://server/my-resource/341');
+   ws.onmessage = (event) => {
+   	let data = JSON.parse(event.data);
+   };
+   ```
+
+   Connecting to `wss://server/my-resource/341` accesses the `my-resource` resource with record id `341` and subscribes to it. When the record changes or a message is published to it, the WebSocket connection receives the update.
+
+7. **Implement a custom `connect()` handler**: Override `connect(incomingMessages)` on a resource class to control WebSocket behavior. The method must return an async iterable or generator that produces messages to send to the client.
 
 #### Examples
 
-##### Schema Configuration
+**Simple echo server using an async generator**:
 
-```graphql
-type MyTable @table @export {
-	id: ID @primaryKey
-	name: String
-}
-```
-
-##### Common REST Operations
-
-- **List Records**: `GET /MyTable/`
-- **Create Record**: `POST /MyTable/`
-- **Update Record**: `PATCH /MyTable/{id}`
-
-### 2.2 Querying REST APIs
-
-Instructions for the agent to follow when querying Harper's REST APIs.
-
-#### When to Use
-
-Use this skill when you need to perform advanced data retrieval (filtering, sorting, pagination, joins) using Harper's automatic REST endpoints.
-
-#### How It Works
-
-1. **Basic Filtering**: Use attribute names as query parameters: `GET /Table/?key=value`.
-2. **Use Comparison Operators**: Append operators like `gt`, `ge`, `lt`, `le`, `ne` using FIQL-style syntax: `GET /Table/?price=gt=100`.
-3. **Apply Logic and Grouping**: Use `&` for AND, `|` for OR, and `()` for grouping: `GET /Table/?(rating=5|featured=true)&price=lt=50`.
-4. **Select Specific Fields**: Use `select()` to limit returned attributes: `GET /Table/?select(name,price)`.
-5. **Paginate Results**: Use `limit(count)` or `limit(offset, count)` to set the number of records to return and skip.
-   - Example (first 10): `GET /Table/?limit(10)`
-   - Example (skip 20, return 10): `GET /Table/?limit(20, 10)`
-6. **Sort Results**: Use `sort()` with `+` (asc) or `-` (desc) before the field name. Avoid `sort=field` format.
-   - Example (asc): `GET /Table/?sort(+name)`
-   - Example (desc): `GET /Table/?sort(-price)`
-   - Example (combined): `GET /Table/?sort(-price,+name)`
-7. **Query Relationships**: Use dot syntax for tables linked with `@relationship`: `GET /Book/?author.name=Harper`.
-
-### 2.3 Real-time Applications
-
-Instructions for the agent to follow when building real-time applications in Harper.
-
-#### When to Use
-
-Use this skill when you need to stream live updates to clients, implement chat features, or provide real-time data synchronization between the database and a frontend.
-
-#### How It Works
-
-1. **Check Automatic WebSockets**: If you only need to stream table changes, use [Automatic APIs](automatic-apis.md) which provide a WebSocket endpoint for every `@export`ed table.
-2. **Implement `connect` in a Resource**: For custom bi-directional logic, implement the `connect` method.
-3. **Use Pub/Sub**: Use `tables.TableName.subscribe(query)` to listen for specific data changes and stream them to the client.
-4. **Handle SSE**: Ensure your `connect` method gracefully handles cases where `incomingMessages` is null (Server-Sent Events).
-5. **Connect from Client**: Use standard WebSockets (`new WebSocket('wss://...')`) to connect to your resource endpoint. Ensure you use the appropriate scheme (`ws://` for HTTP, `wss://` for HTTPS).
-
-#### Examples
-
-##### Bi-directional WebSocket Resource
-
-```typescript
-import { Resource, tables } from 'harper';
-
-export class MySocket extends Resource {
-	async *connect(target, incomingMessages) {
-		// Subscribe to table changes
-		const subscription = await tables.MyTable.subscribe(target);
-		if (!incomingMessages) {
-			return subscription; // SSE mode
-		}
-
-		// Handle incoming client messages
+```javascript
+export class Echo extends Resource {
+	async *connect(incomingMessages) {
 		for await (let message of incomingMessages) {
-			yield { received: message };
+			yield message; // echo each message back
 		}
 	}
 }
 ```
 
-### 2.4 Checking Authentication
+**Using the default `connect()` with event-style access and a timer**:
 
-Instructions for the agent to follow when handling authentication and sessions.
+```javascript
+export class Example extends Resource {
+	connect(incomingMessages) {
+		let outgoingMessages = super.connect();
+
+		let timer = setInterval(() => {
+			outgoingMessages.send({ greeting: 'hi again!' });
+		}, 1000);
+
+		incomingMessages.on('data', (message) => {
+			outgoingMessages.send(message); // echo incoming messages
+		});
+
+		outgoingMessages.on('close', () => {
+			clearInterval(timer);
+		});
+
+		return outgoingMessages;
+	}
+}
+```
+
+**Minimal `config.yaml` enabling REST with WebSocket disabled**:
+
+```yaml
+rest:
+  webSocket: false
+```
+
+#### Notes
+
+- Tables must be explicitly exported using `@export` in the schema — they are not exposed by default.
+- `rest: true` is the minimal configuration to enable both REST and WebSocket support. See [real-time-apps.md](real-time-apps.md) for patterns around real-time WebSocket usage.
+- For full query syntax on `GET` and `DELETE` with query parameters, see [querying-rest-apis.md](querying-rest-apis.md).
+- The default `connect()` returns an iterable with a `send(message)` method and a `close` event for cleanup on disconnect.
+- For MQTT over WebSockets, set the sub-protocol header `Sec-WebSocket-Protocol: mqtt`.
+- In distributed environments, non-retained messages are delivered in the order received per node; retained messages (PUT/updated records) keep only the latest-timestamp version as the winning record across the cluster.
+- Use the `Content-Type` request header to specify body format and the `Accept` header to request a specific response format.
+
+### 2.2 Querying REST APIs
+
+Instructions for the agent to filter, sort, select, and paginate Harper REST API collections using URL query parameters.
 
 #### When to Use
 
-Use this skill when you need to implement sign-in/sign-out functionality, protect specific resource endpoints, or identify the currently logged-in user in a Harper application.
+Apply this rule when building or modifying code that queries Harper REST endpoints with filtering, sorting, field selection, or pagination. Use it whenever constructing URLs against collection paths exposed by Harper's automatic REST interface (see [automatic-apis.md](automatic-apis.md)).
 
 #### How It Works
 
-1. **Configure Harper for Sessions**: Ensure `harper-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
+1. **Filter by attribute**: Add query parameters matching attribute names and values. The queried attribute must be indexed.
+
+   ```
+   GET /Product/?category=software
+   GET /Product/?category=software&inStock=true
+   ```
+
+2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators directly in query parameter values.
+
+   | Operator     | Meaning                                |
+   | ------------ | -------------------------------------- |
+   | `==`         | Equal                                  |
+   | `=lt=`       | Less than                              |
+   | `=le=`       | Less than or equal                     |
+   | `=gt=`       | Greater than                           |
+   | `=ge=`       | Greater than or equal                  |
+   | `=ne=`, `!=` | Not equal                              |
+   | `=ct=`       | Contains (strings)                     |
+   | `=sw=`       | Starts with (strings)                  |
+   | `=ew=`       | Ends with (strings)                    |
+   | `=`, `===`   | Strict equality (no type conversion)   |
+   | `!==`        | Strict inequality (no type conversion) |
+
+   ```
+   GET /Product/?price=gt=100
+   GET /Product/?price=le=20
+   GET /Product/?name==Keyboard*
+   GET /Product/?category=software&price=gt=100&price=lt=200
+   ```
+
+   For date fields, URL-encode colons as `%3A`:
+
+   ```
+   GET /Product/?listDate=gt=2017-03-08T09%3A30%3A00.000Z
+   ```
+
+3. **Chain conditions for range queries**: Omit the attribute name on the second condition to apply it to the same attribute. Only `gt`/`ge` combined with `lt`/`le` is supported.
+
+   ```
+   GET /Product/?price=gt=100&lt=200
+   ```
+
+4. **Combine conditions with OR logic**: Use `|` instead of `&`.
+
+   ```
+   GET /Product/?rating=5|featured=true
+   ```
+
+5. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
+
+   ```
+   GET /Product/?rating=5|(price=gt=100&price=lt=200)
+   GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
+   ```
+
+   Construct grouped queries from JavaScript:
+
+   ```javascript
+   let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
+   ```
+
+6. **Select specific properties with `select(`**: Use `select()` to control which fields are returned.
+
+   | Syntax                                 | Returns                                     |
+   | -------------------------------------- | ------------------------------------------- |
+   | `?select(property)`                    | Values of a single property directly        |
+   | `?select(property1,property2)`         | Objects with only the specified properties  |
+   | `?select([property1,property2])`       | Arrays of property values                   |
+   | `?select(property1,)`                  | Objects with a single specified property    |
+   | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties |
+
+   ```
+   GET /Product/?category=software&select(name)
+   GET /Product/?brand.name=Microsoft&select(name,brand{name})
+   ```
+
+7. **Limit results with `limit(`**: Use `limit(end)` or `limit(start,end)` to paginate.
+
+   ```
+   GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
+   GET /Product/?rating=gt=3&limit(10,30)
+   ```
+
+8. **Sort results with `sort(`**: Use `sort(property)` or `sort(+property,-property,...)`. Prefix `+` or no prefix = ascending; `-` = descending.
+
+   ```
+   GET /Product/?rating=gt=3&sort(+name)
+   GET /Product/?sort(+rating,-price)
+   ```
+
+9. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined in the schema using `@relation`.
+
+   ```
+   GET /Product/?brand.name=Microsoft
+   GET /Brand/?products.name=Keyboard
+   ```
+
+   Use `select()` to include relationship attributes in the response (they are not included by default):
+
+   ```
+   GET /Product/?brand.name=Microsoft&select(name,brand{name})
+   ```
+
+10. **Access a specific property by URL**: Append the property name with dot syntax to the record ID. Only works for properties declared in the schema.
+    ```
+    GET /MyTable/123.propertyName
+    ```
+
+#### Examples
+
+**Range filter with select and limit:**
+
+```
+GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)&limit(20)
+```
+
+**Sort descending with multiple fields:**
+
+```
+GET /Product/?sort(+rating,-price)
+```
+
+**OR logic with grouping:**
+
+```
+GET /Product/?price=lt=100|[rating=5&[tag=fast|tag=scalable|tag=efficient]&inStock=true]
+```
+
+**Relationship join with nested select:**
+
+```
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+```
+
+**Schema defining a relationship for join queries:**
+
+```graphql
+type Product @table @export {
+	id: Long @primaryKey
+	name: String
+	brandId: Long @indexed
+	brand: Brand @relation(from: "brandId")
+}
+type Brand @table @export {
+	id: Long @primaryKey
+	name: String
+	products: [Product] @relation(to: "brandId")
+}
+```
+
+**Many-to-many relationship query:**
+
+```graphql
+type Product @table @export {
+	id: Long @primaryKey
+	name: String
+	resellerIds: [Long] @indexed
+	resellers: [Reseller] @relation(from: "resellerId")
+}
+```
+
+```
+GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
+```
+
+**Type conversion with explicit prefix:**
+
+```
+GET /Product/?price==number:123
+GET /Product/?active==boolean:true
+GET /Product/?listDate==date:2024-01-05T20%3A07%3A27.955Z
+```
+
+#### Notes
+
+- Only indexed attributes can be used as the primary filter; additional unindexed attributes can be combined with `&` once at least one indexed attribute is present.
+- For null value queries, use `?attribute=null`. Indexes must have been created with null indexing support; existing indexes must be removed and re-added to support null queries.
+- FIQL comparators (`==`, `!=`, `=gt=`, etc.) apply automatic type conversion based on value syntax or schema-declared type. Strict operators (`=`, `===`, `!==`) skip automatic type conversion.
+- Filtering by a related attribute produces INNER JOIN behavior (only records with a matching related record are returned). Using `select()` on a relationship without a filter produces LEFT JOIN behavior.
+- The array order of foreign key values in many-to-many relationships is preserved when resolving the relationship.
+- See [automatic-apis.md](automatic-apis.md) for how Harper tables are automatically exposed as REST endpoints.
+
+### 2.3 Real-Time Apps with WebSockets and Pub/Sub
+
+Instructions for the agent to follow when building real-time features in Harper using WebSockets and Pub/Sub.
+
+#### When to Use
+
+Apply this rule when implementing any feature that requires real-time bidirectional communication, live data streaming, or push-based updates in a Harper application. This includes chat, live dashboards, sensor feeds, and any scenario where clients must receive resource changes as they happen.
+
+#### How It Works
+
+1. **Enable WebSocket support**: WebSocket support is enabled automatically when the `rest` plugin is enabled. To explicitly disable it, set the following in your config:
+
    ```yaml
-   authentication:
-     authorizeLocal: false
-     enableSessions: true
+   rest:
+     webSocket: false
    ```
-2. **Implement Sign In**: Use `this.getContext().login(username, password)` to create a session:
-   ```typescript
-   async post(_target, data) {
-    const context = this.getContext();
-    try {
-      await context.login(data.username, data.password);
-    } catch {
-      return new Response('Invalid credentials', { status: 403 });
-    }
-    return new Response('Logged in', { status: 200 });
-   }
+
+2. **Connect a client to a resource**: A WebSocket connection to a resource URL automatically subscribes to that resource. When the record changes or a message is published to it, the connection receives the update.
+
+   ```javascript
+   let ws = new WebSocket('wss://server/my-resource/341');
+   ws.onmessage = (event) => {
+   	let data = JSON.parse(event.data);
+   };
    ```
-3. **Identify Current User**: Use `this.getCurrentUser()` to access session data:
-   ```typescript
-   async get() {
-     const user = this.getCurrentUser?.();
+
+   `new WebSocket('wss://server/my-resource/341')` accesses the resource defined for `my-resource` with record id `341` and subscribes to it.
+
+3. **Implement a custom `connect()` handler**: Override the `connect(incomingMessages)` method on a resource class to control WebSocket behavior. The method must return an async iterable (or generator) that produces messages to send to the client. See [automatic-apis.md](automatic-apis.md) for more on defining resource classes.
+
+4. **Use the default `connect()` for event-style access**: Call `super.connect()` to get a streaming iterable that provides:
+   - A `send(message)` method for pushing outgoing messages
+   - A `close` event for cleanup on disconnect
+
+5. **Handle message ordering in distributed environments**: Harper delivers messages to local subscribers immediately without inter-node coordination delay.
+
+   | Message Type                                             | Behavior                                                                |
+   | -------------------------------------------------------- | ----------------------------------------------------------------------- |
+   | Non-retained (no `retain` flag)                          | Every message delivered in order received; suitable for chat            |
+   | Retained (published with `retain`, or PUT/updated in DB) | Only the latest-timestamp message is kept; suitable for sensor readings |
+
+6. **Use MQTT over WebSockets** when needed by setting the sub-protocol header:
+   ```
+   Sec-WebSocket-Protocol: mqtt
+   ```
+
+#### Examples
+
+**Simple echo server** — override `connect(incomingMessages)` to yield each incoming message back to the client:
+
+```javascript
+export class Echo extends Resource {
+	async *connect(incomingMessages) {
+		for await (let message of incomingMessages) {
+			yield message; // echo each message back
+		}
+	}
+}
+```
+
+**Custom connect with timer and event-style access** — use `super.connect()` to get the outgoing stream, push periodic messages, echo incoming messages, and clean up on disconnect:
+
+```javascript
+export class Example extends Resource {
+	connect(incomingMessages) {
+		let outgoingMessages = super.connect();
+
+		let timer = setInterval(() => {
+			outgoingMessages.send({ greeting: 'hi again!' });
+		}, 1000);
+
+		incomingMessages.on('data', (message) => {
+			outgoingMessages.send(message); // echo incoming messages
+		});
+
+		outgoingMessages.on('close', () => {
+			clearInterval(timer);
+		});
+
+		return outgoingMessages;
+	}
+}
+```
+
+#### Notes
+
+- WebSocket connections target a resource URL path. By default, connecting to a resource subscribes to changes for that resource.
+- The `connect(incomingMessages)` method **must** return an async iterable or generator; returning a plain value will not work.
+- `super.connect()` returns a streaming iterable with `send(message)` and a `close` event — use this when you need to push messages outside of the incoming message loop.
+- For one-way real-time streaming without bidirectional communication, consider Server-Sent Events instead.
+- For full pub/sub capabilities, Harper also supports MQTT; set `Sec-WebSocket-Protocol: mqtt` to use MQTT over WebSockets.
+
+### 2.4 Checking Authentication
+
+Instructions for the agent to follow when handling user authentication and session management inside Harper Resources.
+
+#### When to Use
+
+Apply this rule when implementing authentication checks, login/logout flows, or token issuance inside a custom Resource. Use it any time a Resource needs to identify the current user, establish a session, or issue JWTs to clients. See [custom-resources.md](custom-resources.md) for the general Resource authoring pattern.
+
+#### How It Works
+
+1. **Check the current user** with `getCurrentUser()`. Call it inside any Resource method to retrieve the authenticated user or `undefined` if no user is authenticated. Guard protected endpoints by returning a `401` when the result is `undefined`.
+
+   ```javascript
+   async get(target) {
+     const user = this.getCurrentUser();
      if (!user) return new Response(null, { status: 401 });
      return { username: user.username, role: user.role };
    }
    ```
-4. **Implement Sign Out**: Use `this.getContext().logout()` or delete the session from context:
-   ```typescript
-   async post() {
-     const context = this.getContext();
-     await context.session?.delete?.(context.session.id);
-     return new Response('Logged out', { status: 200 });
+
+   The returned object exposes `username`, `role`, and `role.permission` flags.
+
+2. **Enable sessions** before using session-based login. Set `authentication.enableSessions: true` in `harperdb-config.yaml`:
+
+   ```yaml
+   authentication:
+     enableSessions: true
+   ```
+
+3. **Access login and session helpers** via `getContext()`. The context object exposes `context.login` and `context.session` for sign-in/out flows.
+   - Call `context.login(username, password)` to verify credentials and establish a session cookie on success.
+   - To end a session, delete it via `context.session.delete(context.session.id)`.
+
+4. **Implement sign-in and sign-out Resources** using the context helpers:
+
+   ```javascript
+   export class SignIn extends Resource {
+   	async post(_target, data) {
+   		const context = this.getContext();
+   		try {
+   			await context.login(data.username, data.password);
+   		} catch {
+   			return new Response('Invalid credentials', { status: 403 });
+   		}
+   		return new Response('Logged in', { status: 200 });
+   	}
+   }
+
+   export class SignOut extends Resource {
+   	async post() {
+   		const context = this.getContext();
+   		if (!context.session) return new Response(null, { status: 401 });
+   		await context.session.delete(context.session.id);
+   		return new Response('Logged out', { status: 200 });
+   	}
    }
    ```
-5. **Protect Routes**: In your Resource, use `allowRead()`, `allowUpdate()`, etc., to enforce authorization logic based on `this.getCurrentUser()`. For privileged actions, verify `user.role.permission.super_user`.
+
+5. **Issue JWTs for non-browser clients** (CLI tools, mobile apps, service-to-service). Cookie-based sessions are intended for browser clients. For other clients, mint tokens programmatically using `server.operation()`:
+
+   ```javascript
+   import { Resource, server } from 'harper';
+
+   export class IssueTokens extends Resource {
+   	static async get(_target, context) {
+   		const { operation_token, refresh_token } = await server.operation(
+   			{ operation: 'create_authentication_tokens' },
+   			context,
+   			true,
+   		);
+   		return { operation_token, refresh_token };
+   	}
+
+   	static async post(_target, data) {
+   		const { username, password } = await data;
+   		if (!username || !password) {
+   			return new Response('username and password required', { status: 400 });
+   		}
+   		const { operation_token, refresh_token } = await server.operation({
+   			operation: 'create_authentication_tokens',
+   			username,
+   			password,
+   		});
+   		return { operation_token, refresh_token };
+   	}
+   }
+
+   export class RefreshJWT extends Resource {
+   	static async post(_target, data) {
+   		const { refresh_token } = await data;
+   		if (!refresh_token) {
+   			return new Response('refresh_token required', { status: 400 });
+   		}
+   		const { operation_token } = await server.operation({
+   			operation: 'refresh_operation_token',
+   			refresh_token,
+   		});
+   		return { operation_token };
+   	}
+   }
+   ```
+
+   Pass `true` as the third argument to `server.operation()` when the operation should run as the current authenticated user. Omit it or pass `false` when the operation supplies its own credentials.
+
+6. **Configure JWT token expiry** in `harperdb-config.yaml` under the `authentication` section:
+
+   ```yaml
+   authentication:
+     operationTokenTimeout: 1d
+     refreshTokenTimeout: 30d
+   ```
+
+   Duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
 
 #### Examples
 
-##### Sign In Implementation
+**Protecting a resource endpoint and returning user info:**
 
-```typescript
-async post(_target, data) {
-  const context = this.getContext();
-  try {
-    await context.login(data.username, data.password);
-  } catch {
-    return new Response('Invalid credentials', { status: 403 });
-  }
-  return new Response('Logged in', { status: 200 });
-}
-```
-
-##### Identify Current User
-
-```typescript
-async get() {
-  const user = this.getCurrentUser?.();
+```javascript
+async get(target) {
+  const user = this.getCurrentUser();
   if (!user) return new Response(null, { status: 401 });
   return { username: user.username, role: user.role };
 }
 ```
 
-##### Sign Out Implementation
-
-```typescript
-async post() {
-  const context = this.getContext();
-  await context.session?.delete?.(context.session.id);
-  return new Response('Logged out', { status: 200 });
-}
-```
-
-#### Status code conventions used here
-
-- 200: Successful operation. For `GET /me`, a `200` with empty body means “not signed in”.
-- 400: Missing required fields (e.g., username/password on sign-in).
-- 401: No current session for an action that requires one (e.g., sign out when not signed in).
-- 403: Authenticated but not authorized (bad credentials on login attempt, or insufficient privileges).
-
-#### Client considerations
-
-- Sessions are cookie-based; the server handles setting and reading the cookie via Harper. If you make cross-origin requests, ensure the appropriate `credentials` mode and CORS settings.
-- If developing locally, double-check the server config still has `authentication.authorizeLocal: false` to avoid accidental superuser bypass.
-
-#### Token-based auth (JWT + refresh token) for non-browser clients
-
-Cookie-backed sessions are great for browser flows. For CLI tools, mobile apps, or other non-browser clients, it’s often easier to use **explicit tokens**:
-
-- **JWT (`operation_token`)**: short-lived bearer token used to authorize API requests.
-- **Refresh token (`refresh_token`)**: longer-lived token used to mint a new JWT when it expires.
-
-This project includes two Resource patterns for that flow:
-
-##### Issuing tokens: `IssueTokens`
-
-**Description / use case:** Generate `{ refreshToken, jwt }` either:
-
-- with an existing Authorization token (either Basic Auth or a JWT) and you want to issue new tokens, or
-- from an explicit `{ username, password }` payload (useful for direct “login” from a CLI/mobile client).
+**Full session-based sign-in/sign-out flow:**
 
 ```javascript
-export class IssueTokens extends Resource {
-	static loadAsInstance = false;
-
-	async get(target) {
-		const { refresh_token: refreshToken, operation_token: jwt } =
-			await databases.system.hdb_user.operation(
-				{ operation: 'create_authentication_tokens' },
-				this.getContext(),
-			);
-		return { refreshToken, jwt };
-	}
-
-	async post(target, data) {
-		if (!data.username || !data.password) {
-			throw new Error('username and password are required');
+export class SignIn extends Resource {
+	async post(_target, data) {
+		const context = this.getContext();
+		try {
+			await context.login(data.username, data.password);
+		} catch {
+			return new Response('Invalid credentials', { status: 403 });
 		}
+		return new Response('Logged in', { status: 200 });
+	}
+}
 
-		const { refresh_token: refreshToken, operation_token: jwt } =
-			await databases.system.hdb_user.operation({
-				operation: 'create_authentication_tokens',
-				username: data.username,
-				password: data.password,
-			});
-		return { refreshToken, jwt };
+export class SignOut extends Resource {
+	async post() {
+		const context = this.getContext();
+		if (!context.session) return new Response(null, { status: 401 });
+		await context.session.delete(context.session.id);
+		return new Response('Logged out', { status: 200 });
 	}
 }
 ```
 
-**Recommended documentation notes to include:**
-
-- `GET` variant: intended for “I already have an Authorization token, give me new tokens”.
-- `POST` variant: intended for “I have credentials, give me tokens”.
-- Response shape:
-  - `refreshToken`: store securely (long-lived).
-  - `jwt`: attach to requests (short-lived).
-
-##### Refreshing a JWT: `RefreshJWT`
-
-**Description / use case:** When the JWT expires, the client uses the refresh token to get a new JWT without re-supplying username/password.
+**JWT token refresh endpoint:**
 
 ```javascript
 export class RefreshJWT extends Resource {
-	static loadAsInstance = false;
-
-	async post(target, data) {
-		if (!data.refreshToken) {
-			throw new Error('refreshToken is required');
+	static async post(_target, data) {
+		const { refresh_token } = await data;
+		if (!refresh_token) {
+			return new Response('refresh_token required', { status: 400 });
 		}
-
-		const { operation_token: jwt } = await databases.system.hdb_user.operation({
+		const { operation_token } = await server.operation({
 			operation: 'refresh_operation_token',
-			refresh_token: data.refreshToken,
+			refresh_token,
 		});
-		return { jwt };
+		return { operation_token };
 	}
 }
 ```
 
-**Recommended documentation notes to include:**
+#### Notes
 
-- Requires `refreshToken` in the request body.
-- Returns a new `{ jwt }`.
-- If refresh fails (expired/revoked), client must re-authenticate (e.g., call `IssueTokens.post` again).
-
-##### Suggested client flow (high-level)
-
-1. **Sign in (token flow)**
-   - POST /IssueTokens/ with a body of `{ "username": "your username", "password": "your password" }` or GET /IssueTokens/ with an existing Authorization token.
-   - Receive `{ jwt, refreshToken }` in the response
-2. **Call protected APIs**
-   - Send the JWT with each request in the Authorization header (as your auth mechanism expects)
-3. **JWT expires**
-   - POST /RefreshJWT/ with a body of `{ "refreshToken": "your refresh token" }`.
-   - Receive `{ jwt }` in the response and continue
-
-#### Quick checklist
-
-- [ ] Public endpoints explicitly `allowRead`/`allowCreate` as needed.
-- [ ] Sign-in uses `context.login` and handles 400/403 correctly.
-- [ ] Protected routes call `ensureSuperUser(this.getCurrentUser())` (or another role check) before doing work.
-- [ ] Sign-out verifies a session and deletes it.
-- [ ] `authentication.authorizeLocal` is `false` and `enableSessions` is `true` in Harper config.
-- [ ] If using tokens: `IssueTokens` issues `{ jwt, refreshToken }`, `RefreshJWT` refreshes `{ jwt }` with a `refreshToken`.
+- `getCurrentUser()` and `getContext()` are instance methods; call them with `this` inside non-static Resource methods.
+- `enableSessions` must be `true` in config before `context.login` or `context.session` will function.
+- Cookie-based sessions target browser clients. Use JWT issuance via `server.operation()` for all other client types.
+- When both `operation_token` and `refresh_token` have expired, the client must call `create_authentication_tokens` again with credentials.
 
 ## 3. Logic & Extension
 
@@ -847,151 +1166,269 @@ Use this skill when you want to write Harper Resources in TypeScript and have th
      files: 'resources/*.ts'
    ```
 
-### 3.5 Caching
+### 3.5 Caching External Data Sources in Harper
 
-Instructions for the agent to follow when implementing caching in Harper.
+Instructions for the agent to implement integrated data caching in Harper by wrapping external sources with a cache table and `sourcedFrom`.
 
 #### When to Use
 
-Use this skill when you need high-performance, low-latency storage for data from external sources. It's ideal for reducing API calls to third-party services, preventing cache stampedes, and making external data queryable as if it were native Harper tables.
+Apply this rule when a Harper application needs to cache responses from an external API, microservice, or database to avoid repeated slow or expensive upstream calls. Use it whenever you need to define TTL-based cache expiration, observe ETag-based conditional responses, or manually invalidate cached entries.
 
 #### How It Works
 
-1. **Configure a Cache Table**: Define a table in your `schema.graphql` with an `expiration` (in seconds).
-2. **Define an External Source**: Create a Resource class that fetches the data from your source.
-3. **Attach Source to Table**: Use `sourcedFrom` to link your resource to the table.
-4. **Implement Active Caching (Optional)**: Use `subscribe()` for proactive updates. See [Real-Time Apps](real-time-apps.md).
-5. **Implement Write-Through Caching (Optional)**: Define `put` or `post` in your resource to propagate updates upstream.
+1. **Define a cache table with `expiration`**: In `schema.graphql`, add the `expiration` argument to `@table`. The value is in seconds. Any record older than this threshold is considered stale and will be re-fetched on next access.
+
+   ```graphql
+   type JokeCache @table(expiration: 60) @export {
+   	id: ID @primaryKey
+   	setup: String
+   	punchline: String
+   }
+   ```
+
+2. **Wrap the external source in `resources.js`**: Create an object with a `get(id)` method that fetches from the upstream source. Then call `sourcedFrom` on the table to register it.
+
+   ```javascript
+   const jokeAPI = {
+   	async get(id) {
+   		const response = await fetch(`https://official-joke-api.appspot.com/jokes/${id}`);
+   		return response.json();
+   	},
+   };
+
+   tables.JokeCache.sourcedFrom(jokeAPI);
+   ```
+
+   Harper's caching behavior after `sourcedFrom` is registered:
+   - A request arrives for `/JokeCache/1`.
+   - Harper checks if the record with id `1` exists in `JokeCache` and is not stale.
+   - If fresh, Harper returns it immediately.
+   - If missing or stale, Harper calls `jokeAPI.get()`, stores the result in `JokeCache`, and returns it.
+   - Multiple simultaneous requests for the same missing or stale record wait on a single upstream call — Harper prevents cache stampedes automatically.
+
+3. **Configure plugins in `config.yaml`**: Enable the schema, REST API, and JS resource plugins.
+
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   rest: true
+   jsResource:
+     files: 'resources.js'
+   ```
+
+4. **Observe caching via ETags**: Harper automatically computes an ETag from the record's last-modified timestamp. On the first request you receive a `200` with an `etag` header. Pass that value back in `If-None-Match` on subsequent requests; Harper returns `304 Not Modified` with an empty body if the record is unchanged.
+
+   ```bash
+   curl -i 'http://localhost:9926/JokeCache/1' \
+     -H 'If-None-Match: "abCDefGHij"'
+   ```
+
+5. **Force a cache bypass**: Send `Cache-Control: no-cache` to make Harper skip the local cache and always call the upstream source, regardless of TTL.
+
+   ```bash
+   curl -i 'http://localhost:9926/JokeCache/1' \
+     -H 'Cache-Control: no-cache'
+   ```
+
+6. **Invalidate a cache entry on demand**: Remove `@export` from the schema type, then export a class of the same name in `resources.js` that extends the table and implements a `post` handler calling `this.invalidate(target)`.
+
+   ```graphql
+   type JokeCache @table(expiration: 60) {
+   	id: ID @primaryKey
+   	setup: String
+   	punchline: String
+   }
+   ```
+
+   ```javascript
+   export class JokeCache extends tables.JokeCache {
+   	static async post(target, data) {
+   		const body = await data;
+   		if (body?.action === 'invalidate') {
+   			this.invalidate(target);
+   			return { status: 200, data: { message: 'invalidated' } };
+   		}
+   	}
+   }
+   ```
+
+   Trigger invalidation with a `POST`:
+
+   ```bash
+   curl -X POST 'http://localhost:9926/JokeCache/1' \
+     -H 'Content-Type: application/json' \
+     -d '{"action": "invalidate"}'
+   ```
+
+   The next `GET /JokeCache/1` will fetch fresh data from the upstream source regardless of TTL.
 
 #### Examples
 
-##### Schema Configuration
+Complete `schema.graphql` and `resources.js` for a cached external API with on-demand invalidation:
 
 ```graphql
-type MyCache @table(expiration: 3600) @export {
+type JokeCache @table(expiration: 60) {
 	id: ID @primaryKey
+	setup: String
+	punchline: String
 }
 ```
 
-##### Resource Implementation
+```javascript
+// resources.js
 
-```js
-import { Resource, tables } from 'harper';
-
-export class ThirdPartyAPI extends Resource {
+const jokeAPI = {
 	async get() {
 		const id = this.getId();
-		const response = await fetch(`https://api.example.com/items/${id}`);
-		if (!response.ok) {
-			throw new Error('Source fetch failed');
+		const response = await fetch(`https://official-joke-api.appspot.com/jokes/${id}`);
+		return response.json();
+	},
+};
+
+tables.JokeCache.sourcedFrom(jokeAPI);
+
+export class JokeCache extends tables.JokeCache {
+	static async post(target, data) {
+		const body = await data;
+		if (body?.action === 'invalidate') {
+			this.invalidate(target);
+			return { status: 200, data: { message: 'invalidated' } };
 		}
-		return await response.json();
 	}
 }
-
-// Attach source to table
-tables.MyCache.sourcedFrom(ThirdPartyAPI);
 ```
+
+First request — cache miss, upstream is called, `200` returned:
+
+```bash
+curl -i 'http://localhost:9926/JokeCache/1'
+```
+
+Second request with ETag — cache hit, `304 Not Modified`:
+
+```bash
+curl -i 'http://localhost:9926/JokeCache/1' \
+  -H 'If-None-Match: "abCDefGHij"'
+```
+
+#### Notes
+
+- `expiration` is measured in seconds. Harper also supports separate `eviction` and `scanInterval` arguments on `@table` for fine-grained control over physical record removal.
+- The `@export` directive on the schema type is not required when you export a Resource class of the same name from `resources.js` — the class export serves as the endpoint registration. See [custom-resources.md](custom-resources.md) for details on building Resource classes.
+- Harper's REST layer automatically exposes `@export`-ed tables and Resource classes as HTTP endpoints. See [automatic-apis.md](automatic-apis.md) for how endpoints are structured and named.
+- ETag values include their double quotes as part of the value — include them verbatim when passing the value in `If-None-Match`.
+- `sourcedFrom` must be called after the table reference (`tables.JokeCache`) is available, which is guaranteed when the call is at the top level of `resources.js`.
 
 ## 4. Infrastructure & Ops
 
 ### 4.1 Deploying to Harper Fabric
 
-Instructions for the agent to follow when deploying to Harper Fabric.
+Instructions for the agent to follow when deploying a Harper application to the Harper Fabric cloud using the Harper CLI.
 
 #### When to Use
 
-Use this skill when you are ready to move your Harper application from local development to a cloud-hosted environment.
+Apply this rule when deploying a Harper application to a remote Harper instance or Harper Fabric cluster. This covers interactive deployments, CI/CD pipelines, and any scenario where the agent must push a local or remote package to a target environment.
 
 #### How It Works
 
-1. **Sign up**: Follow the [creating-a-fabric-account-and-cluster](creating-a-fabric-account-and-cluster.md) rule to create a Harper Fabric account, organization, and cluster.
-2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
+1. **Authenticate with the remote target**: Run `harper login` once to store an authentication token. The CLI writes `HARPER_CLI_TARGET` to a local `.env` so subsequent commands do not need credentials repeated. Find the **Application URL** on the cluster's **Config → Overview** page (see [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md)).
+
    ```bash
-   CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
-   CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
-   CLI_TARGET='YOUR_CLUSTER_URL'
+   harper login <Application URL>
+   # Provide cluster username and password when prompted
    ```
-3. **Deploy From Local Environment**: Run `npm run deploy`.
-4. **Set up CI/CD**: Configure `.github/workflows/deploy.yaml` and set repository secrets for automated deployments.
 
-#### Manual Setup for Existing Apps
+2. **Deploy the application**: Run `harper deploy` with the required parameters. After logging in, no credentials are needed inline.
 
-If your application was not created with `npm create harper`, you'll need to manually configure the deployment scripts and CI/CD workflow.
+   ```bash
+   harper deploy \
+     project=<name> \
+     package=<package> \
+     target=<remote> \
+     restart=true \
+     replicated=true
+   ```
 
-##### 1. Update `package.json`
+3. **Choose a package source**: Set the `package` parameter to any valid npm dependency value, or omit it to package and deploy the current local directory.
 
-Add the following scripts and dependencies to your `package.json`:
+   | Value                                                | Effect                                           |
+   | ---------------------------------------------------- | ------------------------------------------------ |
+   | _(omitted)_                                          | Packages and deploys the current local directory |
+   | `"@harperdb/status-check"`                           | npm package                                      |
+   | `"HarperDB/status-check"`                            | GitHub repo (short form)                         |
+   | `"https://github.com/HarperDB/status-check"`         | GitHub repo (full URL)                           |
+   | `"git+ssh://git@github.com:HarperDB/secret-app.git"` | Private repo via SSH                             |
+   | `"https://example.com/application.tar.gz"`           | Remote tarball                                   |
 
-```json
-{
-	"scripts": {
-		"deploy": "dotenv -- npm run deploy:component",
-		"deploy:component": "harper deploy_component . restart=rolling replicated=true"
-	},
-	"devDependencies": {
-		"dotenv-cli": "^11.0.0",
-		"harper": "^5.0.0"
-	}
-}
+   For git tags, use the `semver` directive for reliable versioning:
+
+   ```
+   HarperDB/application-template#semver:v1.0.0
+   ```
+
+4. **Authenticate for CI/CD pipelines**: Use environment variables instead of interactive login. Set credentials before running `harper deploy`.
+
+   ```bash
+   export HARPER_CLI_USERNAME=<username>
+   export HARPER_CLI_PASSWORD=<password>
+   harper deploy \
+     project=<name> \
+     package=<package> \
+     target=<remote> \
+     restart=true \
+     replicated=true
+   ```
+
+5. **Register SSH keys for private repos**: Before deploying from an SSH-based private repository, use the Add SSH Key operation to register the key with the remote instance.
+
+#### Examples
+
+**Interactive login then deploy (recommended):**
+
+```bash
+# Log in once
+harper login <remote>
+# Provide your username and password when prompted
+
+# Subsequently deploy without credentials
+harper deploy \
+  project=<name> \
+  package=<package> \
+  target=<remote> \
+  restart=true \
+  replicated=true
 ```
 
-###### Why split the scripts?
+**Deploy with inline credentials (not recommended for production):**
 
-The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI.
-
-- `deploy`: Uses `dotenv-cli` to load environment variables (like `CLI_TARGET`, `CLI_TARGET_USERNAME`, and `CLI_TARGET_PASSWORD`) before executing the next command.
-- `deploy:component`: The actual command that performs the deployment.
-
-By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harper deploy_component` is called, allowing it to authenticate with your cluster.
-
-##### 2. Configure GitHub Actions
-
-Create a `.github/workflows/deploy.yaml` file with the following content:
-
-```yaml
-name: Deploy to Harper Fabric
-on:
-  workflow_dispatch:
-#  push:
-#    branches:
-#      - main
-concurrency:
-  group: main
-  cancel-in-progress: false
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-      - name: Set up Node.js
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
-        with:
-          cache: 'npm'
-          node-version-file: '.nvmrc'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run unit tests
-        run: npm test
-      - name: Run lint
-        run: npm run lint
-      - name: Deploy
-        run: npm run deploy
-        env:
-          CLI_TARGET: ${{ secrets.CLI_TARGET }}
-          CLI_TARGET_USERNAME: ${{ secrets.CLI_TARGET_USERNAME }}
-          CLI_TARGET_PASSWORD: ${{ secrets.CLI_TARGET_PASSWORD }}
+```bash
+harper deploy \
+  project=<name> \
+  package=<package> \
+  username=<username> \
+  password=<password> \
+  target=<remote> \
+  restart=true \
+  replicated=true
 ```
 
-Be sure to set the following repository secrets in your GitHub repository's /settings/secrets/actions:
+**Deploy a specific GitHub release by semver tag:**
 
-- `CLI_TARGET`
-- `CLI_TARGET_USERNAME`
-- `CLI_TARGET_PASSWORD`
+```bash
+harper deploy \
+  project=my-app \
+  package="HarperDB/application-template#semver:v1.0.0" \
+  target=<remote> \
+  restart=true \
+  replicated=true
+```
+
+#### Notes
+
+- Always prefer `harper login` for interactive use and environment variables (`HARPER_CLI_USERNAME`, `HARPER_CLI_PASSWORD`) for CI/CD. Avoid inline `username`/`password` parameters in production.
+- Omitting `package` causes the CLI to package the current local directory. Specifying a local file path creates a symlink, so changes are picked up between restarts without redeploying.
+- Harper generates a `package.json` from component configurations and resolves dependencies using a form of `npm install`.
+- For SSH-based private repos, register keys with the Add SSH Key operation before deploying.
 
 ### 4.2 Creating a Harper Fabric Account and Cluster
 
@@ -1122,90 +1559,158 @@ Use this skill when you need to serve a frontend (HTML, CSS, JS, or a React app)
    ```
    Then in production, the "Static Plugin" option will performantly and securely serve your assets. `npm create harper@latest` scaffolds all of this for you.
 
-### 4.5 Logging Best Practices
+### 4.5 Harper Logging
 
-Harper provides a robust logging system that captures standard output and offers a granular, tagged logging interface for both local and deployed environments.
+Instructions for the agent to follow when implementing logging in Harper applications, including direct logger usage, tagged loggers, and console capture behavior.
 
-#### Standard Console Logging
+#### When to Use
 
-The simplest way to log in Harper is using standard JavaScript console methods. `console.log()`, `console.warn()`, `console.error()`, and `console.trace()` are automatically captured by Harper and can be viewed in the logs.
+Apply this rule when writing any JavaScript component, plugin, or resource that needs to emit structured log entries, filter logs by component, or capture existing `console.log` output into Harper's log system. Use it whenever you need to understand log levels, log entry format, or the `logger` global API.
 
-- `console.log(...)`: Captured as `stdout` level in Harper logs.
-- `console.warn(...)`: Captured as `stderr` level in Harper logs.
-- `console.error(...)`: Captured as `stderr` level in Harper logs.
-- `console.trace(...)`: Captured as `stdout` level in Harper logs (includes stack trace).
+#### How It Works
 
-#### Harper Logger
+1. **Use the `logger` global directly** — `logger` is available in all JavaScript components without any imports. Call the method matching the desired severity level:
 
-For more granularity and better organization, use Harper's built-in `logger`. You can use the global `logger` object or import it from the `harper` package.
+   ```javascript
+   logger.trace('detailed trace message');
+   logger.debug('debug info', { someContext: 'value' });
+   logger.info('informational message');
+   logger.warn('potential issue');
+   logger.error('error occurred', error);
+   logger.fatal('fatal error');
+   logger.notify('server is ready');
+   ```
 
-##### Log Levels
+   Only entries at or above the configured `logging.level` (or `logging.external.level`) are written to `hdb.log`.
 
-The Harper `logger` supports the following levels (ordered by increasing severity):
+2. **Create a tagged logger with `withTag(`** — Call `logger.withTag(tag)` once per module or class to get a `TaggedLogger` scoped to that tag. This prefixes every log entry with the tag, making log output filterable by component.
 
-- `trace`
-- `debug`
-- `info`
-- `warn`
-- `error`
-- `fatal`
-- `notify`
+   ```javascript
+   const log = logger.withTag('my-resource');
+   ```
 
-##### Usage
+   Because `TaggedLogger` methods for disabled levels are `null`, always use optional chaining (`?.`) when calling them:
 
-```typescript
-import { logger, loggerWithTag } from 'harper';
+   ```javascript
+   log.debug?.('Fetching record', { id });
+   log.warn?.('Record not found', { id });
+   log.error?.('Failed to update record', err);
+   ```
 
-// Basic logging
-logger.info('Application started');
-logger.error('An error occurred', error);
+   `TaggedLogger` does not have a `withTag()` method.
 
-// Tagged logging for better filtering (Namespacing)
-const authLogger = loggerWithTag('auth');
-authLogger.debug('User login attempt', { userId: '123' });
-```
+3. **Understand the interface contracts** — `MainLogger` always has all methods defined:
 
-Using `loggerWithTag` is highly recommended for grouping related logs, making them much easier to filter and analyze in the Harper Studio or via the API.
+   ```typescript
+   interface MainLogger {
+   	trace(...messages: any[]): void;
+   	debug(...messages: any[]): void;
+   	info(...messages: any[]): void;
+   	warn(...messages: any[]): void;
+   	error(...messages: any[]): void;
+   	fatal(...messages: any[]): void;
+   	notify(...messages: any[]): void;
+   	withTag(tag: string): TaggedLogger;
+   }
+   ```
 
-#### Programmatic Log Retrieval
+   `TaggedLogger` methods may be `null`:
 
-You can programmatically read logs from a deployed Harper instance using the `read_log` operation. This is useful for building custom monitoring tools or debugging dashboards.
+   ```typescript
+   interface TaggedLogger {
+   	trace: ((...messages: any[]) => void) | null;
+   	debug: ((...messages: any[]) => void) | null;
+   	info: ((...messages: any[]) => void) | null;
+   	warn: ((...messages: any[]) => void) | null;
+   	error: ((...messages: any[]) => void) | null;
+   	fatal: ((...messages: any[]) => void) | null;
+   	notify: ((...messages: any[]) => void) | null;
+   }
+   ```
 
-##### `read_log` Operation
+4. **Know the log levels** — From least to most severe:
 
-The `read_log` operation is a POST request to the Harper instance.
+   | Level    | Description                                                          |
+   | -------- | -------------------------------------------------------------------- |
+   | `trace`  | Highly detailed internal execution tracing.                          |
+   | `debug`  | Diagnostic information useful during development.                    |
+   | `info`   | General operational events.                                          |
+   | `warn`   | Potential issues that don't prevent normal operation.                |
+   | `error`  | Errors that affect specific operations.                              |
+   | `fatal`  | Critical errors causing process termination.                         |
+   | `notify` | Important operational milestones. Always logged regardless of level. |
 
-**Example Request:**
+   The default log level is `warn`. Setting a level includes that level and all more-severe levels.
 
-```json
-{
-	"operation": "read_log",
-	"limit": 100,
-	"start": 0,
-	"level": "error",
-	"order": "desc",
-	"from": "2024-01-01T00:00:00.000Z",
-	"until": "2024-01-02T00:00:00.000Z"
+5. **Enable console capture when porting existing code** — When `logging.console: true` is set, writes via `console.log`, `console.warn`, `console.error`, etc. are appended verbatim to `hdb.log`. Captured lines do **not** pass through `logger`'s level filter. Prefer `logger` directly in production code so that level filtering and tagging apply. Console capture is intended as a convenience for porting existing code and for debugging.
+
+6. **Know where logs are written** — All standard log output goes to `<ROOTPATH>/log/hdb.log` (default: `~/hdb/log/hdb.log`). To also log to `stdout`/`stderr`, set `logging.stdStreams: true`.
+
+#### Examples
+
+##### Basic logging in a resource
+
+```javascript
+export class MyResource extends Resource {
+	async get(id) {
+		logger.debug('Fetching record', { id });
+		const record = await super.get(id);
+		if (!record) {
+			logger.warn('Record not found', { id });
+		}
+		return record;
+	}
+
+	async put(record) {
+		logger.info('Updating record', { id: record.id });
+		try {
+			return await super.put(record);
+		} catch (err) {
+			logger.error('Failed to update record', err);
+			throw err;
+		}
+	}
 }
 ```
 
-##### Parameters
+##### Tagged logging with `withTag()`
 
-- `limit`: Number of log entries to return.
-- `start`: Offset for pagination.
-- `level`: Filter by log level (`info`, `error`, `warn`, `debug`, `trace`, `notify`, `fatal`, `stdout`, `stderr`).
-- `from`: ISO 8601 timestamp to start reading from.
-- `until`: ISO 8601 timestamp to stop reading at.
-- `order`: Sort order, either `asc` or `desc`.
-- `replicated`: (Boolean) Include logs from replicated nodes in a cluster.
+```javascript
+const log = logger.withTag('my-resource');
 
-##### Log Entry Structure
+export class MyResource extends Resource {
+	async get(id) {
+		log.debug?.('Fetching record', { id });
+		const record = await super.get(id);
+		if (!record) {
+			log.warn?.('Record not found', { id });
+		}
+		return record;
+	}
 
-Each log entry returned by `read_log` typically includes:
+	async put(record) {
+		log.info?.('Updating record', { id: record.id });
+		try {
+			return await super.put(record);
+		} catch (err) {
+			log.error?.('Failed to update record', err);
+			throw err;
+		}
+	}
+}
+```
 
-- `level`: The severity level of the log.
-- `timestamp`: When the log was recorded.
-- `thread`: The execution thread.
-- `tags`: An array of tags (e.g., from `loggerWithTag`).
-- `node`: The node name in a Harper cluster.
-- `message`: The logged content.
+Tagged entries appear in `hdb.log` with the tag in the header:
+
+```
+2023-03-09T14:25:05.269Z [info] [my-resource]: Updating record
+```
+
+#### Notes
+
+- All log output is written to `<ROOTPATH>/log/hdb.log`. The `logger` global writes to this file at the configured `logging.external` level.
+- Log entry format for `logger`: `<timestamp> [<level>] [<thread>/<id>]: <message>`
+- Log entry format for `TaggedLogger`: `<timestamp> [<level>] [<tag>]: <message>`
+- `console.log` output is only forwarded to `hdb.log` when `logging.console: true` is explicitly set; it is not forwarded by default.
+- When logging to standard streams, run Harper in the foreground (`harper`, not `harper start`).
+- `TaggedLogger` is bound to the configured log level at creation time — always use `?.` on its methods.

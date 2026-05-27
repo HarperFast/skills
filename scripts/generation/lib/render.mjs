@@ -3,9 +3,86 @@
 // validator use assembleAgentsMd (the validator for the round-trip equality
 // check). Keeping assembly here means there is exactly one definition of "what
 // AGENTS.md should look like".
+//
+// assembleSkillIndex builds the generated block inside SKILL.md (rule
+// categories table + Quick Reference list). It is spliced between sentinel
+// comments by the generator and re-validated for round-trip equality by the
+// validator — the same pattern as AGENTS.md.
 
 import matter from 'gray-matter';
 import { CATEGORY_LABELS, normalizeSource, sortedRules } from './manifest.mjs';
+
+// Sentinel strings that delimit the generated block inside SKILL.md.
+// The generator replaces content between them; the validator checks it.
+export const SKILL_INDEX_BEGIN = '<!-- BEGIN GENERATED INDEX -->';
+export const SKILL_INDEX_END = '<!-- END GENERATED INDEX -->';
+
+// Impact label per category. Kept here (not in the manifest) because it is
+// presentation metadata that belongs to the renderer, not the rule taxonomy.
+const CATEGORY_IMPACT = {
+	schema: 'HIGH',
+	api: 'HIGH',
+	logic: 'MEDIUM',
+	ops: 'MEDIUM',
+};
+
+// URL-path prefix convention for each category.
+const CATEGORY_PREFIX = {
+	schema: 'schema-',
+	api: 'api-',
+	logic: 'logic-',
+	ops: 'ops-',
+};
+
+// Produce the "Rule Categories by Priority" table + "Quick Reference" grouped
+// list from the manifest. This is the content that lives between the sentinel
+// comments in SKILL.md. Deterministic: same manifest always produces
+// byte-identical output.
+export function assembleSkillIndex(manifest) {
+	const rules = sortedRules(manifest);
+
+	// Group rules by category, preserving first-seen (priority-sorted) order.
+	const categories = [];
+	const byCategory = new Map();
+	for (const rule of rules) {
+		if (!byCategory.has(rule.category)) {
+			byCategory.set(rule.category, []);
+			categories.push(rule.category);
+		}
+		byCategory.get(rule.category).push(rule);
+	}
+
+	const out = [];
+
+	// Rule Categories by Priority table.
+	out.push('## Rule Categories by Priority', '');
+	out.push('| Priority | Category | Impact | Prefix |');
+	out.push('| -------- | -------- | ------ | ------ |');
+	categories.forEach((cat, i) => {
+		const label = CATEGORY_LABELS[cat] || cat;
+		const impact = CATEGORY_IMPACT[cat] || '';
+		const prefix = CATEGORY_PREFIX[cat] ? `\`${CATEGORY_PREFIX[cat]}\`` : '';
+		out.push(`| ${i + 1} | ${label} | ${impact} | ${prefix} |`);
+	});
+	out.push('');
+
+	// Quick Reference — one sub-section per category.
+	out.push('## Quick Reference', '');
+	categories.forEach((cat, i) => {
+		const label = CATEGORY_LABELS[cat] || cat;
+		const impact = CATEGORY_IMPACT[cat] || '';
+		out.push(`### ${i + 1}. ${label} (${impact})`, '');
+		for (const rule of byCategory.get(cat)) {
+			out.push(`- \`${rule.rule}\` — ${rule.description}`);
+		}
+		out.push('');
+	});
+
+	return out
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+}
 
 // Build the frontmatter object for a rule file from its manifest entry plus
 // generator-written provenance. synthesized rules carry only mode.

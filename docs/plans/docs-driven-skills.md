@@ -148,7 +148,9 @@ A regen run (cron-triggered or `repository_dispatch`-triggered) executes in this
       - `mode: generate` — call Claude with the system prompt, rule template, resolved sources, and manifest `must_cover` assertions. Body comes back as agent-tuned prose.
       - `mode: direct` — body is the resolved source content verbatim. No LLM call.
    6. **Write rule file.** Compose frontmatter (`name`, `description` from manifest; full `metadata` block from generator) plus body. Run through oxfmt.
-3. **Refresh AGENTS.md.** Concatenate all `rules/*.md` bodies under category headers, ordered by manifest `priority` then `order`. Write to `harper-best-practices/AGENTS.md`.
+3. **Refresh derived files.**
+   1. **AGENTS.md.** Concatenate all `rules/*.md` bodies under category headers, ordered by manifest `priority` then `order`. Write to `harper-best-practices/AGENTS.md`.
+   2. **SKILL.md index.** Splice the generated "Rule Categories by Priority" table and "Quick Reference" list — both derived from the manifest — into `SKILL.md` between the sentinel comments `<!-- BEGIN GENERATED INDEX -->` and `<!-- END GENERATED INDEX -->`. The authored prose above and below the sentinels (frontmatter, `## When to Use`, `## How It Works`, `## Examples`, `## How to Use`, `## Full Compiled Document`) is never touched. Quick Reference descriptions are taken verbatim from each rule's manifest `description` field.
 4. **Validate.** Run `validate-generated.mjs` (see [Validation Layer](#validation-layer)). If anything fails, abort the run; the workflow opens (or updates) a failure issue.
 5. **Diff check.** If `git status` shows no changes (every rule's input hash matched), exit silently — no PR.
 6. **Open PR.** Create branch `auto/docs-sync-<docs-sha-short>`, commit, push, `gh pr create` with a `docs:` conventional commit title and a body listing changed rules.
@@ -376,6 +378,7 @@ Once the manifest and frontmatter agree, body content is checked according to mo
 | Check                                                            | `generate` | `direct` | `synthesized` |
 | ---------------------------------------------------------------- | :--------: | :------: | :-----------: |
 | AGENTS.md round-trip equality                                    |     ✓      |    ✓     |       ✓       |
+| SKILL.md index round-trip equality                               |     ✓      |    ✓     |       ✓       |
 | Cross-link integrity (`rules/<slug>.md` body links resolve)      |     ✓      |    ✓     |       ✓       |
 | Source-exists (every manifest source resolves in docs)           |     ✓      |    ✓     |       —       |
 | Must-cover assertions (every manifest string appears in body)    |     ✓      |    —     |       —       |
@@ -389,6 +392,7 @@ Notes:
 - `synthesized` skips all source-related checks because there is no source.
 - The "no leaked MDX" check exists for both `generate` and `direct` as defense in depth, even though Phase 1's flat-markdown export should prevent leakage at the source.
 - AGENTS.md round-trip equality catches hand-edits to derived content. AGENTS.md is regenerated from `rules/*.md` + manifest order; if the committed version doesn't match, validation fails and the engineer is pointed at the rules.
+- SKILL.md index round-trip equality catches hand-edits inside the generated sentinel block. The validator re-derives the index from the manifest, formats it with oxfmt, and compares it to the committed content between `<!-- BEGIN GENERATED INDEX -->` and `<!-- END GENERATED INDEX -->`. If the sentinels are absent, validation also fails with a clear message pointing at the regenerate command.
 
 ## Open Questions
 
@@ -398,5 +402,5 @@ Each question is annotated with the earliest phase it blocks; resolve before tha
 - **(Phase 1)** Whether to pin to the v1 stable release or adopt v2-alpha (which adds sections, attached files, and the theme-side "Copy Page" button). Default: ship Phase 1 on v1 stable; revisit v2 once it leaves alpha.
 - **(Phase 1)** Confirm `reference_versioned_docs/version-v4/` is excluded from source resolution by default (handled via the plugin's `excludeRoutes` config).
 - **(Phase 2)** Anthropic API key provisioning for the skills repo's Actions runner — who owns it.
-- **(Phase 2)** Confirm `SKILL.md` is "authored top + generated index at the bottom" — i.e., the rule list table is regenerated, the upper prose is not.
+- ~~**(Phase 2)** Confirm `SKILL.md` is "authored top + generated index at the bottom" — i.e., the rule list table is regenerated, the upper prose is not.~~ **Resolved (Phase 3).** Implemented: the "Rule Categories by Priority" table and "Quick Reference" section are generated inside sentinel comments; all other prose is hand-authored. See Generation Lifecycle step 3b and Validation Layer for details.
 - **(Phase 4)** Slack channel + webhook for stale-PR and failure notifications.

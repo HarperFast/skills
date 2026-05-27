@@ -35,7 +35,13 @@ import {
 	VALID_SOURCE_ROLES,
 } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources, sourceFilePath } from './lib/sources.mjs';
-import { assembleAgentsMd, bodyOf } from './lib/render.mjs';
+import {
+	assembleAgentsMd,
+	assembleSkillIndex,
+	bodyOf,
+	SKILL_INDEX_BEGIN,
+	SKILL_INDEX_END,
+} from './lib/render.mjs';
 
 const AGENTS_LEAD =
 	'Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.';
@@ -335,6 +341,53 @@ async function checkAgentsRoundTrip(manifest, skill, scope, errors) {
 }
 
 // ===========================================================================
+// SKILL.md generated index round-trip equality
+// ===========================================================================
+
+async function checkSkillIndexRoundTrip(manifest, skill, scope, errors) {
+	const skillPath = path.join(process.cwd(), skill.dir, skill.skillFile);
+
+	let committed;
+	try {
+		committed = await fs.readFile(skillPath, 'utf-8');
+	} catch {
+		errors.push(`[${scope}] ${skill.skillFile} is missing`);
+		return;
+	}
+
+	const startIdx = committed.indexOf(SKILL_INDEX_BEGIN);
+	const endIdx = committed.indexOf(SKILL_INDEX_END);
+
+	if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+		errors.push(
+			`[${scope}] ${skill.skillFile} is missing sentinel comments ` +
+				`(${SKILL_INDEX_BEGIN} / ${SKILL_INDEX_END}) — run \`npm run generate\` to add them`,
+		);
+		return;
+	}
+
+	// Extract what is currently committed between the sentinels.
+	const committedBlock = committed.slice(startIdx + SKILL_INDEX_BEGIN.length, endIdx).trim();
+
+	// Produce what the block should look like (formatted).
+	const assembled = assembleSkillIndex(manifest);
+	let expected;
+	try {
+		expected = oxfmtString(assembled).trim();
+	} catch (err) {
+		errors.push(`[${scope}] could not run oxfmt for ${skill.skillFile} round-trip: ${err.message}`);
+		return;
+	}
+
+	if (expected !== committedBlock) {
+		errors.push(
+			`[${scope}] ${skill.skillFile} generated index is not in sync with the manifest ` +
+				`(run \`npm run generate\` to regenerate; do not hand-edit between the sentinel comments)`,
+		);
+	}
+}
+
+// ===========================================================================
 // Main
 // ===========================================================================
 
@@ -360,6 +413,7 @@ async function main() {
 		if (!lintManifest(manifest, scope, errors)) continue; // can't reconcile a broken manifest
 		await checkRules(manifest, skill, scope, docsBuildDir, errors);
 		await checkAgentsRoundTrip(manifest, skill, scope, errors);
+		await checkSkillIndexRoundTrip(manifest, skill, scope, errors);
 	}
 
 	if (errors.length > 0) {
@@ -373,7 +427,7 @@ async function main() {
 		? ''
 		: ' (source-exists / byte-identical checks skipped — no --docs-path)';
 	console.log(
-		`✓ validate-generated: manifest, frontmatter, and AGENTS.md checks passed${docsNote}`,
+		`✓ validate-generated: manifest, frontmatter, AGENTS.md, and SKILL.md checks passed${docsNote}`,
 	);
 }
 

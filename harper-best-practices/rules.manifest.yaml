@@ -5,10 +5,10 @@
 # (rule bodies, AGENTS.md). See docs/plans/docs-driven-skills.md for the
 # full schema definition and Manifest ↔ frontmatter reconciliation semantics.
 #
-# All 20 rules currently use mode: synthesized (hand-authored bodies),
-# matching the state of the repo at the time this manifest was introduced.
-# Subsequent phases progressively flip individual rules to mode: generate
-# or mode: direct as docs sources are wired up.
+# Phase 2 flipped vector-indexing to mode: generate.
+# Phase 3 flips 7 obvious 1:1 rules to mode: generate (automatic-apis,
+# querying-rest-apis, real-time-apps, checking-authentication, logging,
+# deploying-to-harper-fabric, caching). All others remain synthesized.
 
 rules:
   # ===========================================================================
@@ -78,28 +78,75 @@ rules:
     category: api
     priority: 2
     order: 1
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/rest/overview.md
+        role: primary
+      - path: reference/v5/rest/websockets.md
+        role: supplemental
+    must_cover:
+      - 'rest: true'
+      - '@export'
+      - 'WebSocket'
+    cross_links:
+      - querying-rest-apis
+      - real-time-apps
 
   - rule: querying-rest-apis
     description: How to use query parameters to filter, sort, and paginate Harper REST APIs.
     category: api
     priority: 2
     order: 2
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/rest/querying.md
+        role: primary
+    must_cover:
+      - '=gt='
+      - '=lt='
+      - 'select('
+      - 'sort('
+      - 'limit('
+    cross_links:
+      - automatic-apis
 
   - rule: real-time-apps
     description: How to build real-time features in Harper using WebSockets and Pub/Sub.
     category: api
     priority: 2
     order: 3
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/rest/websockets.md
+        role: primary
+    must_cover:
+      - 'WebSocket'
+      - 'connect('
+    cross_links:
+      - automatic-apis
 
   - rule: checking-authentication
     description: How to handle user authentication and sessions in Harper Resources.
     category: api
     priority: 2
     order: 4
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/resources/resource-api.md
+        section: '`getCurrentUser(): User | undefined`'
+        role: primary
+      - path: reference/v5/resources/resource-api.md
+        section: 'Session and Login from a Resource'
+        role: primary
+      - path: reference/v5/security/jwt-authentication.md
+        role: supplemental
+    must_cover:
+      - 'getCurrentUser()'
+      - 'getContext()'
+      - 'context.login'
+      - 'enableSessions'
+    cross_links:
+      - custom-resources
 
   # ===========================================================================
   # Logic & Extension (priority 3 — MEDIUM)
@@ -138,7 +185,17 @@ rules:
     category: logic
     priority: 3
     order: 5
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: learn/developers/caching-with-harper.md
+        role: primary
+    must_cover:
+      - 'expiration'
+      - 'sourcedFrom'
+      - '@table'
+    cross_links:
+      - custom-resources
+      - automatic-apis
 
   # ===========================================================================
   # Infrastructure & Ops (priority 4 — MEDIUM)
@@ -149,7 +206,19 @@ rules:
     category: ops
     priority: 4
     order: 1
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/components/applications.md
+        section: 'Remote Management'
+        role: primary
+      - path: fabric/cluster-creation-management.md
+        section: 'Connecting the Harper CLI to a Cluster'
+        role: supplemental
+    must_cover:
+      - 'harper deploy'
+      - 'harper login'
+    cross_links:
+      - creating-a-fabric-account-and-cluster
 
   - rule: creating-a-fabric-account-and-cluster
     description: How to create a Harper Fabric account, organization, and cluster.
@@ -177,4 +246,13 @@ rules:
     category: ops
     priority: 4
     order: 5
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/logging/overview.md
+        role: primary
+      - path: reference/v5/logging/api.md
+        role: primary
+    must_cover:
+      - 'console.log'
+      - 'logger'
+      - 'withTag('

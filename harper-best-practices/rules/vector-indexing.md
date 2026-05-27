@@ -5,7 +5,7 @@ metadata:
   mode: generate
   sources:
     - reference/v5/database/schema.md#Vector Indexing
-  sourceCommit: 6d4a30ccd5b32528e0e9963565782dca9fff5ada
+  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
   inputHash: 3732961c671aac00
 ---
 
@@ -19,7 +19,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
 
 ## How It Works
 
-1. **Declare a vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
+1. **Declare the vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
 
    ```graphql
    type Document @table {
@@ -28,7 +28,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    }
    ```
 
-2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object specifying `attribute` (the indexed field) and `target` (the query vector). Include `limit` to cap results.
+2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object containing `attribute` (the indexed field name) and `target` (the query vector). Include `limit` to cap results.
 
    ```javascript
    let results = Document.search({
@@ -37,7 +37,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-3. **Combine HNSW with filter conditions**: Add a `conditions` array alongside `sort` to pre-filter records before ranking by similarity.
+3. **Combine with filter conditions**: Add a `conditions` array alongside `sort` to pre-filter records before ranking by similarity.
 
    ```javascript
    let results = Document.search({
@@ -47,7 +47,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-4. **Filter by distance threshold**: Place `target` directly on a condition (alongside `attribute`, `comparator`, and `value`) to return only records whose distance to the target vector is below a threshold. Use this form to bound result quality by a similarity cutoff rather than ranking.
+4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. Omit `sort`.
 
    ```javascript
    let results = Document.search({
@@ -60,7 +60,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-5. **Include computed distance in results**: Add `'$distance'` to the `select` array to return the computed distance from the target vector alongside each record. `$distance` works in both `sort`-based and `conditions`-based queries.
+5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Works with both `sort`-based and `conditions`-based queries.
 
    ```javascript
    let results = Document.search({
@@ -70,7 +70,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance:
+6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance.
 
    | Parameter              | Default           | Description                                                                                         |
    | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
@@ -93,7 +93,7 @@ type Document @table {
 }
 ```
 
-**Nearest-neighbor search with distance output:**
+**Nearest-neighbor search with distance score:**
 
 ```javascript
 let results = Document.search({
@@ -118,7 +118,7 @@ let results = Document.search({
 
 ## Notes
 
-- The default `distance` function is `cosine`. To use Euclidean distance, set `distance: "euclidean"` in the `@indexed` directive.
-- `efConstruction` controls index build quality; increase it to improve recall at the cost of slower indexing.
-- `$distance` is a special field — prefix it with `$` exactly as shown; it is not a schema attribute.
-- `target` is required in both `sort`-based and threshold-based condition queries to identify the reference vector for distance computation.
+- The default `distance` function is `cosine`. Pass `distance: "euclidean"` to switch.
+- `efConstruction` controls index build quality; raising it improves recall at the cost of build time.
+- `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.
+- Use the threshold (`conditions` + `target`) form when you want to bound result quality by a similarity cutoff rather than ranking by similarity.

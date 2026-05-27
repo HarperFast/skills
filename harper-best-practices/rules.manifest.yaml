@@ -9,6 +9,8 @@
 # Phase 3 flips 7 obvious 1:1 rules to mode: generate (automatic-apis,
 # querying-rest-apis, real-time-apps, checking-authentication, logging,
 # deploying-to-harper-fabric, caching). All others remain synthesized.
+# Phase 4 migrates schema-design-tooling, typescript-type-stripping, and
+# creating-harper-apps to mode: generate.
 
 rules:
   # ===========================================================================
@@ -27,7 +29,23 @@ rules:
     category: schema
     priority: 1
     order: 2
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/schema.md
+        section: 'Overview'
+        role: primary
+      - path: reference/v5/database/schema.md
+        section: 'Type Directives'
+        role: primary
+      - path: reference/v5/database/schema.md
+        section: 'Field Directives'
+        role: primary
+    must_cover:
+      - '@table'
+      - '@export'
+      - '@primaryKey'
+      - '@indexed'
+      - 'graphqlSchema'
 
   - rule: defining-relationships
     description: How to define and use relationships between tables in Harper using GraphQL.
@@ -178,7 +196,16 @@ rules:
     category: logic
     priority: 3
     order: 4
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/components/javascript-environment.md
+        section: 'TypeScript Support'
+        role: primary
+    must_cover:
+      - '.ts'
+      - 'jsResource'
+      - 'Node.js 22.6'
+      - 'type stripping'
 
   - rule: caching
     description: How to implement integrated data caching in Harper from external sources.
@@ -232,7 +259,18 @@ rules:
     category: ops
     priority: 4
     order: 3
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: learn/getting-started/create-your-first-application.md
+        role: primary
+      - path: reference/v5/components/applications.md
+        section: 'Local Development'
+        role: supplemental
+    must_cover:
+      - 'harper dev'
+      - 'config.yaml'
+      - 'schema.graphql'
+      - 'graphqlSchema'
 
   - rule: serving-web-content
     description: How to serve static files and integrated Vite/React applications in Harper.

@@ -40,69 +40,152 @@ type ExamplePerson @table @export {
 }
 ```
 
-### 1.2 Schema Design & Tooling
+### 1.2 Schema Design and Tooling
 
-Harper uses GraphQL schemas to define database tables, relationships, and APIs. To ensure the best development experience for both humans and AI agents, it's important to understand the core directives and configure your project tooling correctly.
+Instructions for the agent to follow when designing Harper schemas, applying core directives, and configuring GraphQL tooling.
 
-#### Core Harper Directives
+#### When to Use
 
-Harper extends GraphQL with custom directives that define database behavior. These are typically defined in `node_modules/harper/schema.graphql`. If you don't have access to that file, here is a reference of the most important ones:
+Apply this rule when creating or modifying Harper schema files, configuring `graphqlSchema` in `config.yaml`, or deciding which directives to apply to tables and fields. Use it any time a component needs tables, indexes, primary keys, or exported endpoints defined.
 
-##### Table Definition
+#### How It Works
 
-- `@table`: Marks a GraphQL type as a Harper database table.
-- `@export`: Automatically generates REST and WebSocket APIs for the table.
-- `@table(expiration: Int)`: Configures a time-to-expire for records in the table (useful for caching).
+1. **Create a GraphQL schema file** with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
 
-##### Attribute Constraints & Indexing
+   ```graphql
+   type Dog @table {
+   	id: Long @primaryKey
+   	name: String
+   	breed: String
+   	age: Int
+   }
 
-- `@primaryKey`: Specifies the unique identifier for the table.
-- `@indexed`: Creates a standard index on the field for faster lookups.
-- `@indexed(type: "HNSW", distance: "cosine" | "euclidean" | "dot")`: Creates a vector index for similarity search.
+   type Breed @table {
+   	id: Long @primaryKey
+   	name: String @indexed
+   }
+   ```
 
-##### Relationships
+2. **Register the schema in `config.yaml`** using the `graphqlSchema` plugin key:
 
-- `@relationship(from: String)`: Defines a relationship to another table. `from` specifies the local field holding the foreign key.
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   ```
 
-##### Authentication & Authorization
+   Both plugins and applications can specify schemas this way.
 
-- `@auth(role: String)`: Restricts access to a table or field based on user roles.
+3. **Mark every table type with `@table`**. The type name becomes the table name by default. Use optional arguments to override behavior:
 
-#### Configuring GraphQL Tooling
+   | Argument       | Type      | Default                       | Description                                                   |
+   | -------------- | --------- | ----------------------------- | ------------------------------------------------------------- |
+   | `table`        | `String`  | type name                     | Override the table name                                       |
+   | `database`     | `String`  | `"data"`                      | Database to place the table in                                |
+   | `expiration`   | `Int`     | —                             | Seconds until a record goes stale                             |
+   | `eviction`     | `Int`     | `0`                           | Additional seconds after `expiration` before physical removal |
+   | `scanInterval` | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                |
+   | `replicate`    | `Boolean` | `true`                        | Enable replication of this table                              |
 
-To get the best IDE support (autocompletion, validation) and to help AI agents understand your schema context, you should create a `graphql.config.yml` file in your project root.
+4. **Designate a primary key on every table** using `@primaryKey`. Primary keys must be unique; duplicate-key inserts are rejected. If no key is provided on insert, Harper auto-generates one:
+   - `String` or `ID` → UUID string
+   - `Int`, `Long`, or `Any` → auto-incrementing integer
 
-This file tells GraphQL tools where to find Harper's built-in types and directives alongside your own schema files.
+   Prefer `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
 
-##### Creating `graphql.config.yml`
+5. **Index fields that need fast querying** with `@indexed`. This is required for filtering by that attribute in REST queries, SQL, or NoSQL operations. If the field value is an array, each element is individually indexed.
 
-Create a file named `graphql.config.yml` in your project root with the following content:
+   ```graphql
+   type Product @table {
+   	id: Long @primaryKey
+   	category: String @indexed
+   	price: Float @indexed
+   }
+   ```
 
-```yaml
-schema:
-  - 'node_modules/harper/schema.graphql'
-  - 'schema.graphql'
-  - 'schemas/*.graphql'
+6. **Expose a table as an external resource endpoint** with `@export`. This makes the table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment; without it, the type name is used.
+
+   ```graphql
+   type MyTable @table @export(name: "my-table") {
+   	id: Long @primaryKey
+   }
+   ```
+
+7. **Restrict extra properties** with `@sealed` when records must not include attributes beyond those declared. By default, Harper allows additional properties.
+
+   ```graphql
+   type StrictRecord @table @sealed {
+   	id: Long @primaryKey
+   	name: String
+   }
+   ```
+
+8. **Configure expiration, eviction, and scan behavior** together when building caching tables. These three arguments control the full record lifecycle:
+   - `expiration` — record becomes stale; next request triggers a source fetch
+   - `eviction` — additional time after `expiration` before physical removal
+   - `scanInterval` — how often Harper scans for records to evict; clock-aligned, not startup-aligned
+
+#### Examples
+
+**Caching table with tuned expiration:**
+
+```graphql
+# Expire after 5 minutes, evict after 1 hour, scan every 10 minutes
+type WeatherCache @table(expiration: 300, eviction: 3300, scanInterval: 600) {
+	id: ID @primaryKey
+	temperature: Float
+}
 ```
 
-##### Why this is important:
+**Table in a named database with expiration and an indexed field:**
 
-1. **Shared Directives**: It includes `@table`, `@primaryKey`, etc., so they aren't marked as "unknown directives".
-2. **Context for Agents**: When an agent reads your project, seeing this config helps it locate the core Harper definitions, leading to more accurate code generation.
-3. **Consistency**: The `npm create harper@latest` command includes this by default. Manually adding it to existing projects ensures they follow the same standards.
-
-#### Example Project Structure
-
-A typical Harper project with proper schema tooling:
-
-```text
-my-harper-app/
-├── config.yaml
-├── graphql.config.yml
-├── package.json
-├── schema.graphql
-└── resources.js
+```graphql
+type Event @table(database: "analytics", expiration: 86400) {
+	id: Long @primaryKey
+	name: String @indexed
+}
 ```
+
+**Session cache with auto-expiry:**
+
+```graphql
+type Session @table(expiration: 3600) {
+	id: Long @primaryKey
+	userId: String
+}
+```
+
+**Table with audit timestamps:**
+
+```graphql
+type Order @table @export(name: "orders") {
+	id: Long @primaryKey
+	createdAt: Long @createdTime
+	updatedAt: Long @updatedTime
+	status: String @indexed
+}
+```
+
+**Overriding the table name and disabling replication:**
+
+```graphql
+type Product @table(table: "products") {
+	id: Long @primaryKey
+	name: String
+}
+
+type LocalRecord @table(replicate: false) {
+	id: Long @primaryKey
+	value: String
+}
+```
+
+#### Notes
+
+- Use unique `database` names in plugins and applications to avoid table naming collisions, since all tables default to the `"data"` database.
+- Eviction removes non-indexed record data but does **not** remove a record from its secondary indexes. Indexes remain functional for evicted records; Harper fetches the full record from the source on demand when a query matches an evicted record.
+- `scanInterval` is clock-aligned to the server's local timezone. The server's startup time does not affect when eviction runs.
+- If replication is disabled on a table and later re-enabled, it will not catch up on writes made while replication was disabled.
+- Null values are indexed by `@indexed` fields, enabling queries such as `GET /Product/?category=null`.
 
 ### 1.3 Defining Relationships
 
@@ -1138,33 +1221,59 @@ for await (const record of tables.Product.search({
 
 Be very careful when performing updates and deletions! You may be dealing with live production data. The wrong request to delete, without approval from a human, could be devastating to a business. Always use the proper approval process.
 
-### 3.4 TypeScript Type Stripping
+### 3.4 TypeScript Type Stripping in Harper
 
-Instructions for the agent to follow when using TypeScript in Harper.
+Instructions for the agent to run `.ts` files directly in Harper without a build step using Node.js's built-in type stripping.
 
 #### When to Use
 
-Use this skill when you want to write Harper Resources in TypeScript and have them execute directly in Node.js without an intermediate build or compilation step.
+Apply this rule when writing Harper resource files in TypeScript. Use it any time you need to reference `.ts` source files from `config.yaml` or import between local TypeScript modules in a Harper project.
 
 #### How It Works
 
-1. **Verify Node.js Version**: Ensure you are using Node.js v22.6.0 or higher.
-2. **Name Files with `.ts`**: Create your resource files in the `resources/` directory with a `.ts` extension.
-3. **Use TypeScript Syntax**: Write your resource classes using standard TypeScript (interfaces, types, etc.).
-   ```typescript
-   import { Resource } from 'harper';
-   export class MyResource extends Resource {
-   	async get(): Promise<{ message: string }> {
-   		return { message: 'Running TS directly!' };
-   	}
-   }
-   ```
-4. **Use Explicit Extensions in Imports**: When importing other local modules, include the `.ts` extension: `import { helper } from './helper.ts'`.
-5. **Configure `config.yaml`**: Ensure `jsResource` points to your `.ts` files:
+1. **Ensure Node.js version**: Require Node.js 22.6 or later. Type stripping is unavailable on earlier versions.
+
+2. **Point `jsResource` at `.ts` files**: The `jsResource` plugin loads both `.js` and `.ts` files. Set its `files` glob in `config.yaml` to target your `.ts` source files:
+
    ```yaml
    jsResource:
      files: 'resources/*.ts'
    ```
+
+3. **Use explicit `.ts` extensions in local imports**: Node's loader does not resolve `'./helper'` to `'./helper.ts'`, so always include the full extension:
+
+   ```typescript
+   import { helper } from './helper.ts';
+   ```
+
+4. **Stay within type-stripping limits**: Only type annotations and declarations are removed. Do not use enums with runtime values, namespaces with runtime semantics, or any other features that require code transformation beyond type stripping.
+
+#### Examples
+
+A complete Harper resource written in TypeScript, using imports from the `harper` package:
+
+```typescript
+import { type RequestTargetOrId, Resource, tables } from 'harper';
+
+export class MyResource extends Resource {
+	async get(target?: RequestTargetOrId): Promise<{ message: string }> {
+		return { message: 'Hello from TS' };
+	}
+}
+```
+
+Paired `config.yaml` entry loading the file via `jsResource`:
+
+```yaml
+jsResource:
+  files: 'resources/*.ts'
+```
+
+#### Notes
+
+- No build step or transpiler is required — Harper runs `.ts` files directly.
+- Type imports (e.g., `import { type RequestTargetOrId }`) from the `harper` package work as usual.
+- Unsupported TypeScript features include: enums with runtime values, namespaces with runtime semantics, and anything requiring code transformation beyond simple type stripping.
 
 ### 3.5 Caching External Data Sources in Harper
 
@@ -1456,48 +1565,133 @@ CLI_TARGET='YOUR_CLUSTER_URL'
 
 ### 4.3 Creating Harper Applications
 
-The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
+Instructions for the agent to initialize and run a new Harper application using the CLI and configure its core files.
 
 #### When to Use
 
-Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
+Apply this rule when scaffolding a new Harper application from scratch, wiring up a table schema, or starting the local development server. Use it any time `schema.graphql` or `config.yaml` need to be created or modified to register a table and enable plugins.
 
-#### Commands
+#### How It Works
 
-Initialize a project using your preferred package manager:
+1. **Clone the starter repo**: Get the application template locally. If using a container, clone into the mounted `dev/` directory.
 
-##### NPM
+   ```bash
+   git clone https://github.com/HarperFast/create-your-first-application.git first-harper-app
+   ```
 
-```bash
-npm create harper@latest
+2. **Define a table in `schema.graphql`**: Open `schema.graphql` and declare a type with the `@table` directive. Use `@primaryKey` to designate the primary key field. Add typed fields using standard GraphQL scalar types (`String`, `Int`, `ID`, etc.).
+
+   ```graphql
+   type Dog @table {
+   	id: ID @primaryKey
+   	name: String
+   	breed: String
+   	age: Int
+   }
+   ```
+
+3. **Register the schema in `config.yaml`**: Open `config.yaml` and configure the `graphqlSchema` plugin with a `files` property pointing to your schema file. This tells Harper to process the schema on startup.
+
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   ```
+
+4. **Start the development server**: From inside the application directory, run `harper dev`. This watches all files (except `node_modules`) and automatically restarts Harper worker threads when changes are detected.
+
+   ```bash
+   harper dev .
+   ```
+
+5. **Enable the REST API**: Add the `@export` directive to the table type in `schema.graphql`, then add `rest: true` to `config.yaml`.
+
+   `schema.graphql`:
+
+   ```graphql
+   type Dog @table @export {
+   	id: ID @primaryKey
+   	name: String
+   	breed: String
+   	age: Int
+   }
+   ```
+
+   `config.yaml`:
+
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   rest: true
+   ```
+
+   After saving, `harper dev` restarts automatically. Confirm the REST plugin is active by checking the logs for:
+
+   ```
+   REST:               HTTP: 9926
+   ```
+
+#### Examples
+
+**Full `config.yaml` with REST enabled:**
+
+```yaml
+graphqlSchema:
+  files: 'schema.graphql'
+rest: true
 ```
 
-##### PNPM
+**Full `schema.graphql` with REST export:**
 
-```bash
-pnpm create harper@latest
+```graphql
+type Dog @table @export {
+	id: ID @primaryKey
+	name: String
+	breed: String
+	age: Int
+}
 ```
 
-##### Bun
+**Create a record via `PUT`:**
 
 ```bash
-bun create harper@latest
+curl 'http://localhost:9926/Dog/001' \
+  -X PUT \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Harper",
+    "breed": "Black Labrador / Chow Mix",
+    "age": 5
+  }' \
+  -w "%{http_code}"
 ```
 
-#### Options
-
-You can specify the project name and template directly:
+**Read a record via `GET`:**
 
 ```bash
-npm create harper@latest my-app --template default
+curl -s 'http://localhost:9926/Dog/001' | jq
 ```
 
-#### Next Steps
+**Query records by attribute:**
 
-1. **Configure Environment**: Set up your `.env` file with local or cloud credentials.
-2. **Define Schema**: Modify `schema.graphql` to fit your application's data model.
-3. **Start Development**: Run `npm run dev` to start the local Harper instance.
-4. **Deploy**: Use `npm run deploy` to push your application to Harper Fabric.
+```bash
+curl -s 'http://localhost:9926/Dog/?age=5' | jq
+```
+
+#### Notes
+
+- `harper dev .` watches for file changes and restarts worker threads automatically. Use `harper run` instead when the main thread must also restart (the `dev` command does not restart the main thread).
+- Stop either process with SIGINT (`Ctrl+C`).
+- The `graphqlSchema` plugin is built-in; no additional dependency installation is required.
+- The `files` property in `config.yaml` accepts a glob pattern — a single filename or a broader pattern are both valid.
+- The `@table` directive marks a type as a database table. Without it, Harper treats the type as an arbitrary GraphQL type.
+- The REST API defaults to port `9926`. This value is configurable.
+- To deploy a local application to a running Harper instance without using `harper dev`, use:
+  ```bash
+  harper deploy \
+    project=<name> \
+    package=<path-to-project> \
+    restart=true
+  ```
 
 ### 4.4 Serving Web Content
 

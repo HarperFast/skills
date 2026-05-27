@@ -23,6 +23,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: generate-rules
@@ -93,6 +94,44 @@ jobs:
           npm run build
           node scripts/validate-skills.mjs
           node scripts/generation/validate-generated.mjs --docs-path ../documentation
+
+      - name: Report generation failure
+        if: failure()
+        working-directory: skills
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: |
+          set -euo pipefail
+          # Resolve the actual docs commit SHA (falls back to the ref if the
+          # documentation checkout failed before we could read HEAD).
+          DOCS_SHA=$(git -C ../documentation rev-parse HEAD 2>/dev/null || echo "${{ steps.docsref.outputs.ref }}")
+          SHORT="${DOCS_SHA:0:7}"
+          TITLE="Auto-sync generation failure (${SHORT})"
+
+          # Idempotent by docs SHA: if an open issue for this SHA already
+          # exists, add a comment rather than opening a duplicate.
+          EXISTING=$(gh issue list --state open --json number,title \
+            --jq ".[] | select(.title == \"${TITLE}\") | .number" 2>/dev/null | head -1 || echo "")
+
+          if [ -n "$EXISTING" ]; then
+            echo "Existing failure issue #${EXISTING} — appending comment."
+            gh issue comment "$EXISTING" --body \
+              "Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          else
+            gh issue create \
+              --title "${TITLE}" \
+              --label "bug" \
+              --body "Auto-sync generation failed for docs SHA \`${DOCS_SHA}\`.
+
+          Opened automatically by \`.github/workflows/generate.yaml\`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the full error.
+
+          **Common causes and fixes (Story 4 in docs/plans/docs-driven-skills.md):**
+          - Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`.
+          - Section heading renamed or removed — update \`sources[].section\`.
+          - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
+
+          After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR."
+          fi
 
       - name: Open or update sync PR
         working-directory: skills

@@ -14,6 +14,17 @@ After cloning, install dependencies and (optionally) set up git hooks:
 npm install
 ```
 
+## Environment variables
+
+Running the rule generator (`npm run generate`) requires an Anthropic API key. Copy the example file and fill in your key:
+
+```bash
+cp .env.example .env
+# then edit .env and set ANTHROPIC_API_KEY
+```
+
+The `.env` file is gitignored and only needed locally. CI reads the key from repository secrets (`ANTHROPIC_API_KEY`).
+
 ## Development workflow
 
 - Format source files: `npm run format` — formats in place using oxfmt. Run this before committing if you've edited markdown, JSON, or other formatter-managed files.

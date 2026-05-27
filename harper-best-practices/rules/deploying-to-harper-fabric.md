@@ -2,103 +2,121 @@
 name: deploying-to-harper-fabric
 description: How to deploy a Harper application to the Harper Fabric cloud.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/components/applications.md#Remote Management
+    - >-
+      fabric/cluster-creation-management.md#Connecting the Harper CLI to a
+      Cluster
+  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
+  inputHash: ccdefbbf8f3b8657
 ---
 
 # Deploying to Harper Fabric
 
-Instructions for the agent to follow when deploying to Harper Fabric.
+Instructions for the agent to follow when deploying a Harper application to the Harper Fabric cloud using the Harper CLI.
 
 ## When to Use
 
-Use this skill when you are ready to move your Harper application from local development to a cloud-hosted environment.
+Apply this rule when deploying a Harper application to a remote Harper instance or Harper Fabric cluster. This covers interactive deployments, CI/CD pipelines, and any scenario where the agent must push a local or remote package to a target environment.
 
 ## How It Works
 
-1. **Sign up**: Follow the [creating-a-fabric-account-and-cluster](creating-a-fabric-account-and-cluster.md) rule to create a Harper Fabric account, organization, and cluster.
-2. **Configure Environment**: Add your cluster credentials and cluster application URL to `.env`:
+1. **Authenticate with the remote target**: Run `harper login` once to store an authentication token. The CLI writes `HARPER_CLI_TARGET` to a local `.env` so subsequent commands do not need credentials repeated. Find the **Application URL** on the cluster's **Config → Overview** page (see [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md)).
+
    ```bash
-   CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
-   CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
-   CLI_TARGET='YOUR_CLUSTER_URL'
+   harper login <Application URL>
+   # Provide cluster username and password when prompted
    ```
-3. **Deploy From Local Environment**: Run `npm run deploy`.
-4. **Set up CI/CD**: Configure `.github/workflows/deploy.yaml` and set repository secrets for automated deployments.
 
-## Manual Setup for Existing Apps
+2. **Deploy the application**: Run `harper deploy` with the required parameters. After logging in, no credentials are needed inline.
 
-If your application was not created with `npm create harper`, you'll need to manually configure the deployment scripts and CI/CD workflow.
+   ```bash
+   harper deploy \
+     project=<name> \
+     package=<package> \
+     target=<remote> \
+     restart=true \
+     replicated=true
+   ```
 
-### 1. Update `package.json`
+3. **Choose a package source**: Set the `package` parameter to any valid npm dependency value, or omit it to package and deploy the current local directory.
 
-Add the following scripts and dependencies to your `package.json`:
+   | Value                                                | Effect                                           |
+   | ---------------------------------------------------- | ------------------------------------------------ |
+   | _(omitted)_                                          | Packages and deploys the current local directory |
+   | `"@harperdb/status-check"`                           | npm package                                      |
+   | `"HarperDB/status-check"`                            | GitHub repo (short form)                         |
+   | `"https://github.com/HarperDB/status-check"`         | GitHub repo (full URL)                           |
+   | `"git+ssh://git@github.com:HarperDB/secret-app.git"` | Private repo via SSH                             |
+   | `"https://example.com/application.tar.gz"`           | Remote tarball                                   |
 
-```json
-{
-	"scripts": {
-		"deploy": "dotenv -- npm run deploy:component",
-		"deploy:component": "harper deploy_component . restart=rolling replicated=true"
-	},
-	"devDependencies": {
-		"dotenv-cli": "^11.0.0",
-		"harper": "^5.0.0"
-	}
-}
+   For git tags, use the `semver` directive for reliable versioning:
+
+   ```
+   HarperDB/application-template#semver:v1.0.0
+   ```
+
+4. **Authenticate for CI/CD pipelines**: Use environment variables instead of interactive login. Set credentials before running `harper deploy`.
+
+   ```bash
+   export HARPER_CLI_USERNAME=<username>
+   export HARPER_CLI_PASSWORD=<password>
+   harper deploy \
+     project=<name> \
+     package=<package> \
+     target=<remote> \
+     restart=true \
+     replicated=true
+   ```
+
+5. **Register SSH keys for private repos**: Before deploying from an SSH-based private repository, use the Add SSH Key operation to register the key with the remote instance.
+
+## Examples
+
+**Interactive login then deploy (recommended):**
+
+```bash
+# Log in once
+harper login <remote>
+# Provide your username and password when prompted
+
+# Subsequently deploy without credentials
+harper deploy \
+  project=<name> \
+  package=<package> \
+  target=<remote> \
+  restart=true \
+  replicated=true
 ```
 
-#### Why split the scripts?
+**Deploy with inline credentials (not recommended for production):**
 
-The `deploy` script is separated from `deploy:component` to ensure environment variables from your `.env` file are properly loaded and passed to the Harper CLI.
-
-- `deploy`: Uses `dotenv-cli` to load environment variables (like `CLI_TARGET`, `CLI_TARGET_USERNAME`, and `CLI_TARGET_PASSWORD`) before executing the next command.
-- `deploy:component`: The actual command that performs the deployment.
-
-By using `dotenv -- npm run deploy:component`, the environment variables are correctly set in the shell session before `harper deploy_component` is called, allowing it to authenticate with your cluster.
-
-### 2. Configure GitHub Actions
-
-Create a `.github/workflows/deploy.yaml` file with the following content:
-
-```yaml
-name: Deploy to Harper Fabric
-on:
-  workflow_dispatch:
-#  push:
-#    branches:
-#      - main
-concurrency:
-  group: main
-  cancel-in-progress: false
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-      - name: Set up Node.js
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
-        with:
-          cache: 'npm'
-          node-version-file: '.nvmrc'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run unit tests
-        run: npm test
-      - name: Run lint
-        run: npm run lint
-      - name: Deploy
-        run: npm run deploy
-        env:
-          CLI_TARGET: ${{ secrets.CLI_TARGET }}
-          CLI_TARGET_USERNAME: ${{ secrets.CLI_TARGET_USERNAME }}
-          CLI_TARGET_PASSWORD: ${{ secrets.CLI_TARGET_PASSWORD }}
+```bash
+harper deploy \
+  project=<name> \
+  package=<package> \
+  username=<username> \
+  password=<password> \
+  target=<remote> \
+  restart=true \
+  replicated=true
 ```
 
-Be sure to set the following repository secrets in your GitHub repository's /settings/secrets/actions:
+**Deploy a specific GitHub release by semver tag:**
 
-- `CLI_TARGET`
-- `CLI_TARGET_USERNAME`
-- `CLI_TARGET_PASSWORD`
+```bash
+harper deploy \
+  project=my-app \
+  package="HarperDB/application-template#semver:v1.0.0" \
+  target=<remote> \
+  restart=true \
+  replicated=true
+```
+
+## Notes
+
+- Always prefer `harper login` for interactive use and environment variables (`HARPER_CLI_USERNAME`, `HARPER_CLI_PASSWORD`) for CI/CD. Avoid inline `username`/`password` parameters in production.
+- Omitting `package` causes the CLI to package the current local directory. Specifying a local file path creates a symlink, so changes are picked up between restarts without redeploying.
+- Harper generates a `package.json` from component configurations and resolves dependencies using a form of `npm install`.
+- For SSH-based private repos, register keys with the Add SSH Key operation before deploying.

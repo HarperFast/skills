@@ -1,94 +1,169 @@
 ---
 name: logging
-description: Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
+description: >-
+  Best practices for logging in Harper, including console capture, the granular
+  logger interface, and programmatic log retrieval.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/logging/overview.md
+    - reference/v5/logging/api.md
+  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
+  inputHash: 46cd384598304e3b
 ---
 
-# Logging Best Practices
+# Harper Logging
 
-Harper provides a robust logging system that captures standard output and offers a granular, tagged logging interface for both local and deployed environments.
+Instructions for the agent to follow when implementing logging in Harper applications, including direct logger usage, tagged loggers, and console capture behavior.
 
-## Standard Console Logging
+## When to Use
 
-The simplest way to log in Harper is using standard JavaScript console methods. `console.log()`, `console.warn()`, `console.error()`, and `console.trace()` are automatically captured by Harper and can be viewed in the logs.
+Apply this rule when writing any JavaScript component, plugin, or resource that needs to emit structured log entries, filter logs by component, or capture existing `console.log` output into Harper's log system. Use it whenever you need to understand log levels, log entry format, or the `logger` global API.
 
-- `console.log(...)`: Captured as `stdout` level in Harper logs.
-- `console.warn(...)`: Captured as `stderr` level in Harper logs.
-- `console.error(...)`: Captured as `stderr` level in Harper logs.
-- `console.trace(...)`: Captured as `stdout` level in Harper logs (includes stack trace).
+## How It Works
 
-## Harper Logger
+1. **Use the `logger` global directly** — `logger` is available in all JavaScript components without any imports. Call the method matching the desired severity level:
 
-For more granularity and better organization, use Harper's built-in `logger`. You can use the global `logger` object or import it from the `harper` package.
+   ```javascript
+   logger.trace('detailed trace message');
+   logger.debug('debug info', { someContext: 'value' });
+   logger.info('informational message');
+   logger.warn('potential issue');
+   logger.error('error occurred', error);
+   logger.fatal('fatal error');
+   logger.notify('server is ready');
+   ```
 
-### Log Levels
+   Only entries at or above the configured `logging.level` (or `logging.external.level`) are written to `hdb.log`.
 
-The Harper `logger` supports the following levels (ordered by increasing severity):
+2. **Create a tagged logger with `withTag(`** — Call `logger.withTag(tag)` once per module or class to get a `TaggedLogger` scoped to that tag. This prefixes every log entry with the tag, making log output filterable by component.
 
-- `trace`
-- `debug`
-- `info`
-- `warn`
-- `error`
-- `fatal`
-- `notify`
+   ```javascript
+   const log = logger.withTag('my-resource');
+   ```
 
-### Usage
+   Because `TaggedLogger` methods for disabled levels are `null`, always use optional chaining (`?.`) when calling them:
 
-```typescript
-import { logger, loggerWithTag } from 'harper';
+   ```javascript
+   log.debug?.('Fetching record', { id });
+   log.warn?.('Record not found', { id });
+   log.error?.('Failed to update record', err);
+   ```
 
-// Basic logging
-logger.info('Application started');
-logger.error('An error occurred', error);
+   `TaggedLogger` does not have a `withTag()` method.
 
-// Tagged logging for better filtering (Namespacing)
-const authLogger = loggerWithTag('auth');
-authLogger.debug('User login attempt', { userId: '123' });
-```
+3. **Understand the interface contracts** — `MainLogger` always has all methods defined:
 
-Using `loggerWithTag` is highly recommended for grouping related logs, making them much easier to filter and analyze in the Harper Studio or via the API.
+   ```typescript
+   interface MainLogger {
+   	trace(...messages: any[]): void;
+   	debug(...messages: any[]): void;
+   	info(...messages: any[]): void;
+   	warn(...messages: any[]): void;
+   	error(...messages: any[]): void;
+   	fatal(...messages: any[]): void;
+   	notify(...messages: any[]): void;
+   	withTag(tag: string): TaggedLogger;
+   }
+   ```
 
-## Programmatic Log Retrieval
+   `TaggedLogger` methods may be `null`:
 
-You can programmatically read logs from a deployed Harper instance using the `read_log` operation. This is useful for building custom monitoring tools or debugging dashboards.
+   ```typescript
+   interface TaggedLogger {
+   	trace: ((...messages: any[]) => void) | null;
+   	debug: ((...messages: any[]) => void) | null;
+   	info: ((...messages: any[]) => void) | null;
+   	warn: ((...messages: any[]) => void) | null;
+   	error: ((...messages: any[]) => void) | null;
+   	fatal: ((...messages: any[]) => void) | null;
+   	notify: ((...messages: any[]) => void) | null;
+   }
+   ```
 
-### `read_log` Operation
+4. **Know the log levels** — From least to most severe:
 
-The `read_log` operation is a POST request to the Harper instance.
+   | Level    | Description                                                          |
+   | -------- | -------------------------------------------------------------------- |
+   | `trace`  | Highly detailed internal execution tracing.                          |
+   | `debug`  | Diagnostic information useful during development.                    |
+   | `info`   | General operational events.                                          |
+   | `warn`   | Potential issues that don't prevent normal operation.                |
+   | `error`  | Errors that affect specific operations.                              |
+   | `fatal`  | Critical errors causing process termination.                         |
+   | `notify` | Important operational milestones. Always logged regardless of level. |
 
-**Example Request:**
+   The default log level is `warn`. Setting a level includes that level and all more-severe levels.
 
-```json
-{
-	"operation": "read_log",
-	"limit": 100,
-	"start": 0,
-	"level": "error",
-	"order": "desc",
-	"from": "2024-01-01T00:00:00.000Z",
-	"until": "2024-01-02T00:00:00.000Z"
+5. **Enable console capture when porting existing code** — When `logging.console: true` is set, writes via `console.log`, `console.warn`, `console.error`, etc. are appended verbatim to `hdb.log`. Captured lines do **not** pass through `logger`'s level filter. Prefer `logger` directly in production code so that level filtering and tagging apply. Console capture is intended as a convenience for porting existing code and for debugging.
+
+6. **Know where logs are written** — All standard log output goes to `<ROOTPATH>/log/hdb.log` (default: `~/hdb/log/hdb.log`). To also log to `stdout`/`stderr`, set `logging.stdStreams: true`.
+
+## Examples
+
+### Basic logging in a resource
+
+```javascript
+export class MyResource extends Resource {
+	async get(id) {
+		logger.debug('Fetching record', { id });
+		const record = await super.get(id);
+		if (!record) {
+			logger.warn('Record not found', { id });
+		}
+		return record;
+	}
+
+	async put(record) {
+		logger.info('Updating record', { id: record.id });
+		try {
+			return await super.put(record);
+		} catch (err) {
+			logger.error('Failed to update record', err);
+			throw err;
+		}
+	}
 }
 ```
 
-### Parameters
+### Tagged logging with `withTag()`
 
-- `limit`: Number of log entries to return.
-- `start`: Offset for pagination.
-- `level`: Filter by log level (`info`, `error`, `warn`, `debug`, `trace`, `notify`, `fatal`, `stdout`, `stderr`).
-- `from`: ISO 8601 timestamp to start reading from.
-- `until`: ISO 8601 timestamp to stop reading at.
-- `order`: Sort order, either `asc` or `desc`.
-- `replicated`: (Boolean) Include logs from replicated nodes in a cluster.
+```javascript
+const log = logger.withTag('my-resource');
 
-### Log Entry Structure
+export class MyResource extends Resource {
+	async get(id) {
+		log.debug?.('Fetching record', { id });
+		const record = await super.get(id);
+		if (!record) {
+			log.warn?.('Record not found', { id });
+		}
+		return record;
+	}
 
-Each log entry returned by `read_log` typically includes:
+	async put(record) {
+		log.info?.('Updating record', { id: record.id });
+		try {
+			return await super.put(record);
+		} catch (err) {
+			log.error?.('Failed to update record', err);
+			throw err;
+		}
+	}
+}
+```
 
-- `level`: The severity level of the log.
-- `timestamp`: When the log was recorded.
-- `thread`: The execution thread.
-- `tags`: An array of tags (e.g., from `loggerWithTag`).
-- `node`: The node name in a Harper cluster.
-- `message`: The logged content.
+Tagged entries appear in `hdb.log` with the tag in the header:
+
+```
+2023-03-09T14:25:05.269Z [info] [my-resource]: Updating record
+```
+
+## Notes
+
+- All log output is written to `<ROOTPATH>/log/hdb.log`. The `logger` global writes to this file at the configured `logging.external` level.
+- Log entry format for `logger`: `<timestamp> [<level>] [<thread>/<id>]: <message>`
+- Log entry format for `TaggedLogger`: `<timestamp> [<level>] [<tag>]: <message>`
+- `console.log` output is only forwarded to `hdb.log` when `logging.console: true` is explicitly set; it is not forwarded by default.
+- When logging to standard streams, run Harper in the foreground (`harper`, not `harper start`).
+- `TaggedLogger` is bound to the configured log level at creation time — always use `?.` on its methods.

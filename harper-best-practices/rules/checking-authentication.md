@@ -2,200 +2,189 @@
 name: checking-authentication
 description: How to handle user authentication and sessions in Harper Resources.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - >-
+      reference/v5/resources/resource-api.md#`getCurrentUser(): User |
+      undefined`
+    - reference/v5/resources/resource-api.md#Session and Login from a Resource
+    - reference/v5/security/jwt-authentication.md
+  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
+  inputHash: fdd9ec3b11011490
 ---
 
 # Checking Authentication
 
-Instructions for the agent to follow when handling authentication and sessions.
+Instructions for the agent to follow when handling user authentication and session management inside Harper Resources.
 
 ## When to Use
 
-Use this skill when you need to implement sign-in/sign-out functionality, protect specific resource endpoints, or identify the currently logged-in user in a Harper application.
+Apply this rule when implementing authentication checks, login/logout flows, or token issuance inside a custom Resource. Use it any time a Resource needs to identify the current user, establish a session, or issue JWTs to clients. See [custom-resources.md](custom-resources.md) for the general Resource authoring pattern.
 
 ## How It Works
 
-1. **Configure Harper for Sessions**: Ensure `harper-config.yaml` has sessions enabled and local auto-authorization disabled for testing:
-   ```yaml
-   authentication:
-     authorizeLocal: false
-     enableSessions: true
-   ```
-2. **Implement Sign In**: Use `this.getContext().login(username, password)` to create a session:
-   ```typescript
-   async post(_target, data) {
-    const context = this.getContext();
-    try {
-      await context.login(data.username, data.password);
-    } catch {
-      return new Response('Invalid credentials', { status: 403 });
-    }
-    return new Response('Logged in', { status: 200 });
-   }
-   ```
-3. **Identify Current User**: Use `this.getCurrentUser()` to access session data:
-   ```typescript
-   async get() {
-     const user = this.getCurrentUser?.();
+1. **Check the current user** with `getCurrentUser()`. Call it inside any Resource method to retrieve the authenticated user or `undefined` if no user is authenticated. Guard protected endpoints by returning a `401` when the result is `undefined`.
+
+   ```javascript
+   async get(target) {
+     const user = this.getCurrentUser();
      if (!user) return new Response(null, { status: 401 });
      return { username: user.username, role: user.role };
    }
    ```
-4. **Implement Sign Out**: Use `this.getContext().logout()` or delete the session from context:
-   ```typescript
-   async post() {
-     const context = this.getContext();
-     await context.session?.delete?.(context.session.id);
-     return new Response('Logged out', { status: 200 });
+
+   The returned object exposes `username`, `role`, and `role.permission` flags.
+
+2. **Enable sessions** before using session-based login. Set `authentication.enableSessions: true` in `harperdb-config.yaml`:
+
+   ```yaml
+   authentication:
+     enableSessions: true
+   ```
+
+3. **Access login and session helpers** via `getContext()`. The context object exposes `context.login` and `context.session` for sign-in/out flows.
+   - Call `context.login(username, password)` to verify credentials and establish a session cookie on success.
+   - To end a session, delete it via `context.session.delete(context.session.id)`.
+
+4. **Implement sign-in and sign-out Resources** using the context helpers:
+
+   ```javascript
+   export class SignIn extends Resource {
+   	async post(_target, data) {
+   		const context = this.getContext();
+   		try {
+   			await context.login(data.username, data.password);
+   		} catch {
+   			return new Response('Invalid credentials', { status: 403 });
+   		}
+   		return new Response('Logged in', { status: 200 });
+   	}
+   }
+
+   export class SignOut extends Resource {
+   	async post() {
+   		const context = this.getContext();
+   		if (!context.session) return new Response(null, { status: 401 });
+   		await context.session.delete(context.session.id);
+   		return new Response('Logged out', { status: 200 });
+   	}
    }
    ```
-5. **Protect Routes**: In your Resource, use `allowRead()`, `allowUpdate()`, etc., to enforce authorization logic based on `this.getCurrentUser()`. For privileged actions, verify `user.role.permission.super_user`.
+
+5. **Issue JWTs for non-browser clients** (CLI tools, mobile apps, service-to-service). Cookie-based sessions are intended for browser clients. For other clients, mint tokens programmatically using `server.operation()`:
+
+   ```javascript
+   import { Resource, server } from 'harper';
+
+   export class IssueTokens extends Resource {
+   	static async get(_target, context) {
+   		const { operation_token, refresh_token } = await server.operation(
+   			{ operation: 'create_authentication_tokens' },
+   			context,
+   			true,
+   		);
+   		return { operation_token, refresh_token };
+   	}
+
+   	static async post(_target, data) {
+   		const { username, password } = await data;
+   		if (!username || !password) {
+   			return new Response('username and password required', { status: 400 });
+   		}
+   		const { operation_token, refresh_token } = await server.operation({
+   			operation: 'create_authentication_tokens',
+   			username,
+   			password,
+   		});
+   		return { operation_token, refresh_token };
+   	}
+   }
+
+   export class RefreshJWT extends Resource {
+   	static async post(_target, data) {
+   		const { refresh_token } = await data;
+   		if (!refresh_token) {
+   			return new Response('refresh_token required', { status: 400 });
+   		}
+   		const { operation_token } = await server.operation({
+   			operation: 'refresh_operation_token',
+   			refresh_token,
+   		});
+   		return { operation_token };
+   	}
+   }
+   ```
+
+   Pass `true` as the third argument to `server.operation()` when the operation should run as the current authenticated user. Omit it or pass `false` when the operation supplies its own credentials.
+
+6. **Configure JWT token expiry** in `harperdb-config.yaml` under the `authentication` section:
+
+   ```yaml
+   authentication:
+     operationTokenTimeout: 1d
+     refreshTokenTimeout: 30d
+   ```
+
+   Duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
 
 ## Examples
 
-### Sign In Implementation
+**Protecting a resource endpoint and returning user info:**
 
-```typescript
-async post(_target, data) {
-  const context = this.getContext();
-  try {
-    await context.login(data.username, data.password);
-  } catch {
-    return new Response('Invalid credentials', { status: 403 });
-  }
-  return new Response('Logged in', { status: 200 });
-}
-```
-
-### Identify Current User
-
-```typescript
-async get() {
-  const user = this.getCurrentUser?.();
+```javascript
+async get(target) {
+  const user = this.getCurrentUser();
   if (!user) return new Response(null, { status: 401 });
   return { username: user.username, role: user.role };
 }
 ```
 
-### Sign Out Implementation
-
-```typescript
-async post() {
-  const context = this.getContext();
-  await context.session?.delete?.(context.session.id);
-  return new Response('Logged out', { status: 200 });
-}
-```
-
-## Status code conventions used here
-
-- 200: Successful operation. For `GET /me`, a `200` with empty body means “not signed in”.
-- 400: Missing required fields (e.g., username/password on sign-in).
-- 401: No current session for an action that requires one (e.g., sign out when not signed in).
-- 403: Authenticated but not authorized (bad credentials on login attempt, or insufficient privileges).
-
-## Client considerations
-
-- Sessions are cookie-based; the server handles setting and reading the cookie via Harper. If you make cross-origin requests, ensure the appropriate `credentials` mode and CORS settings.
-- If developing locally, double-check the server config still has `authentication.authorizeLocal: false` to avoid accidental superuser bypass.
-
-## Token-based auth (JWT + refresh token) for non-browser clients
-
-Cookie-backed sessions are great for browser flows. For CLI tools, mobile apps, or other non-browser clients, it’s often easier to use **explicit tokens**:
-
-- **JWT (`operation_token`)**: short-lived bearer token used to authorize API requests.
-- **Refresh token (`refresh_token`)**: longer-lived token used to mint a new JWT when it expires.
-
-This project includes two Resource patterns for that flow:
-
-### Issuing tokens: `IssueTokens`
-
-**Description / use case:** Generate `{ refreshToken, jwt }` either:
-
-- with an existing Authorization token (either Basic Auth or a JWT) and you want to issue new tokens, or
-- from an explicit `{ username, password }` payload (useful for direct “login” from a CLI/mobile client).
+**Full session-based sign-in/sign-out flow:**
 
 ```javascript
-export class IssueTokens extends Resource {
-	static loadAsInstance = false;
-
-	async get(target) {
-		const { refresh_token: refreshToken, operation_token: jwt } =
-			await databases.system.hdb_user.operation(
-				{ operation: 'create_authentication_tokens' },
-				this.getContext(),
-			);
-		return { refreshToken, jwt };
-	}
-
-	async post(target, data) {
-		if (!data.username || !data.password) {
-			throw new Error('username and password are required');
+export class SignIn extends Resource {
+	async post(_target, data) {
+		const context = this.getContext();
+		try {
+			await context.login(data.username, data.password);
+		} catch {
+			return new Response('Invalid credentials', { status: 403 });
 		}
+		return new Response('Logged in', { status: 200 });
+	}
+}
 
-		const { refresh_token: refreshToken, operation_token: jwt } =
-			await databases.system.hdb_user.operation({
-				operation: 'create_authentication_tokens',
-				username: data.username,
-				password: data.password,
-			});
-		return { refreshToken, jwt };
+export class SignOut extends Resource {
+	async post() {
+		const context = this.getContext();
+		if (!context.session) return new Response(null, { status: 401 });
+		await context.session.delete(context.session.id);
+		return new Response('Logged out', { status: 200 });
 	}
 }
 ```
 
-**Recommended documentation notes to include:**
-
-- `GET` variant: intended for “I already have an Authorization token, give me new tokens”.
-- `POST` variant: intended for “I have credentials, give me tokens”.
-- Response shape:
-  - `refreshToken`: store securely (long-lived).
-  - `jwt`: attach to requests (short-lived).
-
-### Refreshing a JWT: `RefreshJWT`
-
-**Description / use case:** When the JWT expires, the client uses the refresh token to get a new JWT without re-supplying username/password.
+**JWT token refresh endpoint:**
 
 ```javascript
 export class RefreshJWT extends Resource {
-	static loadAsInstance = false;
-
-	async post(target, data) {
-		if (!data.refreshToken) {
-			throw new Error('refreshToken is required');
+	static async post(_target, data) {
+		const { refresh_token } = await data;
+		if (!refresh_token) {
+			return new Response('refresh_token required', { status: 400 });
 		}
-
-		const { operation_token: jwt } = await databases.system.hdb_user.operation({
+		const { operation_token } = await server.operation({
 			operation: 'refresh_operation_token',
-			refresh_token: data.refreshToken,
+			refresh_token,
 		});
-		return { jwt };
+		return { operation_token };
 	}
 }
 ```
 
-**Recommended documentation notes to include:**
+## Notes
 
-- Requires `refreshToken` in the request body.
-- Returns a new `{ jwt }`.
-- If refresh fails (expired/revoked), client must re-authenticate (e.g., call `IssueTokens.post` again).
-
-### Suggested client flow (high-level)
-
-1. **Sign in (token flow)**
-   - POST /IssueTokens/ with a body of `{ "username": "your username", "password": "your password" }` or GET /IssueTokens/ with an existing Authorization token.
-   - Receive `{ jwt, refreshToken }` in the response
-2. **Call protected APIs**
-   - Send the JWT with each request in the Authorization header (as your auth mechanism expects)
-3. **JWT expires**
-   - POST /RefreshJWT/ with a body of `{ "refreshToken": "your refresh token" }`.
-   - Receive `{ jwt }` in the response and continue
-
-## Quick checklist
-
-- [ ] Public endpoints explicitly `allowRead`/`allowCreate` as needed.
-- [ ] Sign-in uses `context.login` and handles 400/403 correctly.
-- [ ] Protected routes call `ensureSuperUser(this.getCurrentUser())` (or another role check) before doing work.
-- [ ] Sign-out verifies a session and deletes it.
-- [ ] `authentication.authorizeLocal` is `false` and `enableSessions` is `true` in Harper config.
-- [ ] If using tokens: `IssueTokens` issues `{ jwt, refreshToken }`, `RefreshJWT` refreshes `{ jwt }` with a `refreshToken`.
+- `getCurrentUser()` and `getContext()` are instance methods; call them with `this` inside non-static Resource methods.
+- `enableSessions` must be `true` in config before `context.login` or `context.session` will function.
+- Cookie-based sessions target browser clients. Use JWT issuance via `server.operation()` for all other client types.
+- When both `operation_token` and `refresh_token` have expired, the client must call `create_authentication_tokens` again with credentials.

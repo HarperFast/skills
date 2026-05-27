@@ -139,11 +139,11 @@ Instructions for the agent to follow when enabling and querying vector indexes f
 
 #### When to Use
 
-Apply this rule when adding a vector index to a Harper table schema to support approximate nearest-neighbor (similarity) search on high-dimensional float arrays. Use it whenever a query requires ranking results by vector similarity, optionally combined with filter conditions.
+Apply this rule when adding a vector index to a Harper table schema or writing similarity search queries against high-dimensional vector fields. Use it whenever you need approximate nearest-neighbor search, distance-threshold filtering, or distance-scored results.
 
 #### How It Works
 
-1. **Define the table schema with a vector index**: Add `@indexed(type: "HNSW")` to a `[Float]` attribute on a `@table` type. See [adding-tables-with-schemas](adding-tables-with-schemas.md) for general schema setup.
+1. **Declare a vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
 
    ```graphql
    type Document @table {
@@ -152,7 +152,7 @@ Apply this rule when adding a vector index to a Harper table schema to support a
    }
    ```
 
-2. **Query by nearest neighbors**: Call `.search()` with a `sort` parameter specifying the indexed `attribute` and a `target` vector. The `target` is the query vector to compare against.
+2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object specifying `attribute` (the indexed field) and `target` (the query vector). Include `limit` to cap results.
 
    ```javascript
    let results = Document.search({
@@ -161,7 +161,7 @@ Apply this rule when adding a vector index to a Harper table schema to support a
    });
    ```
 
-3. **Combine with filter conditions**: Add a `conditions` array alongside `sort` to filter results before ranking by similarity.
+3. **Combine HNSW with filter conditions**: Add a `conditions` array alongside `sort` to pre-filter records before ranking by similarity.
 
    ```javascript
    let results = Document.search({
@@ -171,7 +171,30 @@ Apply this rule when adding a vector index to a Harper table schema to support a
    });
    ```
 
-4. **Tune HNSW parameters**: Pass additional parameters directly in the `@indexed` directive to control index quality and performance.
+4. **Filter by distance threshold**: Place `target` directly on a condition (alongside `attribute`, `comparator`, and `value`) to return only records whose distance to the target vector is below a threshold. Use this form to bound result quality by a similarity cutoff rather than ranking.
+
+   ```javascript
+   let results = Document.search({
+   	conditions: {
+   		attribute: 'textEmbeddings',
+   		comparator: 'lt',
+   		value: 0.1,
+   		target: searchVector,
+   	},
+   });
+   ```
+
+5. **Include computed distance in results**: Add `'$distance'` to the `select` array to return the computed distance from the target vector alongside each record. `$distance` works in both `sort`-based and `conditions`-based queries.
+
+   ```javascript
+   let results = Document.search({
+   	select: ['name', '$distance'],
+   	sort: { attribute: 'textEmbeddings', target: searchVector },
+   	limit: 5,
+   });
+   ```
+
+6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance:
 
    | Parameter              | Default           | Description                                                                                         |
    | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
@@ -184,16 +207,7 @@ Apply this rule when adding a vector index to a Harper table schema to support a
 
 #### Examples
 
-Schema with default settings:
-
-```graphql
-type Document @table {
-	id: Long @primaryKey
-	textEmbeddings: [Float] @indexed(type: "HNSW")
-}
-```
-
-Schema with custom parameters (euclidean distance, routing disabled, higher search recall):
+**Schema with custom HNSW parameters:**
 
 ```graphql
 type Document @table {
@@ -203,22 +217,35 @@ type Document @table {
 }
 ```
 
-Filtered nearest-neighbor search:
+**Nearest-neighbor search with distance output:**
 
 ```javascript
 let results = Document.search({
-	conditions: [{ attribute: 'price', comparator: 'lt', value: 50 }],
+	select: ['name', '$distance'],
 	sort: { attribute: 'textEmbeddings', target: searchVector },
 	limit: 5,
 });
 ```
 
+**Distance-threshold filter (no ranking):**
+
+```javascript
+let results = Document.search({
+	conditions: {
+		attribute: 'textEmbeddings',
+		comparator: 'lt',
+		value: 0.1,
+		target: searchVector,
+	},
+});
+```
+
 #### Notes
 
-- The default `distance` function is `cosine`. Use `"euclidean"` when your vectors are not normalized or when Euclidean geometry better fits your use case.
-- Increasing `efConstruction` improves index recall at the cost of build performance.
-- `mL` is computed automatically from `M` unless explicitly overridden.
-- Always pair `sort` with a `limit` to bound the number of nearest-neighbor results returned.
+- The default `distance` function is `cosine`. To use Euclidean distance, set `distance: "euclidean"` in the `@indexed` directive.
+- `efConstruction` controls index build quality; increase it to improve recall at the cost of slower indexing.
+- `$distance` is a special field — prefix it with `$` exactly as shown; it is not a schema attribute.
+- `target` is required in both `sort`-based and threshold-based condition queries to identify the reference vector for distance computation.
 
 ### 1.5 Using Blob Datatype
 

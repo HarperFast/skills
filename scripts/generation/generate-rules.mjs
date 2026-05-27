@@ -35,7 +35,15 @@ import matter from 'gray-matter';
 import { loadManifest, SKILLS, sortedRules } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
 import { generateRuleBody, generationModel } from './lib/llm.mjs';
-import { assembleAgentsMd, bodyOf, buildFrontmatter, composeRuleFile } from './lib/render.mjs';
+import {
+	assembleAgentsMd,
+	assembleSkillIndex,
+	bodyOf,
+	buildFrontmatter,
+	composeRuleFile,
+	SKILL_INDEX_BEGIN,
+	SKILL_INDEX_END,
+} from './lib/render.mjs';
 
 const AGENTS_LEAD =
 	'Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.';
@@ -201,6 +209,42 @@ async function main() {
 				execFileSync('npx', ['oxfmt', agentsPath], { stdio: 'inherit' });
 			} catch (err) {
 				console.warn(`Could not format ${skill.agentsFile}: ${err.message}`);
+			}
+
+			// Splice the generated index block into SKILL.md. The sentinel
+			// comments delimit the region the generator owns; everything outside
+			// them is human-authored and left untouched.
+			const skillPath = path.join(process.cwd(), skill.dir, skill.skillFile);
+			let rawSkill;
+			try {
+				rawSkill = await fs.readFile(skillPath, 'utf-8');
+			} catch (err) {
+				console.warn(`Could not read ${skill.skillFile} for index update: ${err.message}`);
+				rawSkill = null;
+			}
+			if (rawSkill !== null) {
+				const startIdx = rawSkill.indexOf(SKILL_INDEX_BEGIN);
+				const endIdx = rawSkill.indexOf(SKILL_INDEX_END);
+				if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+					const newIndex = assembleSkillIndex(manifest);
+					const updated =
+						rawSkill.slice(0, startIdx + SKILL_INDEX_BEGIN.length) +
+						'\n\n' +
+						newIndex +
+						'\n\n' +
+						rawSkill.slice(endIdx);
+					await fs.writeFile(skillPath, updated, 'utf-8');
+					try {
+						execFileSync('npx', ['oxfmt', skillPath], { stdio: 'inherit' });
+					} catch (err) {
+						console.warn(`Could not format ${skill.skillFile}: ${err.message}`);
+					}
+				} else {
+					console.warn(
+						`${skill.skillFile} is missing sentinel comments — index not updated. ` +
+							`Add ${SKILL_INDEX_BEGIN} / ${SKILL_INDEX_END} to mark the generated block.`,
+					);
+				}
 			}
 		}
 	}

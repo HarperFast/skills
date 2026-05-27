@@ -38,6 +38,8 @@ Reference these guidelines when:
 
 See the concrete examples embedded in each rule subsection below (GraphQL schemas, REST query patterns, and deployment workflow snippets).
 
+<!-- BEGIN GENERATED INDEX -->
+
 ## Rule Categories by Priority
 
 | Priority | Category             | Impact | Prefix    |
@@ -51,35 +53,37 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 
 ### 1. Schema & Data Design (HIGH)
 
-- `adding-tables-with-schemas` - Define tables using GraphQL schemas and directives
-- `schema-design-tooling` - Core directives and GraphQL IDE/agent configuration
-- `defining-relationships` - Link tables using the `@relationship` directive
-- `vector-indexing` - Efficient similarity search with vector indexes
-- `using-blob-datatype` - Store and retrieve large data (Blobs)
-- `handling-binary-data` - Manage binary data like images or MP3s
+- `adding-tables-with-schemas` — Guidelines for adding tables to a Harper database using GraphQL schemas.
+- `schema-design-tooling` — Best practices for Harper schema design, including core directives and GraphQL tooling configuration.
+- `defining-relationships` — How to define and use relationships between tables in Harper using GraphQL.
+- `vector-indexing` — How to enable and query vector indexes for similarity search in Harper.
+- `using-blob-datatype` — How to use the Blob data type for efficient binary storage in Harper.
+- `handling-binary-data` — How to store and serve binary data like images or audio in Harper.
 
 ### 2. API & Communication (HIGH)
 
-- `automatic-apis` - Leverage automatically generated CRUD endpoints
-- `querying-rest-apis` - Filters, sorting, and pagination in REST requests
-- `real-time-apps` - WebSockets and Pub/Sub for Real-Time Apps
-- `checking-authentication` - Secure apps with session-based identity verification
+- `automatic-apis` — How to use Harper's automatically generated REST and WebSocket APIs.
+- `querying-rest-apis` — How to use query parameters to filter, sort, and paginate Harper REST APIs.
+- `real-time-apps` — How to build real-time features in Harper using WebSockets and Pub/Sub.
+- `checking-authentication` — How to handle user authentication and sessions in Harper Resources.
 
 ### 3. Logic & Extension (MEDIUM)
 
-- `custom-resources` - Define custom REST endpoints using JS/TS
-- `extending-tables` - Add custom logic to generated table resources
-- `programmatic-table-requests` - Advanced filtering and sorting in code
-- `typescript-type-stripping` - Use TypeScript without build tools
-- `caching` - Implement and define caching for performance
+- `custom-resources` — How to define custom REST endpoints with JavaScript or TypeScript in Harper.
+- `extending-tables` — How to add custom logic to automatically generated table resources in Harper.
+- `programmatic-table-requests` — How to interact with Harper tables programmatically using the `tables` object.
+- `typescript-type-stripping` — How to run TypeScript files directly in Harper without a build step.
+- `caching` — How to implement integrated data caching in Harper from external sources.
 
 ### 4. Infrastructure & Ops (MEDIUM)
 
-- `deploying-to-harper-fabric` - Scale globally with Harper Fabric
-- `creating-a-fabric-account-and-cluster` - Setting up your Harper Fabric cloud infrastructure
-- `creating-harper-apps` - Quickstart with `npm create harper@latest`
-- `serving-web-content` - Ways to serve web content from Harper
-- `logging` - Use standard console and Harper's granular logger
+- `deploying-to-harper-fabric` — How to deploy a Harper application to the Harper Fabric cloud.
+- `creating-a-fabric-account-and-cluster` — How to create a Harper Fabric account, organization, and cluster.
+- `creating-harper-apps` — How to initialize a new Harper application using the CLI.
+- `serving-web-content` — How to serve static files and integrated Vite/React applications in Harper.
+- `logging` — Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
+
+<!-- END GENERATED INDEX -->
 
 ## How to Use
 

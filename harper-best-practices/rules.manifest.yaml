@@ -294,3 +294,19 @@ rules:
       - 'console.log'
       - 'logger'
       - 'withTag('
+
+  - rule: load-env
+    description: How to load environment variables from .env files into a Harper application using the loadEnv plugin.
+    category: ops
+    priority: 4
+    order: 6
+    mode: generate
+    sources:
+      - path: reference/v5/environment-variables/overview.md
+        role: primary
+    must_cover:
+      - 'loadEnv'
+      - 'files'
+      - 'process.env'
+      - 'override'
+      - 'config.yaml'

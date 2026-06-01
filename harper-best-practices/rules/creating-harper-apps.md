@@ -2,140 +2,53 @@
 name: creating-harper-apps
 description: How to initialize a new Harper application using the CLI.
 metadata:
-  mode: generate
-  sources:
-    - learn/getting-started/create-your-first-application.md
-    - reference/v5/components/applications.md#Local Development
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: aae210b12cfdaf9f
+  mode: synthesized
 ---
 
 # Creating Harper Applications
 
-Instructions for the agent to initialize and run a new Harper application using the CLI and configure its core files.
+The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command
+initializes a project with a standard folder structure, essential configuration files, and basic
+schema definitions.
 
 ## When to Use
 
-Apply this rule when scaffolding a new Harper application from scratch, wiring up a table schema, or starting the local development server. Use it any time `schema.graphql` or `config.yaml` need to be created or modified to register a table and enable plugins.
+Use this command when starting a new Harper application or adding a new Harper microservice to an
+existing architecture.
 
-## How It Works
+## Commands
 
-1. **Clone the starter repo**: Get the application template locally. If using a container, clone into the mounted `dev/` directory.
+Initialize a project using your preferred package manager:
 
-   ```bash
-   git clone https://github.com/HarperFast/create-your-first-application.git first-harper-app
-   ```
-
-2. **Define a table in `schema.graphql`**: Open `schema.graphql` and declare a type with the `@table` directive. Use `@primaryKey` to designate the primary key field. Add typed fields using standard GraphQL scalar types (`String`, `Int`, `ID`, etc.).
-
-   ```graphql
-   type Dog @table {
-   	id: ID @primaryKey
-   	name: String
-   	breed: String
-   	age: Int
-   }
-   ```
-
-3. **Register the schema in `config.yaml`**: Open `config.yaml` and configure the `graphqlSchema` plugin with a `files` property pointing to your schema file. This tells Harper to process the schema on startup.
-
-   ```yaml
-   graphqlSchema:
-     files: 'schema.graphql'
-   ```
-
-4. **Start the development server**: From inside the application directory, run `harper dev`. This watches all files (except `node_modules`) and automatically restarts Harper worker threads when changes are detected.
-
-   ```bash
-   harper dev .
-   ```
-
-5. **Enable the REST API**: Add the `@export` directive to the table type in `schema.graphql`, then add `rest: true` to `config.yaml`.
-
-   `schema.graphql`:
-
-   ```graphql
-   type Dog @table @export {
-   	id: ID @primaryKey
-   	name: String
-   	breed: String
-   	age: Int
-   }
-   ```
-
-   `config.yaml`:
-
-   ```yaml
-   graphqlSchema:
-     files: 'schema.graphql'
-   rest: true
-   ```
-
-   After saving, `harper dev` restarts automatically. Confirm the REST plugin is active by checking the logs for:
-
-   ```
-   REST:               HTTP: 9926
-   ```
-
-## Examples
-
-**Full `config.yaml` with REST enabled:**
-
-```yaml
-graphqlSchema:
-  files: 'schema.graphql'
-rest: true
-```
-
-**Full `schema.graphql` with REST export:**
-
-```graphql
-type Dog @table @export {
-	id: ID @primaryKey
-	name: String
-	breed: String
-	age: Int
-}
-```
-
-**Create a record via `PUT`:**
+### NPM
 
 ```bash
-curl 'http://localhost:9926/Dog/001' \
-  -X PUT \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Harper",
-    "breed": "Black Labrador / Chow Mix",
-    "age": 5
-  }' \
-  -w "%{http_code}"
+npm create harper@latest
 ```
 
-**Read a record via `GET`:**
+### PNPM
 
 ```bash
-curl -s 'http://localhost:9926/Dog/001' | jq
+pnpm create harper@latest
 ```
 
-**Query records by attribute:**
+### Bun
 
 ```bash
-curl -s 'http://localhost:9926/Dog/?age=5' | jq
+bun create harper@latest
 ```
 
-## Notes
+## Options
 
-- `harper dev .` watches for file changes and restarts worker threads automatically. Use `harper run` instead when the main thread must also restart (the `dev` command does not restart the main thread).
-- Stop either process with SIGINT (`Ctrl+C`).
-- The `graphqlSchema` plugin is built-in; no additional dependency installation is required.
-- The `files` property in `config.yaml` accepts a glob pattern — a single filename or a broader pattern are both valid.
-- The `@table` directive marks a type as a database table. Without it, Harper treats the type as an arbitrary GraphQL type.
-- The REST API defaults to port `9926`. This value is configurable.
-- To deploy a local application to a running Harper instance without using `harper dev`, use:
-  ```bash
-  harper deploy \
-    project=<name> \
-    package=<path-to-project> \
-    restart=true
-  ```
+You can specify the project name and template directly:
+
+```bash
+npm create harper@latest my-app --template default
+```
+
+## Next Steps
+
+1. **Configure Environment**: Set up your `.env` file with local or cloud credentials.
+2. **Define Schema**: Modify `schema.graphql` to fit your application's data model.
+3. **Start Development**: Run `npm run dev` to start the local Harper instance.
+4. **Deploy**: Use `npm run deploy` to push your application to Harper Fabric.

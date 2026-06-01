@@ -9,8 +9,9 @@
 # Phase 3 flips 7 obvious 1:1 rules to mode: generate (automatic-apis,
 # querying-rest-apis, real-time-apps, checking-authentication, logging,
 # deploying-to-harper-fabric, caching). All others remain synthesized.
-# Phase 4 migrates schema-design-tooling, typescript-type-stripping, and
-# creating-harper-apps to mode: generate.
+# Phase 4 migrates schema-design-tooling and typescript-type-stripping to
+# mode: generate. creating-harper-apps stays synthesized pending dedicated
+# create-harper CLI documentation.
 
 rules:
   # ===========================================================================
@@ -259,18 +260,7 @@ rules:
     category: ops
     priority: 4
     order: 3
-    mode: generate
-    sources:
-      - path: learn/getting-started/create-your-first-application.md
-        role: primary
-      - path: reference/v5/components/applications.md
-        section: 'Local Development'
-        role: supplemental
-    must_cover:
-      - 'harper dev'
-      - 'config.yaml'
-      - 'schema.graphql'
-      - 'graphqlSchema'
+    mode: synthesized
 
   - rule: serving-web-content
     description: How to serve static files and integrated Vite/React applications in Harper.

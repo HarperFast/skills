@@ -7,11 +7,14 @@ metadata:
 
 # Creating Harper Applications
 
-The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command initializes a project with a standard folder structure, essential configuration files, and basic schema definitions.
+The fastest way to start a new Harper project is using the `create-harper` CLI tool. This command
+initializes a project with a standard folder structure, essential configuration files, and basic
+schema definitions.
 
 ## When to Use
 
-Use this command when starting a new Harper application or adding a new Harper microservice to an existing architecture.
+Use this command when starting a new Harper application or adding a new Harper microservice to an
+existing architecture.
 
 ## Commands
 

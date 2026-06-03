@@ -9,6 +9,9 @@
 # Phase 3 flips 7 obvious 1:1 rules to mode: generate (automatic-apis,
 # querying-rest-apis, real-time-apps, checking-authentication, logging,
 # deploying-to-harper-fabric, caching). All others remain synthesized.
+# Phase 4 migrates schema-design-tooling and typescript-type-stripping to
+# mode: generate. creating-harper-apps stays synthesized pending dedicated
+# create-harper CLI documentation.
 
 rules:
   # ===========================================================================
@@ -27,7 +30,23 @@ rules:
     category: schema
     priority: 1
     order: 2
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/schema.md
+        section: 'Overview'
+        role: primary
+      - path: reference/v5/database/schema.md
+        section: 'Type Directives'
+        role: primary
+      - path: reference/v5/database/schema.md
+        section: 'Field Directives'
+        role: primary
+    must_cover:
+      - '@table'
+      - '@export'
+      - '@primaryKey'
+      - '@indexed'
+      - 'graphqlSchema'
 
   - rule: defining-relationships
     description: How to define and use relationships between tables in Harper using GraphQL.
@@ -178,7 +197,16 @@ rules:
     category: logic
     priority: 3
     order: 4
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/components/javascript-environment.md
+        section: 'TypeScript Support'
+        role: primary
+    must_cover:
+      - '.ts'
+      - 'jsResource'
+      - 'Node.js 22.6'
+      - 'type stripping'
 
   - rule: caching
     description: How to implement integrated data caching in Harper from external sources.
@@ -256,3 +284,19 @@ rules:
       - 'console.log'
       - 'logger'
       - 'withTag('
+
+  - rule: load-env
+    description: How to load environment variables from .env files into a Harper application using the loadEnv plugin.
+    category: ops
+    priority: 4
+    order: 6
+    mode: generate
+    sources:
+      - path: reference/v5/environment-variables/overview.md
+        role: primary
+    must_cover:
+      - 'loadEnv'
+      - 'files'
+      - 'process.env'
+      - 'override'
+      - 'config.yaml'

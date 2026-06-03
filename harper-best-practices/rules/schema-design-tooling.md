@@ -1,70 +1,161 @@
 ---
 name: schema-design-tooling
-description: Best practices for Harper schema design, including core directives and GraphQL tooling configuration.
+description: >-
+  Best practices for Harper schema design, including core directives and GraphQL
+  tooling configuration.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/database/schema.md#Overview
+    - reference/v5/database/schema.md#Type Directives
+    - reference/v5/database/schema.md#Field Directives
+  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
+  inputHash: 4faa3baed7cfa854
 ---
 
-# Schema Design & Tooling
+# Schema Design and Tooling
 
-Harper uses GraphQL schemas to define database tables, relationships, and APIs. To ensure the best development experience for both humans and AI agents, it's important to understand the core directives and configure your project tooling correctly.
+Instructions for the agent to follow when designing Harper schemas, applying core directives, and configuring GraphQL tooling.
 
-## Core Harper Directives
+## When to Use
 
-Harper extends GraphQL with custom directives that define database behavior. These are typically defined in `node_modules/harper/schema.graphql`. If you don't have access to that file, here is a reference of the most important ones:
+Apply this rule when creating or modifying Harper schema files, configuring `graphqlSchema` in `config.yaml`, or deciding which directives to apply to tables and fields. Use it any time a component needs tables, indexes, primary keys, or exported endpoints defined.
 
-### Table Definition
+## How It Works
 
-- `@table`: Marks a GraphQL type as a Harper database table.
-- `@export`: Automatically generates REST and WebSocket APIs for the table.
-- `@table(expiration: Int)`: Configures a time-to-expire for records in the table (useful for caching).
+1. **Create a GraphQL schema file** with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
 
-### Attribute Constraints & Indexing
+   ```graphql
+   type Dog @table {
+   	id: Long @primaryKey
+   	name: String
+   	breed: String
+   	age: Int
+   }
 
-- `@primaryKey`: Specifies the unique identifier for the table.
-- `@indexed`: Creates a standard index on the field for faster lookups.
-- `@indexed(type: "HNSW", distance: "cosine" | "euclidean" | "dot")`: Creates a vector index for similarity search.
+   type Breed @table {
+   	id: Long @primaryKey
+   	name: String @indexed
+   }
+   ```
 
-### Relationships
+2. **Register the schema in `config.yaml`** using the `graphqlSchema` plugin key:
 
-- `@relationship(from: String)`: Defines a relationship to another table. `from` specifies the local field holding the foreign key.
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   ```
 
-### Authentication & Authorization
+   Both plugins and applications can specify schemas this way.
 
-- `@auth(role: String)`: Restricts access to a table or field based on user roles.
+3. **Mark every table type with `@table`**. The type name becomes the table name by default. Use optional arguments to override behavior:
 
-## Configuring GraphQL Tooling
+   | Argument       | Type      | Default                       | Description                                                   |
+   | -------------- | --------- | ----------------------------- | ------------------------------------------------------------- |
+   | `table`        | `String`  | type name                     | Override the table name                                       |
+   | `database`     | `String`  | `"data"`                      | Database to place the table in                                |
+   | `expiration`   | `Int`     | —                             | Seconds until a record goes stale                             |
+   | `eviction`     | `Int`     | `0`                           | Additional seconds after `expiration` before physical removal |
+   | `scanInterval` | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                |
+   | `replicate`    | `Boolean` | `true`                        | Enable replication of this table                              |
 
-To get the best IDE support (autocompletion, validation) and to help AI agents understand your schema context, you should create a `graphql.config.yml` file in your project root.
+4. **Designate a primary key on every table** using `@primaryKey`. Primary keys must be unique; duplicate-key inserts are rejected. If no key is provided on insert, Harper auto-generates one:
+   - `String` or `ID` → UUID string
+   - `Int`, `Long`, or `Any` → auto-incrementing integer
 
-This file tells GraphQL tools where to find Harper's built-in types and directives alongside your own schema files.
+   Prefer `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
 
-### Creating `graphql.config.yml`
+5. **Index fields that need fast querying** with `@indexed`. This is required for filtering by that attribute in REST queries, SQL, or NoSQL operations. If the field value is an array, each element is individually indexed.
 
-Create a file named `graphql.config.yml` in your project root with the following content:
+   ```graphql
+   type Product @table {
+   	id: Long @primaryKey
+   	category: String @indexed
+   	price: Float @indexed
+   }
+   ```
 
-```yaml
-schema:
-  - 'node_modules/harper/schema.graphql'
-  - 'schema.graphql'
-  - 'schemas/*.graphql'
+6. **Expose a table as an external resource endpoint** with `@export`. This makes the table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment; without it, the type name is used.
+
+   ```graphql
+   type MyTable @table @export(name: "my-table") {
+   	id: Long @primaryKey
+   }
+   ```
+
+7. **Restrict extra properties** with `@sealed` when records must not include attributes beyond those declared. By default, Harper allows additional properties.
+
+   ```graphql
+   type StrictRecord @table @sealed {
+   	id: Long @primaryKey
+   	name: String
+   }
+   ```
+
+8. **Configure expiration, eviction, and scan behavior** together when building caching tables. These three arguments control the full record lifecycle:
+   - `expiration` — record becomes stale; next request triggers a source fetch
+   - `eviction` — additional time after `expiration` before physical removal
+   - `scanInterval` — how often Harper scans for records to evict; clock-aligned, not startup-aligned
+
+## Examples
+
+**Caching table with tuned expiration:**
+
+```graphql
+# Expire after 5 minutes, evict after 1 hour, scan every 10 minutes
+type WeatherCache @table(expiration: 300, eviction: 3300, scanInterval: 600) {
+	id: ID @primaryKey
+	temperature: Float
+}
 ```
 
-### Why this is important:
+**Table in a named database with expiration and an indexed field:**
 
-1. **Shared Directives**: It includes `@table`, `@primaryKey`, etc., so they aren't marked as "unknown directives".
-2. **Context for Agents**: When an agent reads your project, seeing this config helps it locate the core Harper definitions, leading to more accurate code generation.
-3. **Consistency**: The `npm create harper@latest` command includes this by default. Manually adding it to existing projects ensures they follow the same standards.
-
-## Example Project Structure
-
-A typical Harper project with proper schema tooling:
-
-```text
-my-harper-app/
-├── config.yaml
-├── graphql.config.yml
-├── package.json
-├── schema.graphql
-└── resources.js
+```graphql
+type Event @table(database: "analytics", expiration: 86400) {
+	id: Long @primaryKey
+	name: String @indexed
+}
 ```
+
+**Session cache with auto-expiry:**
+
+```graphql
+type Session @table(expiration: 3600) {
+	id: Long @primaryKey
+	userId: String
+}
+```
+
+**Table with audit timestamps:**
+
+```graphql
+type Order @table @export(name: "orders") {
+	id: Long @primaryKey
+	createdAt: Long @createdTime
+	updatedAt: Long @updatedTime
+	status: String @indexed
+}
+```
+
+**Overriding the table name and disabling replication:**
+
+```graphql
+type Product @table(table: "products") {
+	id: Long @primaryKey
+	name: String
+}
+
+type LocalRecord @table(replicate: false) {
+	id: Long @primaryKey
+	value: String
+}
+```
+
+## Notes
+
+- Use unique `database` names in plugins and applications to avoid table naming collisions, since all tables default to the `"data"` database.
+- Eviction removes non-indexed record data but does **not** remove a record from its secondary indexes. Indexes remain functional for evicted records; Harper fetches the full record from the source on demand when a query matches an evicted record.
+- `scanInterval` is clock-aligned to the server's local timezone. The server's startup time does not affect when eviction runs.
+- If replication is disabled on a table and later re-enabled, it will not catch up on writes made while replication was disabled.
+- Null values are indexed by `@indexed` fields, enabling queries such as `GET /Product/?category=null`.

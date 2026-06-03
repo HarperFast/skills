@@ -82,6 +82,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `creating-harper-apps` — How to initialize a new Harper application using the CLI.
 - `serving-web-content` — How to serve static files and integrated Vite/React applications in Harper.
 - `logging` — Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
+- `load-env` — How to load environment variables from .env files into a Harper application using the loadEnv plugin.
 
 <!-- END GENERATED INDEX -->
 

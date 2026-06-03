@@ -2,7 +2,7 @@ name: Generate Rules from Docs
 
 # Regenerates docs-driven skill rules and opens a sync PR. Triggered when the
 # documentation repo deploys (repository_dispatch), on a weekly safety-net
-# cron, or manually. See docs/plans/docs-driven-skills.md (Phase 2).
+# cron, or manually. See docs/plans-archive/docs-driven-skills.md (Phase 2).
 #
 # Offline-first: the docs repo is checked out and built in-job; the generator
 # reads the local build output and never fetches docs over the network.
@@ -125,7 +125,7 @@ jobs:
 
           Opened automatically by \`.github/workflows/generate.yaml\`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the full error.
 
-          **Common causes and fixes (Story 4 in docs/plans/docs-driven-skills.md):**
+          **Common causes and fixes (Story 4 in docs/plans-archive/docs-driven-skills.md):**
           - Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`.
           - Section heading renamed or removed — update \`sources[].section\`.
           - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
@@ -172,7 +172,7 @@ jobs:
               --title "docs: regenerate rules from documentation@${SHORT}" \
               --body "Automated regeneration of docs-driven skill rules from \`HarperFast/documentation@${SHORT}\`.
 
-          Produced by \`.github/workflows/generate.yaml\`. Review the diff as you would any rule change — the generator reads the docs build output and rewrites \`mode: generate\` / imports \`mode: direct\` rule bodies, then reassembles AGENTS.md. See docs/plans/docs-driven-skills.md.
+          Produced by \`.github/workflows/generate.yaml\`. Review the diff as you would any rule change — the generator reads the docs build output and rewrites \`mode: generate\` / imports \`mode: direct\` rule bodies, then reassembles AGENTS.md. See docs/plans-archive/docs-driven-skills.md.
 
           🤖 Generated with [Claude Code](https://claude.com/claude-code)"
           fi

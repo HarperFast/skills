@@ -2,7 +2,7 @@
 // (to feed the LLM / produce direct bodies) and the validator (source-exists
 // and byte-identical checks). The docs build dir is the `build/` tree produced
 // by @signalwire/docusaurus-plugin-llms-txt — see Phase 1 in
-// docs/plans/docs-driven-skills.md. No network access: everything reads from
+// docs/plans-archive/docs-driven-skills.md. No network access: everything reads from
 // the local checked-out-and-built docs tree.
 
 import fs from 'node:fs/promises';

@@ -2,7 +2,7 @@
 #
 # Declarative source of truth for rule taxonomy, sources, and generation mode.
 # Owned by humans; the generator reads this file and writes derived artifacts
-# (rule bodies, AGENTS.md). See docs/plans/docs-driven-skills.md for the
+# (rule bodies, AGENTS.md). See docs/plans-archive/docs-driven-skills.md for the
 # full schema definition and Manifest ↔ frontmatter reconciliation semantics.
 #
 # Phase 2 flipped vector-indexing to mode: generate.

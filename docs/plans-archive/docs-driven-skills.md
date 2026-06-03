@@ -1,5 +1,7 @@
 # Docs-Driven Skill Generation
 
+> **Status: complete — archived.** The docs-driven generation pipeline shipped across Phases 0–4. The cross-repo `repository_dispatch` trigger from `HarperFast/documentation` is live and working: docs merges automatically open regeneration PRs against this repo. Of the 20 rules, 11 are `mode: generate` and 9 remain `synthesized`. The observability extras originally scoped into Phase 4 (stale-PR Slack notifier, weekly drift report) were intentionally deferred — see [Phase 4](#phase-4--awkward-rules--observability). The next development cycle — comprehensive v5 rule coverage and migrating the remaining synthesized rules — is tracked in [`docs/plans/comprehensive-rule-coverage.md`](../plans/comprehensive-rule-coverage.md). This document is retained as a record of the initial lift.
+
 ## Goal
 
 Eliminate drift between `@harperfast/skills` and `HarperFast/documentation`. Today rule bodies are maintained by hand — sometimes with agent assistance, but a human still has to notice a docs change, prompt the rewrite, and open a PR. As the docs evolve, skills silently fall behind. We're moving to a model where rule bodies are **generated from docs automatically** and humans only intervene to shape the _taxonomy_ — which rules exist, what docs feed them, and what each rule must assert.
@@ -312,11 +314,15 @@ Take on the rules that have multi-source bundles or no clean canonical doc, and 
 
 Rule candidates: `typescript-type-stripping`, `creating-harper-apps`, `schema-design-tooling`. Some will migrate with multi-source bundles; some will stay `synthesized` permanently if no canonical docs exist.
 
+**Shipped:** `typescript-type-stripping` and `schema-design-tooling` migrated to `mode: generate`. `creating-harper-apps` was intentionally left `synthesized` — its content (the `create-harper` CLI flow) has no clean canonical docs source today; see the [Learn-content question](../plans/comprehensive-rule-coverage.md) in the next-cycle plan.
+
 Observability work:
 
-- Stale-PR Slack notifier (auto-PRs open >7 days).
-- Generation-failure auto-issue (idempotent by docs SHA).
-- Weekly drift report (commits to docs main since last successful sync).
+- ✅ **Generation-failure auto-issue** (idempotent by docs SHA) — shipped in `generate.yaml`.
+- ⏸️ **Stale-PR Slack notifier** (auto-PRs open >7 days) — _deferred._
+- ⏸️ **Weekly drift report** (commits to docs main since last successful sync) — _deferred._
+
+> **Deferral note.** The Slack notifier and drift report were de-scoped from the initial lift. The failure auto-issue already covers the highest-value signal (a broken sync surfaces loudly as a GitHub issue), and the volume of auto-PRs is currently low enough that staleness and drift are visible by eye. These two notifiers are now **future follow-ups, to be picked up only when we deem them necessary** (e.g. if auto-PR volume grows or syncs start silently lagging). The blocking open question below (Slack channel + webhook) is parked along with them.
 
 ### Phase 5 — Steady state
 
@@ -334,7 +340,7 @@ Required sections:
 - **Common tasks.** "How do I add a new rule?" "How do I change which docs feed a rule?" "How do I add a new skill?" "An auto-PR looks wrong — what do I do?" — each with concrete commands.
 - **What's automated vs. what's manual.** Reproduce the guiding principle and a condensed version of the user stories above.
 
-The plan document you are reading lives at `docs/plans/docs-driven-skills.md`. It is a planning artifact, not steady-state documentation — once Phase 5 lands, this file can be archived. `.github/CONTRIBUTING.MD` is the long-lived companion.
+The plan document you are reading now lives at `docs/plans-archive/docs-driven-skills.md` (archived once the initial lift completed). It is a planning artifact, not steady-state documentation. `.github/CONTRIBUTING.MD` is the long-lived companion, and the next development cycle continues in [`docs/plans/comprehensive-rule-coverage.md`](../plans/comprehensive-rule-coverage.md).
 
 ## Validation Layer
 
@@ -403,4 +409,4 @@ Each question is annotated with the earliest phase it blocks; resolve before tha
 - **(Phase 1)** Confirm `reference_versioned_docs/version-v4/` is excluded from source resolution by default (handled via the plugin's `excludeRoutes` config).
 - **(Phase 2)** Anthropic API key provisioning for the skills repo's Actions runner — who owns it.
 - ~~**(Phase 2)** Confirm `SKILL.md` is "authored top + generated index at the bottom" — i.e., the rule list table is regenerated, the upper prose is not.~~ **Resolved (Phase 3).** Implemented: the "Rule Categories by Priority" table and "Quick Reference" section are generated inside sentinel comments; all other prose is hand-authored. See Generation Lifecycle step 3b and Validation Layer for details.
-- **(Phase 4)** Slack channel + webhook for stale-PR and failure notifications.
+- ~~**(Phase 4)** Slack channel + webhook for stale-PR and failure notifications.~~ **Parked.** The stale-PR and drift notifiers were deferred (see [Phase 4](#phase-4--awkward-rules--observability)); this question is revisited only if/when those follow-ups are picked up.

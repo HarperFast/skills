@@ -42,6 +42,7 @@ Every file and directory at a glance — nothing is skipped because "it's obviou
 │   ├── validate-skills.mjs      # Layer 1 validator: basic SKILL.md / rule schema
 │   └── generation/
 │       ├── generate-rules.mjs   # Rule generator (entry point for npm run generate)
+│       ├── sync-report.mjs      # Baseline-freshness report + sync PR body composer
 │       ├── validate-generated.mjs  # Layers 2–4 validator: manifest lint,
 │       │                           # frontmatter reconciliation, body checks
 │       ├── lib/
@@ -146,7 +147,9 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 1. **Checks out `HarperFast/documentation`** at the triggering SHA and runs `npm ci && npm run build` in it. This produces per-route flat-markdown files under `documentation/build/` via the `@signalwire/docusaurus-plugin-llms-txt` Docusaurus plugin.
 
-2. **Reads `rules.manifest.yaml`** and iterates over every non-synthesized rule.
+2. **Captures pre-sync provenance** — `sync-report.mjs` snapshots each rule's recorded baseline and which rules are stale, before generation overwrites the frontmatter. The sync PR body is composed from this snapshot.
+
+3. **Reads `rules.manifest.yaml`** and iterates over every non-synthesized rule.
 
 3. **Resolves sources** — for each `sources[].path`, reads the corresponding file from `documentation/build/`. If `sources[].section` is set, slices out that heading's content subtree. Concatenates sources in manifest order.
 
@@ -189,15 +192,23 @@ This flow is **offline-first**: no network calls to `docs.harperdb.io`. Everythi
        - 'key term that must appear in the generated body'
    ```
 
-2. Run the generator locally (you need the docs repo checked out and built):
+2. Run the generator locally. You need the docs repo checked out **and built at `main` HEAD** — see [Keeping rule baselines fresh](#keeping-rule-baselines-fresh) for why this matters:
 
    ```bash
+   git -C ../documentation switch main && git -C ../documentation pull
+   npm --prefix ../documentation ci && npm --prefix ../documentation run build
    npm run generate -- --docs-path ../documentation --rule my-new-rule
    ```
 
    Omit `--rule` to regenerate all changed rules. Use `--force` to regenerate even when the input hash is unchanged.
 
 3. Review the generated `harper-best-practices/rules/my-new-rule.md`, then open a PR with a `feat:` commit.
+
+   Before opening, confirm the recorded baseline matches current docs main (catches a rule that was generated against a stale docs checkout):
+
+   ```bash
+   npm run sync:report -- --docs-path ../documentation --strict
+   ```
 
 For `mode: synthesized` (no docs source), omit `sources[]` and `must_cover`, write the rule body by hand, and open the PR.
 
@@ -239,6 +250,25 @@ Check what changed in the docs at the linked commit SHA. Common cases:
 
 Close the auto-PR without merging, fix the manifest on a new branch, and open a corrective PR against `main`. The next auto-sync will be a no-op once your fix merges.
 
+### Keeping rule baselines fresh
+
+Every `generate` / `direct` rule records the docs commit and content hash it was last produced from (`metadata.sourceCommit` / `metadata.inputHash`). That recorded baseline reflects **whatever local docs checkout you had** when you ran `npm run generate`.
+
+If your docs checkout lags `main`, the rule is "born stale": its body reflects old docs, and the recorded hash points at an old commit. Nothing is lost — the next auto-sync regenerates it against current docs — but the resulting sync PR looks confusing, because a docs commit about feature X appears to regenerate an unrelated rule (the rule's *real* source changed in an earlier, never-synced commit).
+
+To avoid this:
+
+- **Build docs at `main` HEAD before generating** (see the commands in [How do I add a new rule?](#how-do-i-add-a-new-rule)).
+- **Run the freshness check before opening a rule PR:**
+
+  ```bash
+  npm run sync:report -- --docs-path ../documentation --strict
+  ```
+
+  It compares every rule's recorded hash against the current docs build and exits non-zero (under `--strict`) if any rule is stale. A clean run means your baselines match the docs you built against. Drop `--strict` for an informational report.
+
+The auto-sync workflow runs the same report before regenerating and uses it to explain each sync PR — listing which rules changed, the docs commit each was last synced from, and the full docs commit range since that baseline.
+
 ---
 
 ## What's automated vs. what's manual
@@ -253,7 +283,8 @@ Close the auto-PR without merging, fix the manifest on a new branch, and open a 
 | Write `synthesized` rule bodies | Human |
 | Regenerate `generate` / `direct` bodies when docs change | Automated (dispatch + cron) |
 | Reassemble AGENTS.md and SKILL.md index | Automated (every generation run) |
-| Open sync PRs | Automated (`generate.yaml`) |
+| Open sync PRs (with per-rule change provenance) | Automated (`generate.yaml` + `sync-report.mjs`) |
+| Keep recorded baselines current with docs main | Human (build docs at HEAD; `npm run sync:report --strict`) |
 | Open failure issues when generation breaks | Automated (`generate.yaml`) |
 | Review and merge sync PRs | Human |
 | Publish new npm versions | Automated (semantic-release on merge to main) |
@@ -269,6 +300,7 @@ When a docs structural change breaks automation (renamed file, renamed heading),
 - **Build**: `npm run build` — compiles `dist/`.
 - **Validate**: `npm run validate` — runs `format:check` + `build` + both validators. Run this before pushing.
 - **Validate with docs**: add `&& node scripts/generation/validate-generated.mjs --docs-path ../documentation` for the full suite including source-exists and byte-identical checks.
+- **Freshness report**: `npm run sync:report -- --docs-path ../documentation` — shows which rules are stale vs. the current docs build. Add `--strict` to fail on staleness (use before opening a rule PR).
 
 The pipeline is ordered so `format:check` runs first. CI fails loudly on formatting drift rather than silently auto-fixing it.
 

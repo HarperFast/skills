@@ -64,7 +64,9 @@ jobs:
           ref: ${{ steps.docsref.outputs.ref }}
           path: documentation
           # documentation is a public repo, so the default job token reads it.
-          fetch-depth: 1
+          # Full history (fetch-depth: 0) so the sync PR body can resolve the
+          # docs commit range since each rule's recorded baseline.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
@@ -80,6 +82,14 @@ jobs:
       - name: Install skills dependencies
         working-directory: skills
         run: npm ci
+
+      - name: Capture pre-sync provenance
+        working-directory: skills
+        # Snapshot each rule's recorded baseline (sourceCommit/inputHash) and
+        # which rules are stale, BEFORE generation overwrites the frontmatter.
+        # The PR step reads this snapshot to explain why each rule changed.
+        # Non-strict: this never blocks the sync — the generator is the gate.
+        run: npm run sync:report -- --docs-path ../documentation --out ../sync-provenance.json
 
       - name: Generate rules
         working-directory: skills
@@ -164,15 +174,22 @@ jobs:
           # commit in place so the open sync PR always reflects the latest docs.
           git push --force origin "$BRANCH"
 
+          # Compose a provenance-rich body from the pre-sync snapshot: which
+          # rules changed, the docs commit each was last synced from, and the
+          # full docs commit range since the oldest such baseline.
+          BODY="$(npm run --silent sync:report -- \
+            --docs-path ../documentation \
+            --format pr-body \
+            --from ../sync-provenance.json)"
+
           STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
           if [ "$STATE" = "OPEN" ]; then
             echo "Existing sync PR updated."
+            gh pr edit "$BRANCH" \
+              --title "docs: regenerate rules from documentation@${SHORT}" \
+              --body "$BODY"
           else
             gh pr create --base main --head "$BRANCH" \
               --title "docs: regenerate rules from documentation@${SHORT}" \
-              --body "Automated regeneration of docs-driven skill rules from \`HarperFast/documentation@${SHORT}\`.
-
-          Produced by \`.github/workflows/generate.yaml\`. Review the diff as you would any rule change — the generator reads the docs build output and rewrites \`mode: generate\` / imports \`mode: direct\` rule bodies, then reassembles AGENTS.md. See docs/plans-archive/docs-driven-skills.md.
-
-          🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+              --body "$BODY"
           fi

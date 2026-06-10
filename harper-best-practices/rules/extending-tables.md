@@ -23,21 +23,24 @@ Use this skill when you need to add custom validation, side effects (like webhoo
    }
    ```
 2. **Create the Extension File**: Create a `.ts` file in your `resources/` directory.
-3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName`:
+3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName`. **Write-method overrides receive the incoming record as the FIRST argument** — `post(data, target)`, `put(data, target)`, `patch(data, target)`; `delete` receives `(target)`. To return a specific HTTP status from a thrown error, set **`.statusCode`** (e.g. `400`) on the error — a plain `.status` property is ignored.
 
    ```typescript
-   import { type RequestTargetOrId, tables } from 'harper';
+   import { tables } from 'harper';
 
    export class MyTable extends tables.MyTable {
-   	async post(target: RequestTargetOrId, record: any) {
-   		// Custom logic here
-   		if (!record.name) {
-   			throw new Error('Name required');
+   	// POST/PUT/PATCH overrides receive (data, target) — the record is FIRST.
+   	async post(data: any, target: any) {
+   		// Validate or transform the incoming record before persisting.
+   		if (!data?.name) {
+   			const error: any = new Error('Name is required');
+   			error.statusCode = 400; // HTTP status (use statusCode, NOT status)
+   			throw error;
    		}
-   		return super.post(target, record);
+   		return super.post(data, target); // pass the arguments through unchanged
    	}
    }
    ```
 
-4. **Override Methods**: Override `get`, `post`, `put`, `patch`, or `delete` as needed. Always call `super[method]` to maintain default Harper functionality unless you intend to replace it entirely.
+4. **Override Methods**: Override `get`, `post`, `put`, `patch`, or `delete` as needed. Always call `super[method](...)` with the same arguments to maintain default Harper functionality unless you intend to replace it entirely.
 5. **Implement Logic**: Use overrides for validation, side effects, or transforming data before/after database operations.

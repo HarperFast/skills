@@ -23,24 +23,24 @@ Use this skill when you need to add custom validation, side effects (like webhoo
    }
    ```
 2. **Create the Extension File**: Create a `.ts` file in your `resources/` directory.
-3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName`. **Write-method overrides receive the incoming record as the FIRST argument** — `post(data, target)`, `put(data, target)`, `patch(data, target)`; `delete` receives `(target)`. To return a specific HTTP status from a thrown error, set **`.statusCode`** (e.g. `400`) on the error — a plain `.status` property is ignored.
+3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName` and override the relevant **static** methods. In Harper 5 resource handlers are static and map 1:1 to HTTP verbs: `get(target)`, `post(target, data)`, `put(target, data)`, `patch(target, data)`, `delete(target)`. `target` is a pre-parsed `RequestTarget`; for writes, `data` is the request body and is **awaitable** (`await data`). Delegate to `super` to keep Harper's default behavior — a collection create passes just the record (`super.post(record)`), updates pass the target (`super.put(target, data)` / `super.patch(target, data)`), and reads/deletes pass the target (`super.get(target)`). To return a specific HTTP status from a thrown error, set **`.statusCode`** (e.g. `400`) on the error — a plain `.status` property is ignored.
 
    ```typescript
    import { tables } from 'harper';
 
    export class MyTable extends tables.MyTable {
-   	// POST/PUT/PATCH overrides receive (data, target) — the record is FIRST.
-   	async post(data: any, target: any) {
-   		// Validate or transform the incoming record before persisting.
-   		if (!data?.name) {
+   	// Static handler; receives (target, data) — data is awaitable.
+   	static async post(target: any, data: any) {
+   		const record = await data;
+   		if (!record?.name) {
    			const error: any = new Error('Name is required');
    			error.statusCode = 400; // HTTP status (use statusCode, NOT status)
    			throw error;
    		}
-   		return super.post(data, target); // pass the arguments through unchanged
+   		return super.post(record); // create delegates with the record (no id)
    	}
    }
    ```
 
-4. **Override Methods**: Override `get`, `post`, `put`, `patch`, or `delete` as needed. Always call `super[method](...)` with the same arguments to maintain default Harper functionality unless you intend to replace it entirely.
+4. **Override Methods**: Override the static `get`, `post`, `put`, `patch`, or `delete` as needed, delegating to `super.<method>` (see the argument forms above) to preserve Harper's default behavior unless you intend to replace it entirely.
 5. **Implement Logic**: Use overrides for validation, side effects, or transforming data before/after database operations.

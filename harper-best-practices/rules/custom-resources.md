@@ -17,19 +17,20 @@ Use this skill when the automatic CRUD operations provided by `@table @export` a
 
 1. **Check if a Custom Resource is Necessary**: Verify if [Automatic APIs](./automatic-apis.md) or [Extending Tables](./extending-tables.md) can satisfy the requirement first.
 2. **Create the Resource File**: Create a `.ts` or `.js` file in the directory specified by `jsResource` in `config.yaml` (typically `resources/`).
-3. **Define the Resource Class**: Export a class extending `Resource` from `harper`:
+3. **Define the Resource Class**: Export a class extending `Resource` from `harper` and define **static** methods for the HTTP verbs you handle. In Harper 5 the static methods are the HTTP handlers (mapped 1:1 to verbs); they receive a pre-parsed `RequestTarget`, and write handlers also receive the request body as an awaitable `data` argument:
 
    ```typescript
-   import { type RequestTargetOrId, Resource } from 'harper';
+   import { Resource } from 'harper';
 
    export class MyResource extends Resource {
-   	async get(target?: RequestTargetOrId) {
+   	// v5 handlers are static and map 1:1 to HTTP verbs.
+   	static async get(target: any) {
    		return { message: 'Hello from custom GET!' };
    	}
    }
    ```
 
-4. **Implement HTTP Methods**: Add methods like `get`, `post`, `put`, `patch`, or `delete` to handle corresponding requests.
+4. **Implement HTTP Methods**: Add static methods (`get`, `post`, `put`, `patch`, or `delete`) to handle the corresponding requests. Read/delete handlers receive `(target)`; write handlers receive `(target, data)` where `data` is awaitable.
 5. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
    - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
    - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.

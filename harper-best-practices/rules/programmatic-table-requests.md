@@ -74,13 +74,13 @@ Use these exact strings — incorrect comparator names will silently fail or err
 
 ### Query Object Parameters
 
-| Property     | Description                                                                          |
-| ------------ | ------------------------------------------------------------------------------------ |
-| `conditions` | Array of condition objects                                                           |
-| `limit`      | Maximum number of records to return                                                  |
-| `offset`     | Number of records to skip (for pagination)                                           |
-| `select`     | Array of attribute names to return; supports `$id` and `$updatedtime`                |
-| `sort`       | Object with `attribute`, `descending` (bool), and optional `next` for secondary sort |
+| Property     | Description                                                                                                                                                                                                     |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conditions` | Array of condition objects                                                                                                                                                                                      |
+| `limit`      | Maximum number of records to return                                                                                                                                                                             |
+| `offset`     | Number of records to skip (for pagination)                                                                                                                                                                      |
+| `select`     | Array of fields to return: attribute names (supports `$id` and `$updatedtime`), or an object `{ name, select }` to include fields from a related record — see [Selecting Related Data](#selecting-related-data) |
+| `sort`       | Object with `attribute`, `descending` (bool), and optional `next` for secondary sort                                                                                                                            |
 
 ### Examples
 
@@ -128,6 +128,50 @@ for await (const record of tables.Product.search({
   offset: 20,
 })) { ... }
 ```
+
+## Selecting Related Data
+
+When a field is defined as a relationship (via `@relationship` — see [Defining Relationships](defining-relationships.md)), `select` can pull the related record(s) into your results as nested properties. This is the programmatic equivalent of the REST `select(name,author{name})` syntax (see [Querying REST APIs](querying-rest-apis.md)).
+
+**Whole related record** — list the relationship field by name. The related record (or an array of records for a to-many relationship) is attached as a nested property:
+
+```javascript
+for await (const book of tables.Book.search({
+	conditions: [{ attribute: 'id', value: 42 }],
+	select: ['id', 'title', 'author'], // `author` is a relationship field
+})) {
+	console.log(book.author.name); // the full related Author record
+}
+```
+
+**Partial related record** — use an object `{ name, select }` to choose which fields of the related record to return. Unselected fields are omitted:
+
+```javascript
+for await (const book of tables.Book.search({
+	conditions: [{ attribute: ['author', 'name'], comparator: 'equals', value: 'Harper' }],
+	select: ['id', 'title', { name: 'author', select: ['name'] }],
+})) {
+	// book.author.name is present; other Author fields are undefined
+}
+```
+
+**Nesting** — a `select` inside an object entry may itself contain more `{ name, select }` objects, traversing multiple relationships in one query:
+
+```javascript
+select: [
+  'id',
+  'name',
+  {
+    name: 'segments',
+    select: ['id', 'name', { name: 'client', select: ['id', 'name'] }],
+  },
+],
+```
+
+Notes:
+
+- A to-many relationship resolves to an array of records; depending on access pattern you may need to `await` the property before iterating it.
+- Selecting a relationship without filtering on it produces LEFT JOIN behavior (records with no related row are still returned); adding a condition on a related attribute (e.g. `attribute: ['author', 'name']`) produces INNER JOIN behavior.
 
 ## Cautions
 

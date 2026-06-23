@@ -5,21 +5,21 @@ metadata:
   mode: generate
   sources:
     - learn/developers/caching-with-harper.md
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: 8212a7d7dbbd2b18
+  sourceCommit: 4fe4c9c95e0974eaa77032f6f10e36fbd8ec64ac
+  inputHash: 60ad55fa37b5eec5
 ---
 
 # Caching External Data Sources in Harper
 
-Instructions for the agent to implement integrated data caching in Harper by wrapping external sources with a cache table and `sourcedFrom`.
+Instructions for the agent to implement integrated data caching from external sources using Harper's cache table directives and `sourcedFrom` API.
 
 ## When to Use
 
-Apply this rule when a Harper application needs to cache responses from an external API, microservice, or database to avoid repeated slow or expensive upstream calls. Use it whenever you need to define TTL-based cache expiration, observe ETag-based conditional responses, or manually invalidate cached entries.
+Apply this rule when an application needs to wrap an external API, microservice, or database with a fast local cache. Use it when you need to define TTL-based cache expiration, connect an upstream data source to a Harper table, or implement on-demand cache invalidation.
 
 ## How It Works
 
-1. **Define a cache table with `expiration`**: In `schema.graphql`, add the `expiration` argument to `@table`. The value is in seconds. Any record older than this threshold is considered stale and will be re-fetched on next access.
+1. **Define a cache table with `expiration`**: Add the `expiration` argument to the `@table` directive in `schema.graphql`. The value is in seconds. When a record becomes stale, the next request fetches a fresh copy from the upstream source.
 
    ```graphql
    type JokeCache @table(expiration: 60) @export {
@@ -29,7 +29,7 @@ Apply this rule when a Harper application needs to cache responses from an exter
    }
    ```
 
-2. **Wrap the external source in `resources.js`**: Create an object with a `get(id)` method that fetches from the upstream source. Then call `sourcedFrom` on the table to register it.
+2. **Implement an upstream source object**: In `resources.js`, create an object with a `get(id)` method that fetches data from the external API.
 
    ```javascript
    const jokeAPI = {
@@ -38,18 +38,22 @@ Apply this rule when a Harper application needs to cache responses from an exter
    		return response.json();
    	},
    };
+   ```
 
+3. **Connect the source with `sourcedFrom`**: Call `sourcedFrom` on the table to register the upstream source. Harper will call `jokeAPI.get()` automatically when a record is missing or stale.
+
+   ```javascript
    tables.JokeCache.sourcedFrom(jokeAPI);
    ```
 
-   Harper's caching behavior after `sourcedFrom` is registered:
-   - A request arrives for `/JokeCache/1`.
-   - Harper checks if the record with id `1` exists in `JokeCache` and is not stale.
+   Harper's request flow after `sourcedFrom` is registered:
+   - Request arrives for `/JokeCache/1`.
+   - Harper checks if the record exists and is not stale.
    - If fresh, Harper returns it immediately.
    - If missing or stale, Harper calls `jokeAPI.get()`, stores the result in `JokeCache`, and returns it.
    - Multiple simultaneous requests for the same missing or stale record wait on a single upstream call — Harper prevents cache stampedes automatically.
 
-3. **Configure plugins in `config.yaml`**: Enable the schema, REST API, and JS resource plugins.
+4. **Configure plugins in `config.yaml`**: Enable `graphqlSchema`, `rest`, and `jsResource`.
 
    ```yaml
    graphqlSchema:
@@ -59,29 +63,7 @@ Apply this rule when a Harper application needs to cache responses from an exter
      files: 'resources.js'
    ```
 
-4. **Observe caching via ETags**: Harper automatically computes an ETag from the record's last-modified timestamp. On the first request you receive a `200` with an `etag` header. Pass that value back in `If-None-Match` on subsequent requests; Harper returns `304 Not Modified` with an empty body if the record is unchanged.
-
-   ```bash
-   curl -i 'http://localhost:9926/JokeCache/1' \
-     -H 'If-None-Match: "abCDefGHij"'
-   ```
-
-5. **Force a cache bypass**: Send `Cache-Control: no-cache` to make Harper skip the local cache and always call the upstream source, regardless of TTL.
-
-   ```bash
-   curl -i 'http://localhost:9926/JokeCache/1' \
-     -H 'Cache-Control: no-cache'
-   ```
-
-6. **Invalidate a cache entry on demand**: Remove `@export` from the schema type, then export a class of the same name in `resources.js` that extends the table and implements a `post` handler calling `this.invalidate(target)`.
-
-   ```graphql
-   type JokeCache @table(expiration: 60) {
-   	id: ID @primaryKey
-   	setup: String
-   	punchline: String
-   }
-   ```
+5. **Implement on-demand invalidation**: To invalidate a cache entry before its TTL expires, export a class extending the table and call `this.invalidate(target)` in a `post` handler. Remove `@export` from the schema when using this pattern — the exported class provides the endpoint.
 
    ```javascript
    export class JokeCache extends tables.JokeCache {
@@ -95,34 +77,25 @@ Apply this rule when a Harper application needs to cache responses from an exter
    }
    ```
 
-   Trigger invalidation with a `POST`:
+   Update the schema to remove `@export`:
 
-   ```bash
-   curl -X POST 'http://localhost:9926/JokeCache/1' \
-     -H 'Content-Type: application/json' \
-     -d '{"action": "invalidate"}'
+   ```graphql
+   type JokeCache @table(expiration: 60) {
+   	id: ID @primaryKey
+   	setup: String
+   	punchline: String
+   }
    ```
-
-   The next `GET /JokeCache/1` will fetch fresh data from the upstream source regardless of TTL.
 
 ## Examples
 
-Complete `schema.graphql` and `resources.js` for a cached external API with on-demand invalidation:
-
-```graphql
-type JokeCache @table(expiration: 60) {
-	id: ID @primaryKey
-	setup: String
-	punchline: String
-}
-```
+**Complete `resources.js`**:
 
 ```javascript
 // resources.js
 
 const jokeAPI = {
-	async get() {
-		const id = this.getId();
+	async get(id) {
 		const response = await fetch(`https://official-joke-api.appspot.com/jokes/${id}`);
 		return response.json();
 	},
@@ -141,23 +114,56 @@ export class JokeCache extends tables.JokeCache {
 }
 ```
 
-First request — cache miss, upstream is called, `200` returned:
+**Complete `schema.graphql`**:
 
-```bash
-curl -i 'http://localhost:9926/JokeCache/1'
+```graphql
+type JokeCache @table(expiration: 60) {
+	id: ID @primaryKey
+	setup: String
+	punchline: String
+}
 ```
 
-Second request with ETag — cache hit, `304 Not Modified`:
+**Fetch a cached record**:
 
-```bash
-curl -i 'http://localhost:9926/JokeCache/1' \
-  -H 'If-None-Match: "abCDefGHij"'
+```javascript
+const response = await fetch('http://localhost:9926/JokeCache/1');
+console.log(response.status); // 200
+const etag = response.headers.get('etag'); // e.g. "abCDefGHij"
+const joke = await response.json();
+```
+
+**Use ETag for conditional requests** (returns `304 Not Modified` if unchanged):
+
+```javascript
+const second = await fetch('http://localhost:9926/JokeCache/1', {
+	headers: { 'If-None-Match': etag },
+});
+console.log(second.status); // 304
+```
+
+**Bypass the cache with `Cache-Control: no-cache`**:
+
+```javascript
+const response = await fetch('http://localhost:9926/JokeCache/1', {
+	headers: { 'Cache-Control': 'no-cache' },
+});
+```
+
+**Trigger invalidation via POST**:
+
+```javascript
+await fetch('http://localhost:9926/JokeCache/1', {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ action: 'invalidate' }),
+});
 ```
 
 ## Notes
 
 - `expiration` is measured in seconds. Harper also supports separate `eviction` and `scanInterval` arguments on `@table` for fine-grained control over physical record removal.
-- The `@export` directive on the schema type is not required when you export a Resource class of the same name from `resources.js` — the class export serves as the endpoint registration. See [custom-resources.md](custom-resources.md) for details on building Resource classes.
-- Harper's REST layer automatically exposes `@export`-ed tables and Resource classes as HTTP endpoints. See [automatic-apis.md](automatic-apis.md) for how endpoints are structured and named.
-- ETag values include their double quotes as part of the value — include them verbatim when passing the value in `If-None-Match`.
-- `sourcedFrom` must be called after the table reference (`tables.JokeCache`) is available, which is guaranteed when the call is at the top level of `resources.js`.
+- ETags are automatically computed from a record's last-modified timestamp. Include the double quotes when passing an ETag back in `If-None-Match` — they are part of the value.
+- Exporting a class with the same name as a table (e.g., `export class JokeCache extends tables.JokeCache`) registers it as the HTTP endpoint for that table; `@export` in the schema is not required separately.
+- For defining custom upstream source behavior beyond a simple `get`, see [custom-resources.md](custom-resources.md).
+- For details on how `@table` and `@export` expose REST endpoints automatically, see [automatic-apis.md](automatic-apis.md).

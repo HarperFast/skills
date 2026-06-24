@@ -1199,41 +1199,118 @@ export class RefreshJWT extends Resource {
 
 ### 3.1 Custom Resources
 
-Instructions for the agent to follow when creating custom resources in Harper.
+Instructions for the agent to follow when defining custom REST endpoints with JavaScript or TypeScript in Harper.
 
 #### When to Use
 
-Use this skill when the automatic CRUD operations provided by `@table @export` are insufficient, and you need custom logic, third-party API integration, or specialized data handling for your REST endpoints.
+Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering programmatic routes in a Harper application. Use it any time business logic needs to live outside a standard table-backed resource.
 
 #### How It Works
 
-1. **Check if a Custom Resource is Necessary**: Verify if [Automatic APIs](./automatic-apis.md) or [Extending Tables](./extending-tables.md) can satisfy the requirement first.
-2. **Create the Resource File**: Create a `.ts` or `.js` file in the directory specified by `jsResource` in `config.yaml` (typically `resources/`).
-3. **Define the Resource Class**: Export a class extending `Resource` from `harper` and define **static** methods for the HTTP verbs you handle. In Harper 5 the static methods are the HTTP handlers (mapped 1:1 to verbs); they receive a pre-parsed `RequestTarget`, and write handlers also receive the request body as an awaitable `data` argument:
+1. **Import `Resource` from the `harper` package**: Always import explicitly rather than relying on globals.
 
-   ```typescript
-   import { Resource } from 'harper';
+   ```javascript
+   import { tables, Resource } from 'harper';
+   ```
 
-   export class MyResource extends Resource {
-   	// v5 handlers are static and map 1:1 to HTTP verbs.
-   	static async get(target: any) {
-   		return { message: 'Hello from custom GET!' };
+2. **Define a class that `extends Resource`**: Use `export class` so Harper can expose it as an endpoint. Implement HTTP methods as `static` methods on the class.
+
+   ```javascript
+   export class CustomEndpoint extends Resource {
+   	static get(target) {
+   		return {
+   			data: doSomething(),
+   		};
    	}
    }
    ```
 
-4. **Implement HTTP Methods**: Add static methods (`get`, `post`, `put`, `patch`, or `delete`) to handle the corresponding requests. Read/delete handlers receive `(target)`; write handlers receive `(target, data)` where `data` is awaitable.
-5. **Route Nesting and Naming**: You can control the URL structure by how you export your resources:
-   - **Direct Class Export**: `export class Foo extends Resource` creates endpoints at `/Foo/`. Class names are case-sensitive in the URL.
-   - **Nested Objects**: `export const Bar = { Foo };` creates endpoints at `/Bar/Foo/`.
-   - **Lowercase and Hyphens**: Use object keys to define custom paths: `export const bar = { 'foo-baz': Foo };` exposes endpoints at `/bar/foo-baz/`.
-6. **Access Tables (Optional)**: Import and use the `tables` object to interact with your data:
-   ```typescript
-   import { tables } from 'harper';
-   // ... inside a method
-   const results = await tables.MyTable.list();
+3. **Add async `static` methods for each HTTP verb you need**: Methods receive `target` (contains `target.id`, etc.) and, for write operations, `data`.
+
+   ```javascript
+   export class MyExternalData extends Resource {
+   	static async get(target) {
+   		const response = await fetch(`https://api.example.com/${target.id}`);
+   		return response.json();
+   	}
+
+   	static async put(target, data) {
+   		return fetch(`https://api.example.com/${target.id}`, {
+   			method: 'PUT',
+   			body: JSON.stringify(await data),
+   		});
+   	}
+   }
    ```
-7. **Configure Loading**: Ensure `config.yaml` points to your resource files (e.g., `jsResource: { files: 'resources/*.ts' }`).
+
+4. **Control the URL by choosing the export form**: The shape of the export determines the resulting URL path. Path matching is case-sensitive.
+
+   | Export form                              | URL             | Notes                                                           |
+   | ---------------------------------------- | --------------- | --------------------------------------------------------------- |
+   | `export class Foo extends Resource {}`   | `/Foo/`         | Class name becomes the path segment.                            |
+   | `export const Bar = { Foo };`            | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
+   | `export const bar = { 'foo-baz': Foo };` | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
+   | `server.resources.set('my-path', Foo);`  | `/my-path/`     | Programmatic registration; useful when the path is dynamic.     |
+
+5. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the class.
+
+   ```javascript
+   server.resources.set('my-path', Foo);
+   ```
+
+6. **Optionally use the resource as a cache source for a local table**: Pass the class to `sourcedFrom`.
+   ```javascript
+   tables.MyCache.sourcedFrom(MyExternalData);
+   ```
+
+#### Examples
+
+Wrap an external API and expose it as an endpoint, then back a local cache table with it:
+
+```javascript
+import { tables, Resource } from 'harper';
+
+export class MyExternalData extends Resource {
+	static async get(target) {
+		const response = await fetch(`https://api.example.com/${target.id}`);
+		return response.json();
+	}
+
+	static async put(target, data) {
+		return fetch(`https://api.example.com/${target.id}`, {
+			method: 'PUT',
+			body: JSON.stringify(await data),
+		});
+	}
+}
+
+// Use as a cache source for a local table
+tables.MyCache.sourcedFrom(MyExternalData);
+```
+
+Programmatic registration with a custom path:
+
+```javascript
+import { Resource } from 'harper';
+
+export class CustomEndpoint extends Resource {
+	static get(target) {
+		return {
+			data: doSomething(),
+		};
+	}
+}
+
+server.resources.set('my-path', CustomEndpoint);
+```
+
+#### Notes
+
+- `export class` directly produces a URL from the class name (e.g., `export class Foo extends Resource {}` → `/Foo/`). Do not export the same resource from both a schema file and a JavaScript file — this creates conflicting exports.
+- URL path segments are case-sensitive: `/Foo/` and `/foo/` are different endpoints.
+- For CommonJS modules, use `const { tables, Resource } = require('harper');` instead of the ESM import.
+- When developing a component in its own directory, run `npm link harper` to ensure typings match your installed version. All installed components have `harper` automatically linked.
+- The `static` keyword is required on all HTTP verb methods — Harper dispatches requests through static class methods, not instance methods.
 
 ### 3.2 Extending Tables
 

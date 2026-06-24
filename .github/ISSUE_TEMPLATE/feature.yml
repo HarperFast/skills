@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a new skill/rule or an enhancement to an existing one.
+type: Feature
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this to propose a **new** rule/skill or a substantive enhancement to an existing one. For a factual error in an existing rule, use the Bug report instead.
+  - type: textarea
+    id: capability
+    attributes:
+      label: What capability should the skills cover?
+      description: Describe the Harper capability or workflow an agent should be guided through.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is this needed?
+      description: What goes wrong today without it? What does an agent get wrong?
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Canonical docs reference
+      description: Link the Harper v5 docs page(s) this would be sourced from, if they exist. (Rules are ideally generated from canonical docs.)
+      placeholder: https://docs.harperdb.io/...
+    validations:
+      required: false
+  - type: input
+    id: rule-name
+    attributes:
+      label: Proposed rule name (optional)
+      description: A kebab-case slug, e.g. `creating-harper-apps`.
+    validations:
+      required: false

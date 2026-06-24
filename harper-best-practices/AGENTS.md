@@ -1237,43 +1237,107 @@ Use this skill when the automatic CRUD operations provided by `@table @export` a
 
 ### 3.2 Extending Tables
 
-Instructions for the agent to follow when extending table resources in Harper.
+Instructions for the agent to follow when adding custom logic to automatically generated table resources in Harper.
 
 #### When to Use
 
-Use this skill when you need to add custom validation, side effects (like webhooks), data transformation, or custom access control to the standard CRUD operations of a Harper table.
+Apply this rule when you need to add computed properties, intercept writes, enforce validation, or otherwise customize the behavior of a Harper table resource beyond what the default generated endpoints provide. Use it any time a `@table` type needs server-side logic attached to its REST handlers.
 
 #### How It Works
 
-1. **Define the Table in GraphQL**: In your `.graphql` schema, define the table using the `@table` directive. **Do not** use `@export` if you plan to extend it.
+1. **Define the schema without `@export`**: Declare the table type in `schema.graphql` and omit the `@export` directive. Leaving `@export` on the schema while also exporting a subclass with the same name produces conflicting endpoints. Let the JavaScript class own the URL instead.
+
    ```graphql
+   # Omit the `@export` directive
    type MyTable @table {
-   	id: ID @primaryKey
-   	name: String
+   	id: Long @primaryKey
+   	# ...
    }
    ```
-2. **Create the Extension File**: Create a `.ts` file in your `resources/` directory.
-3. **Extend the Table Resource**: Export a class that extends `tables.YourTableName` and override the relevant **static** methods. In Harper 5 resource handlers are static and map 1:1 to HTTP verbs: `get(target)`, `post(target, data)`, `put(target, data)`, `patch(target, data)`, `delete(target)`. `target` is a pre-parsed `RequestTarget`; for writes, `data` is the request body and is **awaitable** (`await data`). Delegate to `super` to keep Harper's default behavior — a collection create passes just the record (`super.post(record)`), updates pass the target (`super.put(target, data)` / `super.patch(target, data)`), and reads/deletes pass the target (`super.get(target)`). To return a specific HTTP status from a thrown error, set **`.statusCode`** (e.g. `400`) on the error — a plain `.status` property is ignored.
 
-   ```typescript
-   import { tables } from 'harper';
+2. **Extend the generated table class**: In `resources.js`, extend from the `tables.<TypeName>` global. The class name you export becomes the URL path. The exported class extends tables.
 
+   ```javascript
    export class MyTable extends tables.MyTable {
-   	// Static handler; receives (target, data) — data is awaitable.
-   	static async post(target: any, data: any) {
-   		const record = await data;
-   		if (!record?.name) {
-   			const error: any = new Error('Name is required');
-   			error.statusCode = 400; // HTTP status (use statusCode, NOT status)
-   			throw error;
-   		}
-   		return super.post(record); // create delegates with the record (no id)
+   	static async get(target) {
+   		const record = await super.get(target);
+   		return { ...record, computedField: 'value' };
+   	}
+
+   	static async post(target, data) {
+   		this.create({ ...(await data), status: 'pending' });
    	}
    }
    ```
 
-4. **Override Methods**: Override the static `get`, `post`, `put`, `patch`, or `delete` as needed, delegating to `super.<method>` (see the argument forms above) to preserve Harper's default behavior unless you intend to replace it entirely.
-5. **Implement Logic**: Use overrides for validation, side effects, or transforming data before/after database operations.
+3. **Call `super` to preserve default behavior**: When delegating to `super`, match the argument form to the operation:
+   - Reads/deletes: `super.get(target)` / `super.delete(target)`
+   - Collection create: `super.post(target, record)` — target carries no id
+   - Updates: `super.put(target, data)` / `super.patch(target, data)`
+
+   Omit the `super` call only if you intend to replace the default behavior entirely.
+
+4. **Set `statusCode` on thrown errors to control HTTP responses**: Uncaught errors are caught by the protocol handler and produce error responses for REST. Use `.statusCode` — a plain `.status` property is ignored.
+
+   ```javascript
+   const error = new Error('Name is required');
+   error.statusCode = 400; // use statusCode, NOT status
+   throw error;
+   ```
+
+5. **Configure Harper to load both files**: Ensure your configuration references the schema and resource files.
+
+   ```yaml
+   rest: true
+   graphqlSchema:
+     files: schema.graphql
+   jsResource:
+     files: resources.js
+   ```
+
+#### Examples
+
+Full end-to-end example — schema, resource class, and error handling:
+
+```graphql
+# schema.graphql — omit @export so the JS class owns the endpoint
+type MyTable @table {
+	id: Long @primaryKey
+}
+```
+
+```javascript
+// resources.js
+export class MyTable extends tables.MyTable {
+	static async get(target) {
+		// get the record from the database
+		const record = await super.get(target);
+		// add a computed property before returning
+		return { ...record, computedField: 'value' };
+	}
+
+	static async post(target, data) {
+		// custom action on POST
+		this.create({ ...(await data), status: 'pending' });
+	}
+}
+```
+
+Throwing a controlled HTTP error:
+
+```javascript
+if (!authorized) {
+	const error = new Error('Forbidden');
+	error.statusCode = 403;
+	throw error;
+}
+```
+
+#### Notes
+
+- Always omit `@export` from the schema type when a JavaScript subclass is exporting the same name. The two registrations conflict.
+- `super` must be called with the correct arguments for each operation type — mismatched arguments will not behave as expected.
+- `statusCode` is the only recognized property for controlling HTTP status on thrown errors; `.status` is ignored.
 
 ### 3.3 Programmatic Table Requests
 

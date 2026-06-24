@@ -196,7 +196,19 @@ rules:
     category: logic
     priority: 3
     order: 2
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/resources/overview.md
+        section: 'Extending a Table'
+        role: primary
+      - path: reference/v5/resources/resource-api.md
+        section: 'Throwing Errors'
+        role: supplemental
+    must_cover:
+      - 'extends tables.'
+      - 'super.'
+      - '@export'
+      - 'statusCode'
 
   - rule: programmatic-table-requests
     description: How to interact with Harper tables programmatically using the `tables` object.

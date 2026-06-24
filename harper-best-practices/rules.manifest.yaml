@@ -53,7 +53,20 @@ rules:
     category: schema
     priority: 1
     order: 3
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/schema.md
+        section: 'Relationships'
+        role: primary
+      - path: reference/v5/rest/querying.md
+        section: 'Relationships and Joins'
+        role: supplemental
+    must_cover:
+      - '@relationship'
+      - 'from'
+      - 'to'
+      - 'one-to-many'
+      - 'many-to-one'
 
   - rule: vector-indexing
     description: How to enable and query vector indexes for similarity search in Harper.

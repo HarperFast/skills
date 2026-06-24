@@ -5,21 +5,21 @@ metadata:
   mode: generate
   sources:
     - reference/v5/database/schema.md#Vector Indexing
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: 3732961c671aac00
+  sourceCommit: 4fe4c9c95e0974eaa77032f6f10e36fbd8ec64ac
+  inputHash: d90b1b74597d08a6
 ---
 
 # Vector Indexing
 
-Instructions for the agent to follow when enabling and querying vector indexes for similarity search in Harper using the HNSW algorithm.
+Instructions for the agent to enable HNSW vector indexes on table fields and query them for similarity search in Harper.
 
 ## When to Use
 
-Apply this rule when adding a vector index to a Harper table schema or writing similarity search queries against high-dimensional vector fields. Use it whenever you need approximate nearest-neighbor search, distance-threshold filtering, or distance-scored results.
+Apply this rule when adding a vector similarity search capability to a Harper table — for example, storing text embeddings and querying for nearest neighbors, filtering by distance threshold, or tuning index construction and search parameters. Use it alongside [adding-tables-with-schemas.md](adding-tables-with-schemas.md) when defining the schema that hosts the vector field.
 
 ## How It Works
 
-1. **Declare the vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
+1. **Declare the vector index on a field**: Add `@indexed(type: "HNSW")` to a `[Float]` field inside a `@table` type. This creates an HNSW (Hierarchical Navigable Small World) index for approximate nearest-neighbor search.
 
    ```graphql
    type Document @table {
@@ -28,7 +28,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    }
    ```
 
-2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object containing `attribute` (the indexed field name) and `target` (the query vector). Include `limit` to cap results.
+2. **Query by nearest neighbors using `sort`**: Call `.search()` with a `sort` descriptor that specifies the indexed `attribute` and a `target` vector. Use `limit` to cap results.
 
    ```javascript
    let results = Document.search({
@@ -47,7 +47,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. Omit `sort`.
+4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. This bounds result quality rather than ranking by similarity.
 
    ```javascript
    let results = Document.search({
@@ -60,7 +60,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Works with both `sort`-based and `conditions`-based queries.
+5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Available in both `sort`-based and threshold-based queries.
 
    ```javascript
    let results = Document.search({
@@ -70,43 +70,59 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance.
+6. **Tune per-query search options**: Pass `distance` and `ef` directly on the `sort` descriptor to override index defaults for a single query.
 
-   | Parameter              | Default           | Description                                                                                         |
-   | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
-   | `distance`             | `"cosine"`        | Distance function: `"euclidean"` or `"cosine"` (negative cosine similarity)                         |
-   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance    |
-   | `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data |
-   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)          |
-   | `mL`                   | computed from `M` | Normalization factor for level generation                                                           |
-   | `efSearchConstruction` | `50`              | Max nodes explored during search                                                                    |
+   ```javascript
+   let results = Document.search({
+   	sort: { attribute: 'textEmbeddings', target: searchVector, distance: 'dotProduct', ef: 200 },
+   	limit: 5,
+   });
+   ```
+
+   - `distance` — overrides the distance function for this query: `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+   - `ef` — overrides the search exploration budget. Higher values improve recall at the cost of latency.
+
+7. **Configure HNSW index parameters**: Pass parameters directly in the `@indexed` directive. Structural parameters (`distance`, `M`, `efConstruction`, `quantization`) trigger an index rebuild when changed; `efConstructionSearch` does not.
+
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float]
+   		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
+   }
+   ```
+
+8. **Enable vector quantization**: Use `quantization: "int8"` to store vectors as 8-bit integers, reducing index size and memory usage. Harper re-ranks nearest-neighbor `sort` results against full-precision vectors automatically.
+
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
+   }
+   ```
 
 ## Examples
 
-**Schema with custom HNSW parameters:**
+Full schema with custom HNSW parameters and a nearest-neighbor query with distance output:
 
 ```graphql
 type Document @table {
 	id: Long @primaryKey
 	textEmbeddings: [Float]
-		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efSearchConstruction: 100)
+		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
 }
 ```
 
-**Nearest-neighbor search with distance score:**
-
 ```javascript
+// Nearest-neighbor search with distance scores
 let results = Document.search({
 	select: ['name', '$distance'],
 	sort: { attribute: 'textEmbeddings', target: searchVector },
 	limit: 5,
 });
-```
 
-**Distance-threshold filter (no ranking):**
-
-```javascript
-let results = Document.search({
+// Distance-threshold query (no ranking)
+let closeMatches = Document.search({
 	conditions: {
 		attribute: 'textEmbeddings',
 		comparator: 'lt',
@@ -118,7 +134,21 @@ let results = Document.search({
 
 ## Notes
 
-- The default `distance` function is `cosine`. Pass `distance: "euclidean"` to switch.
-- `efConstruction` controls index build quality; raising it improves recall at the cost of build time.
+### HNSW Parameters
+
+| Parameter              | Default           | Description                                                                                            |
+| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                        |
+| `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance       |
+| `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data    |
+| `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)             |
+| `mL`                   | computed from `M` | Normalization factor for level generation                                                              |
+| `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size; setting it fixes the budget |
+| `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                              |
+
+- The `distance` option on a per-query `sort` descriptor accepts `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+- When no `ef` is passed and `efConstructionSearch` (or `efConstruction`) is not explicitly set on the index, the search budget auto-scales with index size.
+- `efConstruction` seeds the initial value of `efConstructionSearch`; setting either one fixes the search budget.
+- The correct parameter name is `efConstructionSearch` (not `efSearchConstruction`).
 - `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.
-- Use the threshold (`conditions` + `target`) form when you want to bound result quality by a similarity cutoff rather than ranking by similarity.
+- For `quantization: "int8"`, distance-threshold (`lt`/`le`) queries filter on approximate distance; `sort` queries re-rank against full-precision vectors.

@@ -40,7 +40,7 @@ type ExamplePerson @table @export {
 }
 ```
 
-### 1.2 Schema Design and Tooling
+### 1.2 Schema Design and GraphQL Tooling
 
 Instructions for the agent to follow when designing Harper schemas, applying core directives, and configuring GraphQL tooling.
 
@@ -50,7 +50,18 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
 
 #### How It Works
 
-1. **Create a GraphQL schema file** with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
+1. **Create a schema file** using standard GraphQL type definitions with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
+
+2. **Register the schema** in the component's `config.yaml` using the `graphqlSchema` plugin:
+
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   ```
+
+   Both plugins and applications can specify schemas.
+
+3. **Mark types as tables** with `@table`. The type name becomes the table name by default:
 
    ```graphql
    type Dog @table {
@@ -59,23 +70,36 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    	breed: String
    	age: Int
    }
+   ```
 
+4. **Designate a primary key** with `@primaryKey` on exactly one field per type. Primary keys must be unique; duplicate-key inserts are rejected. If no primary key is provided on insert, Harper auto-generates one:
+   - `String` or `ID` → UUID string
+   - `Int`, `Long`, or `Any` → auto-incrementing integer
+
+   Use `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
+
+5. **Add secondary indexes** with `@indexed` on any field that will be used for filtering in REST queries, SQL, or NoSQL operations:
+
+   ```graphql
    type Breed @table {
    	id: Long @primaryKey
    	name: String @indexed
    }
    ```
 
-2. **Register the schema in `config.yaml`** using the `graphqlSchema` plugin key:
+   If the field value is an array, each element is individually indexed. Null values are indexed by default.
 
-   ```yaml
-   graphqlSchema:
-     files: 'schema.graphql'
+6. **Expose a table as an external endpoint** with `@export`. The optional `name` parameter sets the URL path segment:
+
+   ```graphql
+   type MyTable @table @export(name: "my-table") {
+   	id: Long @primaryKey
+   }
    ```
 
-   Both plugins and applications can specify schemas this way.
+   Without `name`, the type name is used as the path segment.
 
-3. **Mark every table type with `@table`**. The type name becomes the table name by default. Use optional arguments to override behavior:
+7. **Configure `@table` arguments** as needed for database placement, expiration, eviction, and replication:
 
    | Argument       | Type      | Default                       | Description                                                   |
    | -------------- | --------- | ----------------------------- | ------------------------------------------------------------- |
@@ -86,32 +110,13 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    | `scanInterval` | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                |
    | `replicate`    | `Boolean` | `true`                        | Enable replication of this table                              |
 
-4. **Designate a primary key on every table** using `@primaryKey`. Primary keys must be unique; duplicate-key inserts are rejected. If no key is provided on insert, Harper auto-generates one:
-   - `String` or `ID` → UUID string
-   - `Int`, `Long`, or `Any` → auto-incrementing integer
+8. **Apply additional field directives** where needed:
+   - `@createdTime` — auto-assigns Unix epoch milliseconds on record creation
+   - `@updatedTime` — auto-assigns Unix epoch milliseconds on each update
+   - `@embed(source: "fieldName", model: "modelName")` — computes an embedding vector on write; attribute type must be `[Float]`
+   - `@hidden` — suppresses the field from MCP tool descriptors and OpenAPI documents (not an access-control mechanism)
 
-   Prefer `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
-
-5. **Index fields that need fast querying** with `@indexed`. This is required for filtering by that attribute in REST queries, SQL, or NoSQL operations. If the field value is an array, each element is individually indexed.
-
-   ```graphql
-   type Product @table {
-   	id: Long @primaryKey
-   	category: String @indexed
-   	price: Float @indexed
-   }
-   ```
-
-6. **Expose a table as an external resource endpoint** with `@export`. This makes the table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment; without it, the type name is used.
-
-   ```graphql
-   type MyTable @table @export(name: "my-table") {
-   	id: Long @primaryKey
-   }
-   ```
-
-7. **Restrict extra properties** with `@sealed` when records must not include attributes beyond those declared. By default, Harper allows additional properties.
-
+9. **Restrict extra properties** with `@sealed` if records must not include properties beyond those declared:
    ```graphql
    type StrictRecord @table @sealed {
    	id: Long @primaryKey
@@ -119,14 +124,25 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    }
    ```
 
-8. **Configure expiration, eviction, and scan behavior** together when building caching tables. These three arguments control the full record lifecycle:
-   - `expiration` — record becomes stale; next request triggers a source fetch
-   - `eviction` — additional time after `expiration` before physical removal
-   - `scanInterval` — how often Harper scans for records to evict; clock-aligned, not startup-aligned
-
 #### Examples
 
-**Caching table with tuned expiration:**
+**Minimal two-table schema:**
+
+```graphql
+type Dog @table {
+	id: Long @primaryKey
+	name: String
+	breed: String
+	age: Int
+}
+
+type Breed @table {
+	id: Long @primaryKey
+	name: String @indexed
+}
+```
+
+**Table with expiration, eviction, and custom scan interval:**
 
 ```graphql
 # Expire after 5 minutes, evict after 1 hour, scan every 10 minutes
@@ -136,56 +152,63 @@ type WeatherCache @table(expiration: 300, eviction: 3300, scanInterval: 600) {
 }
 ```
 
-**Table in a named database with expiration and an indexed field:**
+**Exported table with timestamps and a hidden field:**
 
 ```graphql
+type Customer @table @export(name: "customers") {
+	id: Long @primaryKey
+	name: String @indexed
+	createdAt: Long @createdTime
+	updatedAt: Long @updatedTime
+
+	"""
+	Internal — do not surface to external consumers.
+	"""
+	creditScore: Int @hidden
+}
+```
+
+**Multiple `@table` argument combinations:**
+
+```graphql
+# Override table name
+type Product @table(table: "products") {
+	id: Long @primaryKey
+}
+
+# Place in a specific database
+type Order @table(database: "commerce") {
+	id: Long @primaryKey
+}
+
+# Auto-expire records after 1 hour
+type Session @table(expiration: 3600) {
+	id: Long @primaryKey
+	userId: String
+}
+
+# Disable replication
+type LocalRecord @table(replicate: false) {
+	id: Long @primaryKey
+	value: String
+}
+
+# Combine multiple arguments
 type Event @table(database: "analytics", expiration: 86400) {
 	id: Long @primaryKey
 	name: String @indexed
 }
 ```
 
-**Session cache with auto-expiry:**
-
-```graphql
-type Session @table(expiration: 3600) {
-	id: Long @primaryKey
-	userId: String
-}
-```
-
-**Table with audit timestamps:**
-
-```graphql
-type Order @table @export(name: "orders") {
-	id: Long @primaryKey
-	createdAt: Long @createdTime
-	updatedAt: Long @updatedTime
-	status: String @indexed
-}
-```
-
-**Overriding the table name and disabling replication:**
-
-```graphql
-type Product @table(table: "products") {
-	id: Long @primaryKey
-	name: String
-}
-
-type LocalRecord @table(replicate: false) {
-	id: Long @primaryKey
-	value: String
-}
-```
-
 #### Notes
 
-- Use unique `database` names in plugins and applications to avoid table naming collisions, since all tables default to the `"data"` database.
-- Eviction removes non-indexed record data but does **not** remove a record from its secondary indexes. Indexes remain functional for evicted records; Harper fetches the full record from the source on demand when a query matches an evicted record.
-- `scanInterval` is clock-aligned to the server's local timezone. The server's startup time does not affect when eviction runs.
-- If replication is disabled on a table and later re-enabled, it will not catch up on writes made while replication was disabled.
-- Null values are indexed by `@indexed` fields, enabling queries such as `GET /Product/?category=null`.
+- All tables default to the `"data"` database. When designing plugins or applications, use unique database names to avoid table naming collisions.
+- Schemas are flexible by default — records may include properties beyond those declared. Use `@sealed` to prevent this.
+- `expiration` marks a record stale; `eviction` controls how long after expiration the record is physically removed. Eviction does not remove records from secondary indexes — Harper fetches the full record on demand if an evicted record matches a query.
+- `scanInterval` is clock-aligned to the server's local timezone, not startup-aligned. The eviction schedule is deterministic across restarts.
+- If replication is disabled on a table and later re-enabled, writes made during the disabled period are not replicated retroactively.
+- `@hidden` (on types or fields) is a metadata-visibility directive only. Use `attribute_permissions` on roles to enforce data access control.
+- Disabling replication (`replicate: false`) and re-enabling it later will not catch up on writes made while replication was disabled.
 
 ### 1.3 Defining Relationships
 
@@ -218,15 +241,15 @@ Use this skill when you need to link data across different tables, enabling auto
 
 ### 1.4 Vector Indexing
 
-Instructions for the agent to follow when enabling and querying vector indexes for similarity search in Harper using the HNSW algorithm.
+Instructions for the agent to enable HNSW vector indexes on table fields and query them for similarity search in Harper.
 
 #### When to Use
 
-Apply this rule when adding a vector index to a Harper table schema or writing similarity search queries against high-dimensional vector fields. Use it whenever you need approximate nearest-neighbor search, distance-threshold filtering, or distance-scored results.
+Apply this rule when adding a vector similarity search capability to a Harper table — for example, storing text embeddings and querying for nearest neighbors, filtering by distance threshold, or tuning index construction and search parameters. Use it alongside [adding-tables-with-schemas.md](adding-tables-with-schemas.md) when defining the schema that hosts the vector field.
 
 #### How It Works
 
-1. **Declare the vector index on a `[Float]` field**: Add `@indexed(type: "HNSW")` to any `[Float]` attribute in a `@table` type. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for general schema setup.
+1. **Declare the vector index on a field**: Add `@indexed(type: "HNSW")` to a `[Float]` field inside a `@table` type. This creates an HNSW (Hierarchical Navigable Small World) index for approximate nearest-neighbor search.
 
    ```graphql
    type Document @table {
@@ -235,7 +258,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    }
    ```
 
-2. **Query by nearest neighbors using `sort`**: Call `Document.search()` with a `sort` object containing `attribute` (the indexed field name) and `target` (the query vector). Include `limit` to cap results.
+2. **Query by nearest neighbors using `sort`**: Call `.search()` with a `sort` descriptor that specifies the indexed `attribute` and a `target` vector. Use `limit` to cap results.
 
    ```javascript
    let results = Document.search({
@@ -254,7 +277,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. Omit `sort`.
+4. **Filter by distance threshold**: To return only records within a similarity cutoff (without ranking), place `target` directly on the condition alongside `comparator` and `value`. This bounds result quality rather than ranking by similarity.
 
    ```javascript
    let results = Document.search({
@@ -267,7 +290,7 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Works with both `sort`-based and `conditions`-based queries.
+5. **Include computed distance in results**: Use the special `$distance` field in `select` to return the distance from the target vector. Available in both `sort`-based and threshold-based queries.
 
    ```javascript
    let results = Document.search({
@@ -277,43 +300,59 @@ Apply this rule when adding a vector index to a Harper table schema or writing s
    });
    ```
 
-6. **Tune HNSW parameters**: Pass additional parameters to `@indexed(type: "HNSW", ...)` to control index quality and performance.
+6. **Tune per-query search options**: Pass `distance` and `ef` directly on the `sort` descriptor to override index defaults for a single query.
 
-   | Parameter              | Default           | Description                                                                                         |
-   | ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
-   | `distance`             | `"cosine"`        | Distance function: `"euclidean"` or `"cosine"` (negative cosine similarity)                         |
-   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance    |
-   | `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data |
-   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)          |
-   | `mL`                   | computed from `M` | Normalization factor for level generation                                                           |
-   | `efSearchConstruction` | `50`              | Max nodes explored during search                                                                    |
+   ```javascript
+   let results = Document.search({
+   	sort: { attribute: 'textEmbeddings', target: searchVector, distance: 'dotProduct', ef: 200 },
+   	limit: 5,
+   });
+   ```
+
+   - `distance` — overrides the distance function for this query: `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+   - `ef` — overrides the search exploration budget. Higher values improve recall at the cost of latency.
+
+7. **Configure HNSW index parameters**: Pass parameters directly in the `@indexed` directive. Structural parameters (`distance`, `M`, `efConstruction`, `quantization`) trigger an index rebuild when changed; `efConstructionSearch` does not.
+
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float]
+   		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
+   }
+   ```
+
+8. **Enable vector quantization**: Use `quantization: "int8"` to store vectors as 8-bit integers, reducing index size and memory usage. Harper re-ranks nearest-neighbor `sort` results against full-precision vectors automatically.
+
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
+   }
+   ```
 
 #### Examples
 
-**Schema with custom HNSW parameters:**
+Full schema with custom HNSW parameters and a nearest-neighbor query with distance output:
 
 ```graphql
 type Document @table {
 	id: Long @primaryKey
 	textEmbeddings: [Float]
-		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efSearchConstruction: 100)
+		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
 }
 ```
 
-**Nearest-neighbor search with distance score:**
-
 ```javascript
+// Nearest-neighbor search with distance scores
 let results = Document.search({
 	select: ['name', '$distance'],
 	sort: { attribute: 'textEmbeddings', target: searchVector },
 	limit: 5,
 });
-```
 
-**Distance-threshold filter (no ranking):**
-
-```javascript
-let results = Document.search({
+// Distance-threshold query (no ranking)
+let closeMatches = Document.search({
 	conditions: {
 		attribute: 'textEmbeddings',
 		comparator: 'lt',
@@ -325,10 +364,24 @@ let results = Document.search({
 
 #### Notes
 
-- The default `distance` function is `cosine`. Pass `distance: "euclidean"` to switch.
-- `efConstruction` controls index build quality; raising it improves recall at the cost of build time.
+##### HNSW Parameters
+
+| Parameter              | Default           | Description                                                                                            |
+| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                        |
+| `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance       |
+| `M`                    | `16`              | Preferred connections per graph layer. Higher = more space, better recall for high-dimensional data    |
+| `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)             |
+| `mL`                   | computed from `M` | Normalization factor for level generation                                                              |
+| `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size; setting it fixes the budget |
+| `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                              |
+
+- The `distance` option on a per-query `sort` descriptor accepts `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+- When no `ef` is passed and `efConstructionSearch` (or `efConstruction`) is not explicitly set on the index, the search budget auto-scales with index size.
+- `efConstruction` seeds the initial value of `efConstructionSearch`; setting either one fixes the search budget.
+- The correct parameter name is `efConstructionSearch` (not `efSearchConstruction`).
 - `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.
-- Use the threshold (`conditions` + `target`) form when you want to bound result quality by a similarity cutoff rather than ranking by similarity.
+- For `quantization: "int8"`, distance-threshold (`lt`/`le`) queries filter on approximate distance; `sort` queries re-rank against full-precision vectors.
 
 ### 1.5 Using Blob Datatype
 
@@ -1325,15 +1378,15 @@ jsResource:
 
 ### 3.5 Caching External Data Sources in Harper
 
-Instructions for the agent to implement integrated data caching in Harper by wrapping external sources with a cache table and `sourcedFrom`.
+Instructions for the agent to implement integrated data caching from external sources using Harper's cache table directives and `sourcedFrom` API.
 
 #### When to Use
 
-Apply this rule when a Harper application needs to cache responses from an external API, microservice, or database to avoid repeated slow or expensive upstream calls. Use it whenever you need to define TTL-based cache expiration, observe ETag-based conditional responses, or manually invalidate cached entries.
+Apply this rule when an application needs to wrap an external API, microservice, or database with a fast local cache. Use it when you need to define TTL-based cache expiration, connect an upstream data source to a Harper table, or implement on-demand cache invalidation.
 
 #### How It Works
 
-1. **Define a cache table with `expiration`**: In `schema.graphql`, add the `expiration` argument to `@table`. The value is in seconds. Any record older than this threshold is considered stale and will be re-fetched on next access.
+1. **Define a cache table with `expiration`**: Add the `expiration` argument to the `@table` directive in `schema.graphql`. The value is in seconds. When a record becomes stale, the next request fetches a fresh copy from the upstream source.
 
    ```graphql
    type JokeCache @table(expiration: 60) @export {
@@ -1343,7 +1396,7 @@ Apply this rule when a Harper application needs to cache responses from an exter
    }
    ```
 
-2. **Wrap the external source in `resources.js`**: Create an object with a `get(id)` method that fetches from the upstream source. Then call `sourcedFrom` on the table to register it.
+2. **Implement an upstream source object**: In `resources.js`, create an object with a `get(id)` method that fetches data from the external API.
 
    ```javascript
    const jokeAPI = {
@@ -1352,18 +1405,22 @@ Apply this rule when a Harper application needs to cache responses from an exter
    		return response.json();
    	},
    };
+   ```
 
+3. **Connect the source with `sourcedFrom`**: Call `sourcedFrom` on the table to register the upstream source. Harper will call `jokeAPI.get()` automatically when a record is missing or stale.
+
+   ```javascript
    tables.JokeCache.sourcedFrom(jokeAPI);
    ```
 
-   Harper's caching behavior after `sourcedFrom` is registered:
-   - A request arrives for `/JokeCache/1`.
-   - Harper checks if the record with id `1` exists in `JokeCache` and is not stale.
+   Harper's request flow after `sourcedFrom` is registered:
+   - Request arrives for `/JokeCache/1`.
+   - Harper checks if the record exists and is not stale.
    - If fresh, Harper returns it immediately.
    - If missing or stale, Harper calls `jokeAPI.get()`, stores the result in `JokeCache`, and returns it.
    - Multiple simultaneous requests for the same missing or stale record wait on a single upstream call — Harper prevents cache stampedes automatically.
 
-3. **Configure plugins in `config.yaml`**: Enable the schema, REST API, and JS resource plugins.
+4. **Configure plugins in `config.yaml`**: Enable `graphqlSchema`, `rest`, and `jsResource`.
 
    ```yaml
    graphqlSchema:
@@ -1373,29 +1430,7 @@ Apply this rule when a Harper application needs to cache responses from an exter
      files: 'resources.js'
    ```
 
-4. **Observe caching via ETags**: Harper automatically computes an ETag from the record's last-modified timestamp. On the first request you receive a `200` with an `etag` header. Pass that value back in `If-None-Match` on subsequent requests; Harper returns `304 Not Modified` with an empty body if the record is unchanged.
-
-   ```bash
-   curl -i 'http://localhost:9926/JokeCache/1' \
-     -H 'If-None-Match: "abCDefGHij"'
-   ```
-
-5. **Force a cache bypass**: Send `Cache-Control: no-cache` to make Harper skip the local cache and always call the upstream source, regardless of TTL.
-
-   ```bash
-   curl -i 'http://localhost:9926/JokeCache/1' \
-     -H 'Cache-Control: no-cache'
-   ```
-
-6. **Invalidate a cache entry on demand**: Remove `@export` from the schema type, then export a class of the same name in `resources.js` that extends the table and implements a `post` handler calling `this.invalidate(target)`.
-
-   ```graphql
-   type JokeCache @table(expiration: 60) {
-   	id: ID @primaryKey
-   	setup: String
-   	punchline: String
-   }
-   ```
+5. **Implement on-demand invalidation**: To invalidate a cache entry before its TTL expires, export a class extending the table and call `this.invalidate(target)` in a `post` handler. Remove `@export` from the schema when using this pattern — the exported class provides the endpoint.
 
    ```javascript
    export class JokeCache extends tables.JokeCache {
@@ -1409,34 +1444,25 @@ Apply this rule when a Harper application needs to cache responses from an exter
    }
    ```
 
-   Trigger invalidation with a `POST`:
+   Update the schema to remove `@export`:
 
-   ```bash
-   curl -X POST 'http://localhost:9926/JokeCache/1' \
-     -H 'Content-Type: application/json' \
-     -d '{"action": "invalidate"}'
+   ```graphql
+   type JokeCache @table(expiration: 60) {
+   	id: ID @primaryKey
+   	setup: String
+   	punchline: String
+   }
    ```
-
-   The next `GET /JokeCache/1` will fetch fresh data from the upstream source regardless of TTL.
 
 #### Examples
 
-Complete `schema.graphql` and `resources.js` for a cached external API with on-demand invalidation:
-
-```graphql
-type JokeCache @table(expiration: 60) {
-	id: ID @primaryKey
-	setup: String
-	punchline: String
-}
-```
+**Complete `resources.js`**:
 
 ```javascript
 // resources.js
 
 const jokeAPI = {
-	async get() {
-		const id = this.getId();
+	async get(id) {
 		const response = await fetch(`https://official-joke-api.appspot.com/jokes/${id}`);
 		return response.json();
 	},
@@ -1455,26 +1481,59 @@ export class JokeCache extends tables.JokeCache {
 }
 ```
 
-First request — cache miss, upstream is called, `200` returned:
+**Complete `schema.graphql`**:
 
-```bash
-curl -i 'http://localhost:9926/JokeCache/1'
+```graphql
+type JokeCache @table(expiration: 60) {
+	id: ID @primaryKey
+	setup: String
+	punchline: String
+}
 ```
 
-Second request with ETag — cache hit, `304 Not Modified`:
+**Fetch a cached record**:
 
-```bash
-curl -i 'http://localhost:9926/JokeCache/1' \
-  -H 'If-None-Match: "abCDefGHij"'
+```javascript
+const response = await fetch('http://localhost:9926/JokeCache/1');
+console.log(response.status); // 200
+const etag = response.headers.get('etag'); // e.g. "abCDefGHij"
+const joke = await response.json();
+```
+
+**Use ETag for conditional requests** (returns `304 Not Modified` if unchanged):
+
+```javascript
+const second = await fetch('http://localhost:9926/JokeCache/1', {
+	headers: { 'If-None-Match': etag },
+});
+console.log(second.status); // 304
+```
+
+**Bypass the cache with `Cache-Control: no-cache`**:
+
+```javascript
+const response = await fetch('http://localhost:9926/JokeCache/1', {
+	headers: { 'Cache-Control': 'no-cache' },
+});
+```
+
+**Trigger invalidation via POST**:
+
+```javascript
+await fetch('http://localhost:9926/JokeCache/1', {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ action: 'invalidate' }),
+});
 ```
 
 #### Notes
 
 - `expiration` is measured in seconds. Harper also supports separate `eviction` and `scanInterval` arguments on `@table` for fine-grained control over physical record removal.
-- The `@export` directive on the schema type is not required when you export a Resource class of the same name from `resources.js` — the class export serves as the endpoint registration. See [custom-resources.md](custom-resources.md) for details on building Resource classes.
-- Harper's REST layer automatically exposes `@export`-ed tables and Resource classes as HTTP endpoints. See [automatic-apis.md](automatic-apis.md) for how endpoints are structured and named.
-- ETag values include their double quotes as part of the value — include them verbatim when passing the value in `If-None-Match`.
-- `sourcedFrom` must be called after the table reference (`tables.JokeCache`) is available, which is guaranteed when the call is at the top level of `resources.js`.
+- ETags are automatically computed from a record's last-modified timestamp. Include the double quotes when passing an ETag back in `If-None-Match` — they are part of the value.
+- Exporting a class with the same name as a table (e.g., `export class JokeCache extends tables.JokeCache`) registers it as the HTTP endpoint for that table; `@export` in the schema is not required separately.
+- For defining custom upstream source behavior beyond a simple `get`, see [custom-resources.md](custom-resources.md).
+- For details on how `@table` and `@export` expose REST endpoints automatically, see [automatic-apis.md](automatic-apis.md).
 
 ## 4. Infrastructure & Ops
 

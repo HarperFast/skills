@@ -86,7 +86,24 @@ rules:
     category: schema
     priority: 1
     order: 6
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/api.md
+        section: 'Accepting Binary in JSON Requests'
+        role: primary
+      - path: reference/v5/database/api.md
+        section: 'Serving Binary from a Resource'
+        role: primary
+      - path: reference/v5/rest/content-types.md
+        section: 'Storing Arbitrary Content Types'
+        role: supplemental
+    must_cover:
+      - 'createBlob'
+      - 'Content-Type'
+      - 'application/octet-stream'
+      - 'base64'
+    cross_links:
+      - using-blob-datatype
 
   # ===========================================================================
   # API & Communication (priority 2 — HIGH)

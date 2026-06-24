@@ -1,0 +1,46 @@
+name: Bug report
+description: Report incorrect, outdated, or broken content in a Harper skill/rule.
+type: Bug
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the Harper skills. Use this for a rule that is **wrong** — incorrect API, outdated syntax, broken example, or guidance that doesn't match Harper v5 behavior. For a new rule or capability, use the Feature request instead.
+  - type: input
+    id: rule
+    attributes:
+      label: Which skill/rule?
+      description: The rule slug or file, e.g. `programmatic-table-requests` or `harper-best-practices/rules/caching.md`.
+      placeholder: defining-relationships
+    validations:
+      required: true
+  - type: textarea
+    id: whats-wrong
+    attributes:
+      label: What's incorrect?
+      description: Quote the problematic line(s) and explain what's wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected / correct content
+      description: What should the rule say instead? Link the canonical docs if you have them.
+    validations:
+      required: true
+  - type: input
+    id: harper-version
+    attributes:
+      label: Harper version
+      description: The Harper version where you observed this (if relevant).
+      placeholder: '5.1'
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, repro, or the agent behavior that surfaced this.
+    validations:
+      required: false

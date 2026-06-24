@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Harper documentation
+    url: https://docs.harperdb.io/
+    about: Questions about using Harper? Check the documentation first — these issues are for the agent skills/rules themselves.

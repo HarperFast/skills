@@ -1,7 +1,7 @@
 // Validator for the docs-driven skill generation system.
 //
 // Implements Layers 2–4 of the validation taxonomy in
-// docs/plans/docs-driven-skills.md:
+// docs/plans-archive/docs-driven-skills.md:
 //
 //   - Layer 2 (manifest lint): the manifest conforms to the schema.
 //   - Layer 3 (manifest ↔ frontmatter reconciliation): each rule file's

@@ -7,7 +7,7 @@ import process from 'node:process';
 import yaml from 'js-yaml';
 
 // Each entry describes a skill directory. Add new skills here as they are
-// introduced (Story 5 in docs/plans/docs-driven-skills.md describes the
+// introduced (Story 5 in docs/plans-archive/docs-driven-skills.md describes the
 // multi-skill case).
 export const SKILLS = [
 	{

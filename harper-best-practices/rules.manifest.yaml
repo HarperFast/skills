@@ -92,7 +92,27 @@ rules:
     category: schema
     priority: 1
     order: 5
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/schema.md
+        section: 'Blob Type'
+        role: primary
+      - path: reference/v5/database/api.md
+        section: 'Streaming'
+        role: supplemental
+      - path: reference/v5/database/api.md
+        section: '`BlobOptions`'
+        role: supplemental
+      - path: reference/v5/database/api.md
+        section: 'Blob Coercion'
+        role: supplemental
+    must_cover:
+      - 'Blob'
+      - 'createBlob'
+      - 'saveBeforeCommit'
+      - '.bytes()'
+    cross_links:
+      - handling-binary-data
 
   - rule: handling-binary-data
     description: How to store and serve binary data like images or audio in Harper.

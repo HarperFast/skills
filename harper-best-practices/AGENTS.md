@@ -235,9 +235,9 @@ Use this skill when you need to link data across different tables, enabling auto
      	books: [Book] @relationship(to: "authorId")
      }
      ```
-3. **Query with Relationships**: Use dot syntax in REST API calls for filtering or the `select()` operator for including related data.
+3. **Query with Relationships**: Use dot syntax in REST API calls for filtering, and brace syntax to select fields from a related record. Parentheses are reserved for query functions (`select`, `sort`, `limit`), so a related field set uses `{}`, not `()`.
    - Example Filter: `GET /Book/?author.name=Harper`
-   - Example Select: `GET /Author/?select(name,books(title))`
+   - Example Select: `GET /Author/?select(name,books{title})`
 
 ### 1.4 Vector Indexing
 

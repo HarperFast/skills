@@ -128,9 +128,8 @@ jobs:
             gh issue comment "$EXISTING" --body \
               "Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
           else
-            gh issue create \
+            NEW_ISSUE_URL=$(gh issue create \
               --title "${TITLE}" \
-              --label "bug" \
               --body "Auto-sync generation failed for docs SHA \`${DOCS_SHA}\`.
 
           Opened automatically by \`.github/workflows/generate.yaml\`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the full error.
@@ -140,7 +139,14 @@ jobs:
           - Section heading renamed or removed — update \`sources[].section\`.
           - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
 
-          After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR."
+          After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR.")
+            echo "Opened failure issue ${NEW_ISSUE_URL}"
+            # Set the org-level "Bug" issue type (replaces the retired `bug` label).
+            NEW_ISSUE_NUM=$(printf '%s' "$NEW_ISSUE_URL" | grep -oE '[0-9]+$')
+            if [ -n "$NEW_ISSUE_NUM" ]; then
+              gh api -X PATCH "/repos/${{ github.repository }}/issues/${NEW_ISSUE_NUM}" \
+                -f type="Bug" || echo "Could not set issue type (non-fatal)."
+            fi
           fi
 
       - name: Open or update sync PR

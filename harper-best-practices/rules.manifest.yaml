@@ -176,7 +176,22 @@ rules:
     category: logic
     priority: 3
     order: 1
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/resources/overview.md
+        section: 'Custom External Data Source'
+        role: primary
+      - path: reference/v5/resources/overview.md
+        section: 'Exporting Resources as Endpoints'
+        role: primary
+      - path: reference/v5/components/javascript-environment.md
+        section: 'Module Loading'
+        role: supplemental
+    must_cover:
+      - 'extends Resource'
+      - 'export class'
+      - 'server.resources.set('
+      - 'static'
 
   - rule: extending-tables
     description: How to add custom logic to automatically generated table resources in Harper.

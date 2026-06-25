@@ -2194,6 +2194,34 @@ static:
 - Install dependencies: `npm install --save-dev vite @harperfast/vite @vitejs/plugin-react` (swap in your framework's Vite plugin, e.g. `@vitejs/plugin-vue`).
 - Then `harper dev .` runs the app with HMR and `harper run .` runs the production build. Vite does _not_ need to be executed separately.
 
+#### Reading Harper Data During SSR
+
+The render entry (`src/entry-server.tsx`) runs **inside Harper**, so it can read straight from the database and render the data into the HTML — no client-side fetch/XHR. `tables` is the same live, process-wide registry available everywhere (see [Programmatic Table Requests](programmatic-table-requests.md)); import it and query a table in an async `render`:
+
+```tsx
+import { tables } from 'harper';
+
+export async function render(url: string): Promise<string> {
+	const product = await tables.Product.get(idFromUrl(url));
+	return renderToString(
+		<StrictMode>
+			<App product={product} />
+		</StrictMode>,
+	);
+}
+```
+
+Keep `harper` external in `vite.config.ts` so this import resolves to Harper's running runtime instead of being bundled. `node_modules/harper` is symlinked to the running install, and symlinked deps aren't reliably auto-externalized for SSR:
+
+```typescript
+export default defineConfig({
+	ssr: { external: ['harper'] },
+	// ...plugins, resolve, build
+});
+```
+
+To hydrate on the client without re-fetching, embed the rendered data in the HTML (e.g. an inline `<script type="application/json">`) and read it back before hydration — so the page needs no XHR at all.
+
 #### Deploying to Production
 
 Because `@harperfast/vite` builds on the node and `static` serves the output, deploy the component as-is — no manual build-and-move step is needed:

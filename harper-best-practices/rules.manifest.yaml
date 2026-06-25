@@ -267,7 +267,32 @@ rules:
     category: logic
     priority: 3
     order: 3
-    mode: synthesized
+    mode: generate
+    sources:
+      - path: reference/v5/database/api.md
+        section: '`tables`'
+        role: primary
+      - path: reference/v5/resources/resource-api.md
+        section: 'Query Object'
+        role: primary
+      - path: reference/v5/database/api.md
+        section: '`transaction(context?, callback)`'
+        role: supplemental
+      - path: reference/v5/resources/resource-api.md
+        section: '`update(target: RequestTarget | Id, updates?: object): Promise<Resource>`'
+        role: supplemental
+      - path: reference/v5/resources/resource-api.md
+        section: '`addTo(property: string, value: number)`'
+        role: supplemental
+      - path: reference/v5/components/javascript-environment.md
+        section: 'Module Loading'
+        role: supplemental
+    must_cover:
+      - 'tables'
+      - 'conditions'
+      - 'search('
+      - 'addTo'
+      - 'select'
 
   - rule: typescript-type-stripping
     description: How to run TypeScript files directly in Harper without a build step.

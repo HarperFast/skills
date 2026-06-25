@@ -2,177 +2,185 @@
 name: programmatic-table-requests
 description: How to interact with Harper tables programmatically using the `tables` object.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/database/api.md#`tables`
+    - reference/v5/resources/resource-api.md#Query Object
+    - 'reference/v5/database/api.md#`transaction(context?, callback)`'
+    - >-
+      reference/v5/resources/resource-api.md#`update(target: RequestTarget | Id,
+      updates?: object): Promise<Resource>`
+    - >-
+      reference/v5/resources/resource-api.md#`addTo(property: string, value:
+      number)`
+    - reference/v5/components/javascript-environment.md#Module Loading
+  sourceCommit: be709f9978319dcdb669c05d794effc82bcda8b7
+  inputHash: 3d2417fbff687c42
 ---
 
 # Programmatic Table Requests
 
-Instructions for the agent to follow when interacting with Harper tables via code.
+Instructions for the agent to interact with Harper tables programmatically using the `tables` object and its query API.
 
 ## When to Use
 
-Use this skill when you need to perform database operations (CRUD, search, subscribe) from within Harper Resources or scripts.
+Apply this rule when writing server-side Harper code that reads from or writes to tables directly — for example, in request handlers, background jobs, or SSR entry points — instead of going through the REST API. Use it whenever you need to construct queries with `conditions`, paginate results, select specific fields, or perform CRDT-safe mutations with `addTo`.
 
 ## How It Works
 
-1. **Access the Table**: Use the global `tables` object followed by your table name (e.g., `tables.MyTable`).
-2. **Perform CRUD Operations**:
-   - **Get**: `await tables.MyTable.get(id)` for a single record or `await tables.MyTable.get({ conditions: [...] })` for multiple.
-   - **Create**: `await tables.MyTable.post(record)` (auto-generates ID) or `await tables.MyTable.put(id, record)`.
-   - **Update**: `await tables.MyTable.patch(id, partialRecord)` for partial updates.
-   - **Delete**: `await tables.MyTable.delete(id)`.
-3. **Use Updatable Records for Atomic Ops**: Call `update(id)` to get a reference, then use `addTo` or `subtractFrom` for atomic increments/decrements:
-   ```typescript
-   const stats = await tables.Stats.update('daily');
-   stats.addTo('viewCount', 1);
+1. **Import `tables`**: Import from the `harper` package. Each table defined in `schema.graphql` with `@table` is available as a named property.
+
+   ```javascript
+   import { tables } from 'harper';
+   const { Product } = tables;
+   // same as: databases.data.Product
    ```
-4. **Search and Stream**: Use `search(query)` for efficient streaming of large result sets:
-   ```typescript
-   for await (const record of tables.MyTable.search({ conditions: [...] })) {
-     // process record
+
+2. **Define your schema**: Declare tables in `schema.graphql` using `@table` and `@primaryKey`.
+
+   ```graphql
+   # schema.graphql
+   type Product @table {
+   	id: Long @primaryKey
+   	name: String
+   	price: Float
    }
    ```
-   See the [Query Conditions](#query-conditions) section below for the full query object reference.
-5. **Real-time Subscriptions**: Use `subscribe(query)` to listen for changes:
-   ```typescript
-   for await (const event of tables.MyTable.subscribe(query)) {
-   	// handle event
+
+3. **Create and mutate records**: Use `create`, `patch`, `get`, and `update` on the table class.
+
+   ```javascript
+   // Create a new record (id auto-generated)
+   const created = await Product.create({ name: 'Shirt', price: 9.5 });
+
+   // Modify the record
+   await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
+
+   // Retrieve by primary key
+   const record = await Product.get(created.id);
+   ```
+
+4. **Query with `search(` and `conditions`**: Pass a query object to `search()` to filter records. Iterate the async result.
+
+   ```javascript
+   const query = {
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
+   };
+   for await (const record of Product.search(query)) {
+   	// ...
    }
    ```
-6. **Publish Events**: Use `publish(id, message)` to trigger subscriptions without necessarily persisting data.
 
-## Query Conditions
+5. **Use `select` to shape results**: Pass a `select` array to return only specific properties, including nested relationship fields.
 
-When passing a query to `search()`, `get()`, or `subscribe()`, use a query object with a `conditions` array.
+   ```javascript
+   const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
+   book.author.name; // full related Author record
 
-### Condition Object Shape
+   // Partial related record
+   const book = await Book.get({
+   	id: 42,
+   	select: ['id', 'title', { name: 'author', select: ['name'] }],
+   });
+   ```
 
-| Property     | Description                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------ |
-| `attribute`  | Field name, or array of field names to traverse a relationship (e.g., `['brand', 'name']`) |
-| `value`      | The value to compare against                                                               |
-| `comparator` | One of the comparator strings below (default: `equals`)                                    |
-| `operator`   | `and` (default) or `or` — applies to a nested `conditions` block                           |
-| `conditions` | Nested array of condition objects for complex AND/OR logic                                 |
+6. **Use `addTo` for concurrent-safe increments**: Call `addTo` on a mutable resource instance obtained via `update()`. This uses CRDT incrementation, safe across threads and nodes.
 
-### Comparator Values
+   ```javascript
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1); // decrement safely across nodes
+   }
+   ```
 
-Use these exact strings — incorrect comparator names will silently fail or error:
+7. **Scope destructive operations carefully**: `update`, `patch`, and `delete` operate directly on stored data. Always use specific `conditions`, validate the affected set before writing, and gate behind authorization controls.
 
-| Comparator           | Meaning                                                    |
-| -------------------- | ---------------------------------------------------------- |
-| `equals`             | Exact match (default)                                      |
-| `not_equal`          | Not equal                                                  |
-| `greater_than`       | `>`                                                        |
-| `greater_than_equal` | `>=`                                                       |
-| `less_than`          | `<`                                                        |
-| `less_than_equal`    | `<=`                                                       |
-| `starts_with`        | String starts with value                                   |
-| `contains`           | String contains value                                      |
-| `ends_with`          | String ends with value                                     |
-| `between`            | Value is between two bounds (pass `value` as `[min, max]`) |
+## Examples
 
-### Query Object Parameters
-
-| Property     | Description                                                                                                                                                                                                     |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `conditions` | Array of condition objects                                                                                                                                                                                      |
-| `limit`      | Maximum number of records to return                                                                                                                                                                             |
-| `offset`     | Number of records to skip (for pagination)                                                                                                                                                                      |
-| `select`     | Array of fields to return: attribute names (supports `$id` and `$updatedtime`), or an object `{ name, select }` to include fields from a related record — see [Selecting Related Data](#selecting-related-data) |
-| `sort`       | Object with `attribute`, `descending` (bool), and optional `next` for secondary sort                                                                                                                            |
-
-### Examples
-
-**Simple filter:**
+### Nested conditions query
 
 ```javascript
-for await (const record of tables.Product.search({
-  conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
-  limit: 20,
-})) { ... }
+Product.search({
+	conditions: [
+		{ attribute: 'price', comparator: 'less_than', value: 100 },
+		{
+			operator: 'or',
+			conditions: [
+				{ attribute: 'rating', comparator: 'greater_than', value: 4 },
+				{ attribute: 'featured', value: true },
+			],
+		},
+	],
+});
 ```
 
-**AND + nested OR:**
+### Chained attribute reference (relationship join)
 
 ```javascript
-for await (const record of tables.Product.search({
-  conditions: [
-    { attribute: 'price', comparator: 'less_than', value: 100 },
-    {
-      operator: 'or',
-      conditions: [
-        { attribute: 'rating', comparator: 'greater_than', value: 4 },
-        { attribute: 'featured', value: true },
-      ],
-    },
-  ],
-})) { ... }
+Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
 ```
 
-**Relationship traversal:**
-
-```javascript
-for await (const record of tables.Book.search({
-  conditions: [{ attribute: ['brand', 'name'], comparator: 'equals', value: 'Harper' }],
-})) { ... }
-```
-
-**Sort and paginate:**
-
-```javascript
-for await (const record of tables.Product.search({
-  conditions: [{ attribute: 'inStock', value: true }],
-  sort: { attribute: 'price', descending: false },
-  limit: 10,
-  offset: 20,
-})) { ... }
-```
-
-## Selecting Related Data
-
-When a field is defined as a relationship (via `@relationship` — see [Defining Relationships](defining-relationships.md)), `select` can pull the related record(s) into your results as nested properties. This is the programmatic equivalent of the REST `select(name,author{name})` syntax (see [Querying REST APIs](querying-rest-apis.md)).
-
-**Whole related record** — list the relationship field by name. The related record (or an array of records for a to-many relationship) is attached as a nested property:
-
-```javascript
-for await (const book of tables.Book.search({
-	conditions: [{ attribute: 'id', value: 42 }],
-	select: ['id', 'title', 'author'], // `author` is a relationship field
-})) {
-	console.log(book.author.name); // the full related Author record
-}
-```
-
-**Partial related record** — use an object `{ name, select }` to choose which fields of the related record to return. Unselected fields are omitted:
-
-```javascript
-for await (const book of tables.Book.search({
-	conditions: [{ attribute: ['author', 'name'], comparator: 'equals', value: 'Harper' }],
-	select: ['id', 'title', { name: 'author', select: ['name'] }],
-})) {
-	// book.author.name is present; other Author fields are undefined
-}
-```
-
-**Nesting** — a `select` inside an object entry may itself contain more `{ name, select }` objects, traversing multiple relationships in one query:
+### Deep nested `select`
 
 ```javascript
 select: [
-  'id',
-  'name',
-  {
-    name: 'segments',
-    select: ['id', 'name', { name: 'client', select: ['id', 'name'] }],
-  },
-],
+	'id',
+	'name',
+	{ name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] },
+];
 ```
 
-Notes:
+### SSR usage
 
-- A to-many relationship resolves to an array of records; depending on access pattern you may need to `await` the property before iterating it.
-- Selecting a relationship without filtering on it produces LEFT JOIN behavior (records with no related row are still returned); adding a condition on a related attribute (e.g. `attribute: ['author', 'name']`) produces INNER JOIN behavior.
+```typescript
+import { tables } from 'harper';
 
-## Cautions
+export async function render(url: string): Promise<string> {
+	const product = await tables.Product.get(idFromUrl(url));
+	return renderToString(/* <App product={product} /> */);
+}
+```
 
-Be very careful when performing updates and deletions! You may be dealing with live production data. The wrong request to delete, without approval from a human, could be devastating to a business. Always use the proper approval process.
+## Notes
+
+### `conditions` comparator values
+
+| Comparator           | Description            |
+| -------------------- | ---------------------- |
+| `equals`             | Default equality match |
+| `greater_than`       | Strictly greater       |
+| `greater_than_equal` | Greater than or equal  |
+| `less_than`          | Strictly less          |
+| `less_than_equal`    | Less than or equal     |
+| `starts_with`        | String prefix match    |
+| `contains`           | String contains        |
+| `ends_with`          | String suffix match    |
+| `between`            | Range match            |
+| `not_equal`          | Inequality match       |
+
+### Query object options
+
+| Property                | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `conditions`            | Array of condition objects to filter records                            |
+| `operator`              | Top-level `and` (default) or `or` for the `conditions` array            |
+| `limit`                 | Maximum number of records to return                                     |
+| `offset`                | Number of records to skip (for pagination)                              |
+| `select`                | Properties to include in each returned record                           |
+| `sort`                  | Sort order object with `attribute`, `descending`, and `next` properties |
+| `explain`               | If `true`, returns conditions reordered as Harper will execute them     |
+| `enforceExecutionOrder` | If `true`, forces conditions to execute in the order supplied           |
+
+### `select` special properties
+
+- `$id` — Returns the primary key regardless of its name
+- `$updatedtime` — Returns the last-updated timestamp
+- `$distance` — Returns the computed distance from the target vector when the query uses a vector index
+
+### Relationship join behavior
+
+- Selecting a relationship **without** filtering on it behaves as a **LEFT JOIN** — records with no related row are still returned.
+- Adding a `conditions` entry on a related attribute (e.g. `attribute: ['author', 'name']`) behaves as an **INNER JOIN** — only records with a matching related row are returned.
+
+- Keep `harper` external when bundling for SSR (e.g. `ssr: { external: ['harper'] }` in `vite.config`) so it resolves to the runtime instead of being bundled.
+- `tables`, `databases`, and other Harper APIs are the same live, process-wide objects regardless of whether accessed as globals or via `import { tables } from 'harper'`.

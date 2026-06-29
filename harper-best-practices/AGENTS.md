@@ -510,15 +510,15 @@ let closeMatches = Document.search({
 
 ### 1.5 Using the Blob Data Type
 
-Instructions for the agent to follow when storing and retrieving large binary content using Harper's `Blob` data type.
+Instructions for the agent to follow when storing and retrieving large binary content using the `Blob` data type in Harper.
 
 #### When to Use
 
-Apply this rule when a schema field needs to store large binary content such as images, video, audio, or large HTML — typically content larger than 20KB. Use `Blob` instead of `Bytes` when you need streaming support or want to avoid loading the entire value into memory. See [handling-binary-data.md](handling-binary-data.md) for broader binary data guidance.
+Apply this rule when a schema field needs to store large binary content such as images, video, audio, or large HTML — typically content larger than 20KB. Use `Blob` instead of `Bytes` when streaming support and out-of-record storage are required. See [handling-binary-data.md](handling-binary-data.md) for broader binary data guidance.
 
 #### How It Works
 
-1. **Declare a `Blob` field in your schema**: Add a field typed as `Blob` to a `@table` type.
+1. **Declare a `Blob` field in your schema**: Add a field typed as `Blob` to your `@table` type.
 
    ```graphql
    type MyTable @table {
@@ -527,14 +527,14 @@ Apply this rule when a schema field needs to store large binary content such as 
    }
    ```
 
-2. **Create a blob with `createBlob()`**: Pass a buffer, string, or stream as the first argument. Pass a `BlobOptions` object as the second argument to configure behavior.
+2. **Create and store a blob with `createBlob()`**: Pass a buffer or stream to `createBlob()`, then `put` the record.
 
    ```javascript
    let blob = createBlob(largeBuffer);
    await MyTable.put({ id: 'my-record', data: blob });
    ```
 
-3. **Read blob data using standard Web API methods**: The `Blob` type implements the Web API `Blob` interface. Use `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, or `.slice()` to access content.
+3. **Retrieve blob data using standard Web API methods**: The `Blob` type implements the Web API `Blob` interface. Use `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, or `.slice()` as needed.
 
    ```javascript
    let record = await MyTable.get('my-record');
@@ -543,7 +543,7 @@ Apply this rule when a schema field needs to store large binary content such as 
    let stream = record.data.stream(); // ReadableStream
    ```
 
-4. **Use `saveBeforeCommit` for ACID-compliant writes**: By default, blobs are not ACID-compliant — a record can reference a blob before it is fully written. Set `saveBeforeCommit: true` to wait for the full write before the transaction commits.
+4. **Use `saveBeforeCommit` when full write must precede commit**: By default, `Blob` is not ACID-compliant — a record can reference a blob before it is fully written. Set `saveBeforeCommit: true` to block the transaction until the blob is fully saved.
 
    ```javascript
    let blob = createBlob(stream, { saveBeforeCommit: true });
@@ -551,7 +551,7 @@ Apply this rule when a schema field needs to store large binary content such as 
    // put() resolves only after blob is fully written and record is committed
    ```
 
-5. **Register an error handler when returning a blob via REST**: Interrupted streams must be handled explicitly to avoid stale records.
+5. **Register an error handler when returning a blob via REST**: Interrupted streams must be handled explicitly.
 
    ```javascript
    export class MyEndpoint extends MyTable {
@@ -566,15 +566,17 @@ Apply this rule when a schema field needs to store large binary content such as 
    }
    ```
 
-6. **Rely on automatic coercion where applicable**: When a field is typed as `Blob` in the schema, any string or buffer assigned via `put`, `patch`, or `publish` is automatically coerced to a `Blob`. Manual `createBlob()` calls are not required for plain JSON HTTP bodies or MQTT messages in most cases.
+6. **Rely on automatic coercion where applicable**: When a field is typed as `Blob` in the schema, any string or buffer assigned via `put`, `patch`, or `publish` is automatically coerced to a `Blob` — no manual `createBlob()` call is needed in those cases.
 
-##### `BlobOptions` Reference
+##### `BlobOptions` reference
+
+Pass an options object as the second argument to `createBlob()`.
 
 | Option             | Type      | Default     | Description                                                                                                              |
 | ------------------ | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `type`             | `string`  | `undefined` | MIME type to associate with the blob (e.g., `image/jpeg`). Readable via `blob.type` and used when serving HTTP.          |
 | `size`             | `number`  | `undefined` | Size of the data in bytes, if known ahead of time. Otherwise inferred from a buffer or determined as a stream completes. |
-| `saveBeforeCommit` | `boolean` | `false`     | Wait for the blob to be fully written before committing the transaction.                                                 |
+| `saveBeforeCommit` | `boolean` | `false`     | Wait until the blob is fully written before the transaction commits.                                                     |
 | `compress`         | `boolean` | `false`     | Compress the stored data with deflate.                                                                                   |
 | `flush`            | `boolean` | `false`     | Flush the file to disk after writing, before the `createBlob` promise chain resolves.                                    |
 
@@ -587,7 +589,7 @@ let blob = createBlob(imageBuffer, { type: 'image/jpeg' });
 await Photo.put({ id, data: blob });
 ```
 
-**Stream large media with low latency:**
+**Stream a blob in as it streams out (low-latency passthrough):**
 
 ```javascript
 let blob = createBlob(incomingStream);
@@ -599,7 +601,7 @@ let record = await MyTable.get('my-record');
 let outgoingStream = record.data.stream();
 ```
 
-**Guaranteed write before commit:**
+**Guarantee full write before commit using `saveBeforeCommit`:**
 
 ```javascript
 let blob = createBlob(stream, { saveBeforeCommit: true });
@@ -608,10 +610,9 @@ await MyTable.put({ id: 'my-record', data: blob });
 
 #### Notes
 
-- `Blob` stores data separately from the record; `Bytes` does not. Prefer `Blob` for content larger than 20KB.
-- All standard Web API `Blob` methods are available: `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, `.slice()`.
-- Blobs are **not** ACID-compliant by default when created from a stream. Use `saveBeforeCommit: true` to enforce transactional consistency.
-- Always attach an `error` handler on blobs returned as HTTP response bodies to handle interrupted streams.
+- `Blob` stores data separately from the record. If you need the binary data to be a true, ACID-committed part of the record, use a `Bytes` field instead.
+- All standard Web API `Blob` methods — `.text()`, `.arrayBuffer()`, `.stream()`, `.slice()`, and `.bytes()` — are available on retrieved blob fields.
+- Without `saveBeforeCommit: true`, blobs are **not** ACID-compliant by default; a record can reference a blob before it is fully written to storage.
 
 ### 1.6 Handling Binary Data
 
@@ -1350,17 +1351,17 @@ Instructions for the agent to follow when defining custom REST endpoints with Ja
 
 #### When to Use
 
-Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering programmatic routes in a Harper application. Use it any time business logic needs to live outside a standard table-backed resource.
+Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when a specific URL shape is required.
 
 #### How It Works
 
-1. **Import `Resource` from the `harper` package**: Always import explicitly rather than relying on globals.
+1. **Import `Resource` from `harper`**: Always import from the `harper` package rather than relying on globals.
 
    ```javascript
    import { tables, Resource } from 'harper';
    ```
 
-2. **Define a class that `extends Resource`**: Use `export class` so Harper can expose it as an endpoint. Implement HTTP methods as `static` methods on the class.
+2. **Define a class that `extends Resource`**: Implement HTTP methods as `static` methods. Each method receives a `target` object.
 
    ```javascript
    export class CustomEndpoint extends Resource {
@@ -1372,7 +1373,7 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-3. **Add async `static` methods for each HTTP verb you need**: Methods receive `target` (contains `target.id`, etc.) and, for write operations, `data`.
+3. **Use `async` static methods for external calls**: Await fetch or other async operations inside `static` handlers.
 
    ```javascript
    export class MyExternalData extends Resource {
@@ -1390,29 +1391,46 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-4. **Control the URL by choosing the export form**: The shape of the export determines the resulting URL path. Path matching is case-sensitive.
+4. **Export the class to create an endpoint**: The export form controls the resulting URL. Choose the form that matches the URL shape you need.
 
-   | Export form                              | URL             | Notes                                                           |
-   | ---------------------------------------- | --------------- | --------------------------------------------------------------- |
-   | `export class Foo extends Resource {}`   | `/Foo/`         | Class name becomes the path segment.                            |
-   | `export const Bar = { Foo };`            | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
-   | `export const bar = { 'foo-baz': Foo };` | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
-   | `server.resources.set('my-path', Foo);`  | `/my-path/`     | Programmatic registration; useful when the path is dynamic.     |
+   | Export form                                 | URL             | Notes                                                           |
+   | ------------------------------------------- | --------------- | --------------------------------------------------------------- |
+   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment. Case-sensitive.            |
+   | `export const Bar = { Foo };`               | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
+   | `export const bar = { 'foo-baz': Foo };`    | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
+   | `export { Foo as '/widget/:id' }`           | `/widget/:id`   | Rename the export to set the path directly.                     |
+   | `static path = '/widget/:id'` (class field) | `/widget/:id`   | Declare path on the class; overrides the export name.           |
+   | `server.resources.set('my-path', Foo);`     | `/my-path/`     | Programmatic registration for dynamic paths.                    |
 
-5. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the class.
+   URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
+
+5. **Declare path parameters with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
+
+   ```javascript
+   export class Widget extends Resource {
+   	static path = '/widget/:id/action/:action';
+   	static get(target) {
+   		return { id: target.id, action: target.action };
+   	}
+   }
+   ```
+
+   A `static path` takes precedence over the export name. A leading `/` makes the path root-relative (top-level). A leading `./` or bare name resolves relative to the component directory.
+
+6. **Register programmatically when the path is dynamic**: Use `server.resources.set(` when the path cannot be known at export time.
 
    ```javascript
    server.resources.set('my-path', Foo);
    ```
 
-6. **Optionally use the resource as a cache source for a local table**: Pass the class to `sourcedFrom`.
+7. **Optionally source a table from a custom resource**: Use the resource as a caching layer for a local table.
    ```javascript
    tables.MyCache.sourcedFrom(MyExternalData);
    ```
 
 #### Examples
 
-Wrap an external API and expose it as an endpoint, then back a local cache table with it:
+##### External API wrapper with GET and PUT
 
 ```javascript
 import { tables, Resource } from 'harper';
@@ -1435,29 +1453,50 @@ export class MyExternalData extends Resource {
 tables.MyCache.sourcedFrom(MyExternalData);
 ```
 
-Programmatic registration with a custom path:
+##### Path parameters with `static path`
 
 ```javascript
 import { Resource } from 'harper';
 
-export class CustomEndpoint extends Resource {
+export class Widget extends Resource {
+	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
+	static path = '/widget/:id/action/:action';
 	static get(target) {
-		return {
-			data: doSomething(),
-		};
+		return { id: target.id, action: target.action };
 	}
 }
 
-server.resources.set('my-path', CustomEndpoint);
+export class Files extends Resource {
+	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
+	static path = '/files/*rest';
+	static get(target) {
+		return { path: target.rest };
+	}
+}
+```
+
+##### Programmatic registration
+
+```javascript
+import { Resource } from 'harper';
+
+export class Foo extends Resource {
+	static get(target) {
+		return { data: doSomething() };
+	}
+}
+
+server.resources.set('my-path', Foo);
 ```
 
 #### Notes
 
-- `export class` directly produces a URL from the class name (e.g., `export class Foo extends Resource {}` → `/Foo/`). Do not export the same resource from both a schema file and a JavaScript file — this creates conflicting exports.
-- URL path segments are case-sensitive: `/Foo/` and `/foo/` are different endpoints.
-- For CommonJS modules, use `const { tables, Resource } = require('harper');` instead of the ESM import.
-- When developing a component in its own directory, run `npm link harper` to ensure typings match your installed version. All installed components have `harper` automatically linked.
-- The `static` keyword is required on all HTTP verb methods — Harper dispatches requests through static class methods, not instance methods.
+- A bare `*` wildcard (no name) binds under `target.wildcard`. A wildcard must be the final segment of the path.
+- Resolution order: exact/static paths always win over parameterized ones. Among parameterized routes, more specific paths win — a literal segment beats `:param`, which beats `*`, compared left to right.
+- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
+- If a resource `extends` an existing table, avoid conflicting exports between the schema and the JavaScript implementation.
+- Link the `harper` package in your component directory to ensure correct typings: `npm link harper`. All installed components have `harper` automatically linked.
+- Harper runs as a single process — `tables`, `databases`, and other APIs are the same live, process-wide objects regardless of which component accesses them.
 
 ### 3.2 Extending Tables
 

@@ -8,21 +8,21 @@ metadata:
     - reference/v5/database/api.md#Streaming
     - reference/v5/database/api.md#`BlobOptions`
     - reference/v5/database/api.md#Blob Coercion
-  sourceCommit: 4fe4c9c95e0974eaa77032f6f10e36fbd8ec64ac
-  inputHash: 71a3e738ebf87fa4
+  sourceCommit: f37a8c4021e20d5c74c1d339a6b6c8c196b5603e
+  inputHash: 92e03eb0b830f335
 ---
 
 # Using the Blob Data Type
 
-Instructions for the agent to follow when storing and retrieving large binary content using Harper's `Blob` data type.
+Instructions for the agent to follow when storing and retrieving large binary content using the `Blob` data type in Harper.
 
 ## When to Use
 
-Apply this rule when a schema field needs to store large binary content such as images, video, audio, or large HTML — typically content larger than 20KB. Use `Blob` instead of `Bytes` when you need streaming support or want to avoid loading the entire value into memory. See [handling-binary-data.md](handling-binary-data.md) for broader binary data guidance.
+Apply this rule when a schema field needs to store large binary content such as images, video, audio, or large HTML — typically content larger than 20KB. Use `Blob` instead of `Bytes` when streaming support and out-of-record storage are required. See [handling-binary-data.md](handling-binary-data.md) for broader binary data guidance.
 
 ## How It Works
 
-1. **Declare a `Blob` field in your schema**: Add a field typed as `Blob` to a `@table` type.
+1. **Declare a `Blob` field in your schema**: Add a field typed as `Blob` to your `@table` type.
 
    ```graphql
    type MyTable @table {
@@ -31,14 +31,14 @@ Apply this rule when a schema field needs to store large binary content such as 
    }
    ```
 
-2. **Create a blob with `createBlob()`**: Pass a buffer, string, or stream as the first argument. Pass a `BlobOptions` object as the second argument to configure behavior.
+2. **Create and store a blob with `createBlob()`**: Pass a buffer or stream to `createBlob()`, then `put` the record.
 
    ```javascript
    let blob = createBlob(largeBuffer);
    await MyTable.put({ id: 'my-record', data: blob });
    ```
 
-3. **Read blob data using standard Web API methods**: The `Blob` type implements the Web API `Blob` interface. Use `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, or `.slice()` to access content.
+3. **Retrieve blob data using standard Web API methods**: The `Blob` type implements the Web API `Blob` interface. Use `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, or `.slice()` as needed.
 
    ```javascript
    let record = await MyTable.get('my-record');
@@ -47,7 +47,7 @@ Apply this rule when a schema field needs to store large binary content such as 
    let stream = record.data.stream(); // ReadableStream
    ```
 
-4. **Use `saveBeforeCommit` for ACID-compliant writes**: By default, blobs are not ACID-compliant — a record can reference a blob before it is fully written. Set `saveBeforeCommit: true` to wait for the full write before the transaction commits.
+4. **Use `saveBeforeCommit` when full write must precede commit**: By default, `Blob` is not ACID-compliant — a record can reference a blob before it is fully written. Set `saveBeforeCommit: true` to block the transaction until the blob is fully saved.
 
    ```javascript
    let blob = createBlob(stream, { saveBeforeCommit: true });
@@ -55,7 +55,7 @@ Apply this rule when a schema field needs to store large binary content such as 
    // put() resolves only after blob is fully written and record is committed
    ```
 
-5. **Register an error handler when returning a blob via REST**: Interrupted streams must be handled explicitly to avoid stale records.
+5. **Register an error handler when returning a blob via REST**: Interrupted streams must be handled explicitly.
 
    ```javascript
    export class MyEndpoint extends MyTable {
@@ -70,15 +70,17 @@ Apply this rule when a schema field needs to store large binary content such as 
    }
    ```
 
-6. **Rely on automatic coercion where applicable**: When a field is typed as `Blob` in the schema, any string or buffer assigned via `put`, `patch`, or `publish` is automatically coerced to a `Blob`. Manual `createBlob()` calls are not required for plain JSON HTTP bodies or MQTT messages in most cases.
+6. **Rely on automatic coercion where applicable**: When a field is typed as `Blob` in the schema, any string or buffer assigned via `put`, `patch`, or `publish` is automatically coerced to a `Blob` — no manual `createBlob()` call is needed in those cases.
 
-### `BlobOptions` Reference
+### `BlobOptions` reference
+
+Pass an options object as the second argument to `createBlob()`.
 
 | Option             | Type      | Default     | Description                                                                                                              |
 | ------------------ | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `type`             | `string`  | `undefined` | MIME type to associate with the blob (e.g., `image/jpeg`). Readable via `blob.type` and used when serving HTTP.          |
 | `size`             | `number`  | `undefined` | Size of the data in bytes, if known ahead of time. Otherwise inferred from a buffer or determined as a stream completes. |
-| `saveBeforeCommit` | `boolean` | `false`     | Wait for the blob to be fully written before committing the transaction.                                                 |
+| `saveBeforeCommit` | `boolean` | `false`     | Wait until the blob is fully written before the transaction commits.                                                     |
 | `compress`         | `boolean` | `false`     | Compress the stored data with deflate.                                                                                   |
 | `flush`            | `boolean` | `false`     | Flush the file to disk after writing, before the `createBlob` promise chain resolves.                                    |
 
@@ -91,7 +93,7 @@ let blob = createBlob(imageBuffer, { type: 'image/jpeg' });
 await Photo.put({ id, data: blob });
 ```
 
-**Stream large media with low latency:**
+**Stream a blob in as it streams out (low-latency passthrough):**
 
 ```javascript
 let blob = createBlob(incomingStream);
@@ -103,7 +105,7 @@ let record = await MyTable.get('my-record');
 let outgoingStream = record.data.stream();
 ```
 
-**Guaranteed write before commit:**
+**Guarantee full write before commit using `saveBeforeCommit`:**
 
 ```javascript
 let blob = createBlob(stream, { saveBeforeCommit: true });
@@ -112,7 +114,6 @@ await MyTable.put({ id: 'my-record', data: blob });
 
 ## Notes
 
-- `Blob` stores data separately from the record; `Bytes` does not. Prefer `Blob` for content larger than 20KB.
-- All standard Web API `Blob` methods are available: `.bytes()`, `.text()`, `.arrayBuffer()`, `.stream()`, `.slice()`.
-- Blobs are **not** ACID-compliant by default when created from a stream. Use `saveBeforeCommit: true` to enforce transactional consistency.
-- Always attach an `error` handler on blobs returned as HTTP response bodies to handle interrupted streams.
+- `Blob` stores data separately from the record. If you need the binary data to be a true, ACID-committed part of the record, use a `Bytes` field instead.
+- All standard Web API `Blob` methods — `.text()`, `.arrayBuffer()`, `.stream()`, `.slice()`, and `.bytes()` — are available on retrieved blob fields.
+- Without `saveBeforeCommit: true`, blobs are **not** ACID-compliant by default; a record can reference a blob before it is fully written to storage.

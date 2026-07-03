@@ -84,6 +84,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `logging` — Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
 - `load-env` — How to load environment variables from .env files into a Harper application using the loadEnv plugin.
 - `v5-upgrade` — Breaking changes and recommended updates when migrating a Harper application to v5.
+- `delegating-to-the-built-in-agent` — How to delegate tasks to Harper's built-in agent via the CLI and the agent operations API.
 
 <!-- END GENERATED INDEX -->
 

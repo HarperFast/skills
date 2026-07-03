@@ -422,3 +422,12 @@ rules:
       - 'moduleLoader'
       - 'lockdown'
       - 'Table.get'
+
+  - rule: delegating-to-the-built-in-agent
+    description: How to delegate tasks to Harper's built-in agent via the CLI and the agent operations API.
+    category: ops
+    priority: 4
+    order: 8
+    mode: synthesized
+    cross_links:
+      - deploying-to-harper-fabric

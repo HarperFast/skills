@@ -2,8 +2,12 @@
 #
 # Declarative source of truth for rule taxonomy, sources, and generation mode.
 # All rules are currently synthesized (hand-authored from the Harper 5.1/5.2
-# MCP implementation and its documentation); flip individual rules to
-# mode: generate once dedicated documentation sources exist for them.
+# MCP implementation and its documentation). Rules with declared `sources`
+# below map 1:1 to canonical HarperFast/documentation pages and are candidates
+# to flip to mode: generate once a generation run is reviewed; rules without
+# sources (connecting-clients' debugging guidance, custom tool/prompt security
+# patterns, the security-posture checklist) are agent-oriented synthesis with
+# no single docs source and should stay synthesized.
 
 rules:
   # ===========================================================================
@@ -15,6 +19,16 @@ rules:
     category: setup
     priority: 1
     order: 1
+    # synthesized today; flip to generate once a generation run is reviewed
+    sources:
+      - path: reference/mcp/overview.md
+        role: primary
+      - path: reference/mcp/configuration.md
+        role: supporting
+    must_cover:
+      - both profiles (application/operations) and their default ports
+      - mountPath is what enables a profile
+      - version availability of major MCP features
 
   - rule: connecting-clients
     description: How MCP clients connect to Harper - the initialize handshake, session and protocol-version headers, and authentication.
@@ -53,12 +67,31 @@ rules:
     category: resources
     priority: 3
     order: 1
+    sources:
+      - path: reference/mcp/tools-and-resources.md
+        section: 'Resources surface'
+        role: primary
+      - path: reference/mcp/subscriptions.md
+        role: supporting
+    must_cover:
+      - the harper:// metadata URIs and which profile serves each
+      - harper+rest:// descriptor scheme with http(s) back-compat
+      - subscribe requires an open GET SSE stream
 
   - rule: custom-mcp-resources
     description: How to serve custom content (docs pages, reports, binaries) as MCP resources via static mcpResources with URI templates and completions.
     category: resources
     priority: 3
     order: 2
+    sources:
+      - path: reference/mcp/tools-and-resources.md
+        section: 'Custom mcpResources opt-in'
+        role: primary
+    must_cover:
+      - exactly one of uri/uriTemplate per entry; {name} vs {+name} semantics
+      - encoded-separator rejection preserves the single-segment contract
+      - reserved schemes are rejected at registration
+      - anonymous sessions are served; gating is the read method's job
 
   # ===========================================================================
   # Operations & Security (priority 4 — HIGH for public deployments)
@@ -69,12 +102,28 @@ rules:
     category: ops
     priority: 4
     order: 1
+    sources:
+      - path: reference/mcp/configuration.md
+        section: 'mcp.<profile>.rateLimit.*'
+        role: primary
+    must_cover:
+      - session-scoped buckets are evadable by session cycling; per-client closes it
+      - perClientBurst defaults to the rate, floored at one whole token
+      - identityHeader is a spoofing trap unless the proxy strips it
 
   - rule: durable-quotas
     description: Operator-pluggable durable quotas for MCP tools/call via the config-named quota Resource hook, with a race-safe counter pattern.
     category: ops
     priority: 4
     order: 2
+    sources:
+      - path: reference/mcp/configuration.md
+        section: 'mcp.<profile>.quota.*'
+        role: primary
+    must_cover:
+      - fail-closed on hook errors or misconfiguration
+      - hook runs after the in-memory buckets admit
+      - read-modify-write counters must be atomic
 
   - rule: security-posture
     description: The MCP security model - anonymous access, RBAC boundaries, origin validation, audit logging, and the hardening checklist for public instances.

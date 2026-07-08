@@ -30,5 +30,5 @@ Hardening checklist for a public application-profile endpoint:
 - [ ] `rateLimit.perClientPerSecond` set (session limits alone are cycle-evadable); `identityHeader` only if the proxy strips it.
 - [ ] A durable `quota` hook backs any cost-bearing tool ([Durable Quotas](durable-quotas.md)), with an atomic counter.
 - [ ] CORS allow-list configured if browsers will reach the endpoint.
-- [ ] `allow`/`deny`/`maxTools` trim the verb-tool surface to what the AI needs.
+- [ ] The tool surface is trimmed to what the AI needs: `exportTypes: { mcp: false }` on internal Resources (application), a deliberate `allow` list (operations — remember it replaces the read-only default).
 - [ ] Audit log shipping somewhere you actually read.

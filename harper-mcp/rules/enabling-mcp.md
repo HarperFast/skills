@@ -33,8 +33,8 @@ mcp:
 Each profile is independent — enable only what you need. Key per-profile options:
 
 - `mountPath` — where the endpoint mounts. Required to enable the profile.
-- `allow` / `deny` — name filters for the generated tool surface.
-- `maxTools` — cap on generated tools (large schemas can otherwise flood a client's tool list).
+- `allow` / `deny` (operations profile only) — glob patterns or literal operation names selecting which operations become tools. The default is a deliberately read-only list; setting `allow` **replaces** it (no merge), so destructive operations like `set_configuration` must be opted in explicitly.
+- `maxTools` — page size for `tools/list` responses (default 200); overflow pages via the MCP cursor.
 - `rateLimit.*` — see the [Rate Limiting](rate-limiting.md) skill.
 - `quota.*` — durable, operator-defined quotas; see the [Durable Quotas](durable-quotas.md) skill.
 

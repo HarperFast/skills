@@ -32,8 +32,8 @@ mcp:
 Each profile is independent — enable only what you need. Key per-profile options:
 
 - `mountPath` — where the endpoint mounts. Required to enable the profile.
-- `allow` / `deny` — name filters for the generated tool surface.
-- `maxTools` — cap on generated tools (large schemas can otherwise flood a client's tool list).
+- `allow` / `deny` (operations profile only) — glob patterns or literal operation names selecting which operations become tools. The default is a deliberately read-only list; setting `allow` **replaces** it (no merge), so destructive operations like `set_configuration` must be opted in explicitly.
+- `maxTools` — page size for `tools/list` responses (default 200); overflow pages via the MCP cursor.
 - `rateLimit.*` — see the [Rate Limiting](rate-limiting.md) skill.
 - `quota.*` — durable, operator-defined quotas; see the [Durable Quotas](durable-quotas.md) skill.
 
@@ -117,10 +117,10 @@ Use this skill when deciding what an MCP client will see for a given schema, whe
 
 #### How It Works
 
-1. **Generation.** For each exported table `Widget`, the application profile registers `get_widget`, `search_widget`, `create_widget`, `update_widget`, and `delete_widget` tools. Input/output schemas are derived from the table's typed attributes, so clients get real parameter validation and result shapes.
+1. **Generation.** For each exported table `Widget`, the application profile registers `get_Widget`, `search_Widget`, `create_Widget`, `update_Widget`, and `delete_Widget` tools. Names preserve the Resource path's case (`/` and `.` become `_`, other non-identifier characters are dropped); path collisions get a deterministic database-name prefix. Input/output schemas are derived from the table's typed attributes, so clients get real parameter validation and result shapes.
 2. **RBAC is enforced, twice.** `tools/list` is filtered per authenticated user (a user with no read permission on a table does not see its `get_`/`search_` tools), and calls run through the same permission enforcement as REST — including per-record `allow*` predicates on Resource subclasses. This is the key contrast with [custom tools](custom-mcp-tools.md), which are visible to everyone.
 3. **`exportTypes` gating.** A Resource registered with `exportTypes: { mcp: false }` is excluded from MCP enumeration entirely, independent of its REST exposure.
-4. **Surface controls.** Per profile: `allow` / `deny` name filters and `maxTools` cap the generated set. Prefer trimming to what the AI actually needs — every tool costs client context.
+4. **Surface controls.** On the application profile, trim per Resource with `exportTypes: { mcp: false }`; `maxTools` sets the `tools/list` page size (default 200, cursor pages overflow). The `allow`/`deny` glob filters belong to the **operations** profile's tool generation, not this one. Prefer trimming to what the AI actually needs — every tool costs client context.
 5. **Live registration.** The tool registry rebuilds lazily when the underlying Resource registry changes (schema changes, deploys, components that finish loading after boot), so tools stay in sync without restarts; connected sessions receive `notifications/tools/list_changed` when their visible set actually changes.
 
 #### Examples
@@ -137,21 +137,18 @@ type Widget @table @export {
 With `mcp.application.mountPath` set, `tools/list` (as a user with read/write on Widget) includes:
 
 ```json
-{ "name": "search_widget", "inputSchema": { "properties": { "conditions": { "...": "..." } } } }
-{ "name": "get_widget", "inputSchema": { "properties": { "id": { "type": "string" } } } }
-{ "name": "create_widget", "...": "..." }
+{ "name": "search_Widget", "inputSchema": { "properties": { "conditions": { "...": "..." } } } }
+{ "name": "get_Widget", "inputSchema": { "properties": { "id": { "type": "string" } } } }
+{ "name": "create_Widget", "...": "..." }
 ```
 
-Trimming the surface to read-only:
+Excluding an exported Resource from MCP while keeping its REST surface:
 
-```yaml
-mcp:
-  application:
-    mountPath: /mcp
-    allow:
-      - 'get_*'
-      - 'search_*'
+```javascript
+server.http(InternalThing, { name: 'internal-thing', exportTypes: { mcp: false } });
 ```
+
+To expose read-only _data_, rely on RBAC: a role without write permissions never sees `create_`/`update_`/`delete_` tools for the table.
 
 ### 2.2 Custom MCP Tools
 
@@ -223,36 +220,36 @@ Use this skill when your application wants to hand well-crafted, data-aware prom
 
 #### How It Works
 
-1. **Declare `static mcpPrompts`** on a Resource class:
+1. **Declare `static mcpPrompts`** on a Resource class. Each entry carries a `render` **function** (not a method name):
 
 ```javascript
 export class Support extends tables.Ticket {
 	static mcpPrompts = [
 		{
 			name: 'draft_reply',
+			title: 'Draft support reply',
 			description: 'Draft a support reply for a ticket',
 			arguments: [{ name: 'ticketId', description: 'Ticket to reply to', required: true }],
-			method: 'draftReplyPrompt',
+			async render(args) {
+				const ticket = await Support.get(args.ticketId);
+				return {
+					messages: [
+						{
+							role: 'user',
+							content: { type: 'text', text: `Draft a courteous reply to: ${ticket.body}` },
+						},
+					],
+				};
+			},
 		},
 	];
-
-	async draftReplyPrompt(args) {
-		const ticket = await Support.get(args.ticketId);
-		return {
-			messages: [
-				{
-					role: 'user',
-					content: { type: 'text', text: `Draft a courteous reply to: ${ticket.body}` },
-				},
-			],
-		};
-	}
 }
 ```
 
-2. **Surface.** Prompts appear in `prompts/list` and render via `prompts/get`; argument completion is served through `completion/complete` when declared. Connected sessions get `notifications/prompts/list_changed` when the set changes (reload/deploy).
-3. **Render method contract.** The method receives the client-supplied arguments and returns the MCP prompt shape (`messages` array; a bare string is wrapped as a single user text message). It can read tables — it runs server-side with the same live-class dispatch as custom tools.
-4. **Exposure.** Like custom tools, prompts are listed to every session on the profile, including anonymous ones — keep secrets out of prompt text and gate inside the method if needed.
+2. **Entry shape.** `name` and `render` are required (invalid entries are skipped with a warning); `title`, `description`, and `arguments` (`{ name, description?, required? }`) are optional metadata surfaced to clients.
+3. **Render contract.** `render(args)` receives the client-supplied argument values (strings) and returns the MCP prompt result shape — a `messages` array of `{ role, content }` entries (`content.type`: `text`, `image`, `audio`, or `resource`). It runs server-side and can read tables, so prompts can embed live data.
+4. **Surface.** Prompts appear in `prompts/list` and render via `prompts/get`; declared arguments are served through `completion/complete`. Connected sessions get `notifications/prompts/list_changed` when the set changes (reload/deploy).
+5. **Exposure.** Like custom tools, prompts are listed to every session on the profile, including anonymous ones — keep secrets out of prompt text and gate inside `render` if needed.
 
 #### Examples
 
@@ -484,5 +481,5 @@ Hardening checklist for a public application-profile endpoint:
 - [ ] `rateLimit.perClientPerSecond` set (session limits alone are cycle-evadable); `identityHeader` only if the proxy strips it.
 - [ ] A durable `quota` hook backs any cost-bearing tool ([Durable Quotas](durable-quotas.md)), with an atomic counter.
 - [ ] CORS allow-list configured if browsers will reach the endpoint.
-- [ ] `allow`/`deny`/`maxTools` trim the verb-tool surface to what the AI needs.
+- [ ] The tool surface is trimmed to what the AI needs: `exportTypes: { mcp: false }` on internal Resources (application), a deliberate `allow` list (operations — remember it replaces the read-only default).
 - [ ] Audit log shipping somewhere you actually read.

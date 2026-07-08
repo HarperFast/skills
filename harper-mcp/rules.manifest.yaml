@@ -2,12 +2,15 @@
 #
 # Declarative source of truth for rule taxonomy, sources, and generation mode.
 # All rules are currently synthesized (hand-authored from the Harper 5.1/5.2
-# MCP implementation and its documentation). Rules with declared `sources`
-# below map 1:1 to canonical HarperFast/documentation pages and are candidates
-# to flip to mode: generate once a generation run is reviewed; rules without
-# sources (connecting-clients' debugging guidance, custom tool/prompt security
-# patterns, the security-posture checklist) are agent-oriented synthesis with
-# no single docs source and should stay synthesized.
+# MCP implementation and its documentation). The commented `sources` /
+# `must_cover` blocks below record the 1:1 mapping to canonical
+# HarperFast/documentation pages for the rules that are candidates to flip to
+# mode: generate (the schema only permits live sources/must_cover on generate
+# rules; uncomment together with the mode flip once a generation run is
+# reviewed). Rules without a mapping (connecting-clients' debugging guidance,
+# custom-mcp-prompts — whose mcpPrompts feature is currently UNDOCUMENTED in
+# reference/mcp/ — and the security-posture checklist) are agent-oriented
+# synthesis with no single docs source and should stay synthesized.
 
 rules:
   # ===========================================================================
@@ -19,22 +22,27 @@ rules:
     category: setup
     priority: 1
     order: 1
+    mode: synthesized
     # synthesized today; flip to generate once a generation run is reviewed
-    sources:
-      - path: reference/mcp/overview.md
-        role: primary
-      - path: reference/mcp/configuration.md
-        role: supporting
-    must_cover:
-      - both profiles (application/operations) and their default ports
-      - mountPath is what enables a profile
-      - version availability of major MCP features
+    # sources:
+    # - path: reference/mcp/overview.md
+    # role: primary
+    # - path: reference/mcp/configuration.md
+    # role: supporting
+    # must_cover:
+    # - both profiles (application/operations) and their default ports
+    # - mountPath is what enables a profile
+    # - version availability of major MCP features
+    cross_links:
+      - connecting-clients
+      - rate-limiting
 
   - rule: connecting-clients
     description: How MCP clients connect to Harper - the initialize handshake, session and protocol-version headers, and authentication.
     category: setup
     priority: 1
     order: 2
+    mode: synthesized
 
   # ===========================================================================
   # Tools & Prompts (priority 2 — HIGH)
@@ -45,18 +53,44 @@ rules:
     category: tools
     priority: 2
     order: 1
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/tools-and-resources.md
+    # section: 'Application profile — tool generation'
+    # role: primary
+    # must_cover:
+    # - tool names preserve Resource-path case (get_Widget)
+    # - tools/list is RBAC-filtered per user; calls enforce permissions
+    # - exportTypes.mcp gating
+    cross_links:
+      - custom-mcp-tools
 
   - rule: custom-mcp-tools
     description: How to expose custom instance methods as MCP tools via static mcpTools, including the anonymous-exposure security model.
     category: tools
     priority: 2
     order: 2
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/tools-and-resources.md
+    # section: 'Custom mcpTools opt-in'
+    # role: primary
+    # must_cover:
+    # - custom tools are exposed to every session including anonymous ones
+    # - live-class dispatch; gating is the method's responsibility
+    cross_links:
+      - rate-limiting
+      - durable-quotas
 
   - rule: custom-mcp-prompts
     description: How to publish reusable prompt templates to MCP clients via static mcpPrompts.
     category: tools
     priority: 2
     order: 3
+    mode: synthesized
+    # No canonical docs source exists for mcpPrompts yet (shipped 5.1.10,
+    # undocumented in reference/mcp/) — stays synthesized until that docs
+    # gap is filled; content grounded in the implementation.
 
   # ===========================================================================
   # Resources (priority 3 — MEDIUM)
@@ -67,31 +101,38 @@ rules:
     category: resources
     priority: 3
     order: 1
-    sources:
-      - path: reference/mcp/tools-and-resources.md
-        section: 'Resources surface'
-        role: primary
-      - path: reference/mcp/subscriptions.md
-        role: supporting
-    must_cover:
-      - the harper:// metadata URIs and which profile serves each
-      - harper+rest:// descriptor scheme with http(s) back-compat
-      - subscribe requires an open GET SSE stream
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/tools-and-resources.md
+    # section: 'Resources surface'
+    # role: primary
+    # - path: reference/mcp/subscriptions.md
+    # role: supporting
+    # must_cover:
+    # - the harper:// metadata URIs and which profile serves each
+    # - harper+rest:// descriptor scheme with http(s) back-compat
+    # - subscribe requires an open GET SSE stream
+    cross_links:
+      - custom-mcp-resources
 
   - rule: custom-mcp-resources
     description: How to serve custom content (docs pages, reports, binaries) as MCP resources via static mcpResources with URI templates and completions.
     category: resources
     priority: 3
     order: 2
-    sources:
-      - path: reference/mcp/tools-and-resources.md
-        section: 'Custom mcpResources opt-in'
-        role: primary
-    must_cover:
-      - exactly one of uri/uriTemplate per entry; {name} vs {+name} semantics
-      - encoded-separator rejection preserves the single-segment contract
-      - reserved schemes are rejected at registration
-      - anonymous sessions are served; gating is the read method's job
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/tools-and-resources.md
+    # section: 'Custom mcpResources opt-in'
+    # role: primary
+    # must_cover:
+    # - exactly one of uri/uriTemplate per entry; {name} vs {+name} semantics
+    # - encoded-separator rejection preserves the single-segment contract
+    # - reserved schemes are rejected at registration
+    # - anonymous sessions are served; gating is the read method's job
+    cross_links:
+      - resources-surface
+      - rate-limiting
 
   # ===========================================================================
   # Operations & Security (priority 4 — HIGH for public deployments)
@@ -99,34 +140,41 @@ rules:
 
   - rule: rate-limiting
     description: MCP tools/call rate limiting - per-tool, per-session, and per-client-identity token buckets, and the identityHeader trust model.
-    category: ops
+    category: security
     priority: 4
     order: 1
-    sources:
-      - path: reference/mcp/configuration.md
-        section: 'mcp.<profile>.rateLimit.*'
-        role: primary
-    must_cover:
-      - session-scoped buckets are evadable by session cycling; per-client closes it
-      - perClientBurst defaults to the rate, floored at one whole token
-      - identityHeader is a spoofing trap unless the proxy strips it
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/configuration.md
+    # section: 'mcp.<profile>.rateLimit.*'
+    # role: primary
+    # must_cover:
+    # - session-scoped buckets are evadable by session cycling; per-client closes it
+    # - perClientBurst defaults to the rate, floored at one whole token
+    # - identityHeader is a spoofing trap unless the proxy strips it
+    cross_links:
+      - durable-quotas
 
   - rule: durable-quotas
     description: Operator-pluggable durable quotas for MCP tools/call via the config-named quota Resource hook, with a race-safe counter pattern.
-    category: ops
+    category: security
     priority: 4
     order: 2
-    sources:
-      - path: reference/mcp/configuration.md
-        section: 'mcp.<profile>.quota.*'
-        role: primary
-    must_cover:
-      - fail-closed on hook errors or misconfiguration
-      - hook runs after the in-memory buckets admit
-      - read-modify-write counters must be atomic
+    mode: synthesized
+    # sources:
+    # - path: reference/mcp/configuration.md
+    # section: 'mcp.<profile>.quota.*'
+    # role: primary
+    # must_cover:
+    # - fail-closed on hook errors or misconfiguration
+    # - hook runs after the in-memory buckets admit
+    # - read-modify-write counters must be atomic
+    cross_links:
+      - rate-limiting
 
   - rule: security-posture
     description: The MCP security model - anonymous access, RBAC boundaries, origin validation, audit logging, and the hardening checklist for public instances.
-    category: ops
+    category: security
     priority: 4
     order: 3
+    mode: synthesized

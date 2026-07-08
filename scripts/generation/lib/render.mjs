@@ -24,6 +24,11 @@ const CATEGORY_IMPACT = {
 	api: 'HIGH',
 	logic: 'MEDIUM',
 	ops: 'MEDIUM',
+	// harper-mcp categories
+	setup: 'HIGH',
+	tools: 'HIGH',
+	resources: 'MEDIUM',
+	security: 'HIGH',
 };
 
 // URL-path prefix convention for each category.
@@ -32,6 +37,11 @@ const CATEGORY_PREFIX = {
 	api: 'api-',
 	logic: 'logic-',
 	ops: 'ops-',
+	// harper-mcp categories
+	setup: 'setup-',
+	tools: 'tools-',
+	resources: 'resources-',
+	security: 'ops-',
 };
 
 // Produce the "Rule Categories by Priority" table + "Quick Reference" grouped

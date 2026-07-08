@@ -45,9 +45,6 @@ import {
 	SKILL_INDEX_END,
 } from './lib/render.mjs';
 
-const AGENTS_LEAD =
-	'Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.';
-
 function parseArgs(argv) {
 	const args = { docsPath: process.env.DOCS_PATH || '../documentation', rule: null, force: false };
 	for (let i = 0; i < argv.length; i++) {
@@ -197,7 +194,7 @@ async function main() {
 				bodies.set(entry.rule, bodyOf(raw));
 			}
 			const agentsMd = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
-				lead: AGENTS_LEAD,
+				lead: skill.agentsLead,
 			});
 			const agentsPath = path.join(process.cwd(), skill.dir, skill.agentsFile);
 			await fs.writeFile(agentsPath, agentsMd, 'utf-8');

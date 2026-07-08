@@ -1,0 +1,83 @@
+# Rules manifest for the harper-mcp skill.
+#
+# Declarative source of truth for rule taxonomy, sources, and generation mode.
+# All rules are currently synthesized (hand-authored from the Harper 5.1/5.2
+# MCP implementation and its documentation); flip individual rules to
+# mode: generate once dedicated documentation sources exist for them.
+
+rules:
+  # ===========================================================================
+  # Setup & Connection (priority 1 — HIGH)
+  # ===========================================================================
+
+  - rule: enabling-mcp
+    description: How to enable and configure Harper's MCP server profiles (application and operations).
+    category: setup
+    priority: 1
+    order: 1
+
+  - rule: connecting-clients
+    description: How MCP clients connect to Harper - the initialize handshake, session and protocol-version headers, and authentication.
+    category: setup
+    priority: 1
+    order: 2
+
+  # ===========================================================================
+  # Tools & Prompts (priority 2 — HIGH)
+  # ===========================================================================
+
+  - rule: automatic-verb-tools
+    description: How Harper auto-generates CRUD MCP tools from exported tables, with RBAC filtering and allow/deny/maxTools controls.
+    category: tools
+    priority: 2
+    order: 1
+
+  - rule: custom-mcp-tools
+    description: How to expose custom instance methods as MCP tools via static mcpTools, including the anonymous-exposure security model.
+    category: tools
+    priority: 2
+    order: 2
+
+  - rule: custom-mcp-prompts
+    description: How to publish reusable prompt templates to MCP clients via static mcpPrompts.
+    category: tools
+    priority: 2
+    order: 3
+
+  # ===========================================================================
+  # Resources (priority 3 — MEDIUM)
+  # ===========================================================================
+
+  - rule: resources-surface
+    description: The MCP resources surface - harper:// metadata URIs, harper+rest:// table descriptors, templates, subscriptions, and list_changed notifications.
+    category: resources
+    priority: 3
+    order: 1
+
+  - rule: custom-mcp-resources
+    description: How to serve custom content (docs pages, reports, binaries) as MCP resources via static mcpResources with URI templates and completions.
+    category: resources
+    priority: 3
+    order: 2
+
+  # ===========================================================================
+  # Operations & Security (priority 4 — HIGH for public deployments)
+  # ===========================================================================
+
+  - rule: rate-limiting
+    description: MCP tools/call rate limiting - per-tool, per-session, and per-client-identity token buckets, and the identityHeader trust model.
+    category: ops
+    priority: 4
+    order: 1
+
+  - rule: durable-quotas
+    description: Operator-pluggable durable quotas for MCP tools/call via the config-named quota Resource hook, with a race-safe counter pattern.
+    category: ops
+    priority: 4
+    order: 2
+
+  - rule: security-posture
+    description: The MCP security model - anonymous access, RBAC boundaries, origin validation, audit logging, and the hardening checklist for public instances.
+    category: ops
+    priority: 4
+    order: 3

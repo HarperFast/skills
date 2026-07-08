@@ -46,6 +46,11 @@ type QuotaCounter @table {
 const DAILY_LIMIT = 100;
 
 export class McpQuota extends tables.QuotaCounter {
+	// The hook class must be exported to be config-addressable — which would
+	// also surface update_/delete_McpQuota verb tools and a REST endpoint,
+	// letting a permitted client RESET ITS OWN COUNTER. Keep the quota table
+	// off the MCP surface and lock down its REST permissions.
+	static exportTypes = { mcp: false };
 	static async allowMcpCall({ identity, tool }) {
 		const id = identity ?? 'unknown';
 		const today = new Date().toISOString().slice(0, 10);
@@ -62,4 +67,6 @@ export class McpQuota extends tables.QuotaCounter {
 }
 ```
 
-The counter is a real table: inspect or reset it over REST (`GET /QuotaCounter/<identity>`), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
+The counter is a real table: operators can inspect or reset it over REST (subject to the permissions you set), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
+
+Also verify the hook actually runs (call the tool past the limit once): on Harper versions before 5.2.0 the `quota.*` config keys are accepted and silently ignored — see [Enabling MCP](enabling-mcp.md).

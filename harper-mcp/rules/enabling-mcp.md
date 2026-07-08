@@ -40,6 +40,8 @@ Each profile is independent — enable only what you need. Key per-profile optio
 
 Version notes: the transport and tool surface shipped across 5.1.x (complete protocol surface — prompts, resources, subscriptions, completions, cancellation, progress — in 5.1.10+). Custom content resources (`mcpResources`) are 5.1.18+. Per-client rate limiting and durable quotas are 5.2.0+.
 
+**Verify the version before relying on gated features.** Unsupported config keys (including the `rateLimit.perClient*` and `quota.*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
+
 ## Examples
 
 Minimal application-profile setup for a project with `@export`ed tables:

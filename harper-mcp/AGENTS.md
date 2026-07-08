@@ -39,6 +39,8 @@ Each profile is independent — enable only what you need. Key per-profile optio
 
 Version notes: the transport and tool surface shipped across 5.1.x (complete protocol surface — prompts, resources, subscriptions, completions, cancellation, progress — in 5.1.10+). Custom content resources (`mcpResources`) are 5.1.18+. Per-client rate limiting and durable quotas are 5.2.0+.
 
+**Verify the version before relying on gated features.** Unsupported config keys (including the `rateLimit.perClient*` and `quota.*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
+
 #### Examples
 
 Minimal application-profile setup for a project with `@export`ed tables:
@@ -121,7 +123,8 @@ Use this skill when deciding what an MCP client will see for a given schema, whe
 2. **RBAC is enforced, twice.** `tools/list` is filtered per authenticated user (a user with no read permission on a table does not see its `get_`/`search_` tools), and calls run through the same permission enforcement as REST — including per-record `allow*` predicates on Resource subclasses. This is the key contrast with [custom tools](custom-mcp-tools.md), which are visible to everyone.
 3. **`exportTypes` gating.** A Resource registered with `exportTypes: { mcp: false }` is excluded from MCP enumeration entirely, independent of its REST exposure.
 4. **Surface controls.** On the application profile, trim per Resource with `exportTypes: { mcp: false }`; `maxTools` sets the `tools/list` page size (default 200, cursor pages overflow). The `allow`/`deny` glob filters belong to the **operations** profile's tool generation, not this one. Prefer trimming to what the AI actually needs — every tool costs client context.
-5. **Live registration.** The tool registry rebuilds lazily when the underlying Resource registry changes (schema changes, deploys, components that finish loading after boot), so tools stay in sync without restarts; connected sessions receive `notifications/tools/list_changed` when their visible set actually changes.
+5. **Live registration (5.1.18+).** The tool registry rebuilds lazily when the underlying Resource registry changes (schema changes, deploys, components that finish loading after boot), so tools stay in sync without restarts; connected sessions receive `notifications/tools/list_changed` when their visible set actually changes. On earlier 5.1.x, registration depends on schema-creation events — a restart on an existing data root can come up with an **empty custom-tool registry** (the tables already exist, so no event fires); upgrading is the fix.
+6. **Plain `Resource` classes get partial tool families.** An exported non-table `Resource` subclass surfaces verb tools only for the REST verbs it actually has (typically a lone `create_*` from the base `post`) — if you export a class purely to host `mcpTools`/`mcpResources`, consider `exportTypes: { mcp: false }`-gating its verb surface or not exporting REST verbs at all.
 
 #### Examples
 
@@ -374,6 +377,8 @@ Limit hits return an `isError` tool result with `kind: 'rate_limited'` and a `sc
 
 All bucket state is in-memory per worker: it resets on restart and is not shared across workers. For durable, restart-surviving limits, see the [Durable Quotas](durable-quotas.md) skill.
 
+On Harper versions before 5.2.0 the `perClient*`/`identityHeader` keys are **accepted and silently ignored** — verify `serverInfo.version` and prove a denial once before trusting the limit (see [Enabling MCP](enabling-mcp.md)).
+
 #### Examples
 
 Public docs server with a cost-bearing `answer` tool — bound instantaneous abuse:
@@ -438,6 +443,11 @@ type QuotaCounter @table {
 const DAILY_LIMIT = 100;
 
 export class McpQuota extends tables.QuotaCounter {
+	// The hook class must be exported to be config-addressable — which would
+	// also surface update_/delete_McpQuota verb tools and a REST endpoint,
+	// letting a permitted client RESET ITS OWN COUNTER. Keep the quota table
+	// off the MCP surface and lock down its REST permissions.
+	static exportTypes = { mcp: false };
 	static async allowMcpCall({ identity, tool }) {
 		const id = identity ?? 'unknown';
 		const today = new Date().toISOString().slice(0, 10);
@@ -454,7 +464,9 @@ export class McpQuota extends tables.QuotaCounter {
 }
 ```
 
-The counter is a real table: inspect or reset it over REST (`GET /QuotaCounter/<identity>`), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
+The counter is a real table: operators can inspect or reset it over REST (subject to the permissions you set), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
+
+Also verify the hook actually runs (call the tool past the limit once): on Harper versions before 5.2.0 the `quota.*` config keys are accepted and silently ignored — see [Enabling MCP](enabling-mcp.md).
 
 ### 4.3 Security Posture
 
@@ -483,3 +495,5 @@ Hardening checklist for a public application-profile endpoint:
 - [ ] CORS allow-list configured if browsers will reach the endpoint.
 - [ ] The tool surface is trimmed to what the AI needs: `exportTypes: { mcp: false }` on internal Resources (application), a deliberate `allow` list (operations — remember it replaces the read-only default).
 - [ ] Audit log shipping somewhere you actually read.
+- [ ] Version verified (`serverInfo.version` ≥ the feature gates you rely on) and each protection **proven to deny once** — older versions accept and silently ignore `rateLimit.perClient*` / `quota.*` keys.
+- [ ] The quota hook's table is not itself exposed (`exportTypes: { mcp: false }` + restrictive REST permissions) — otherwise clients can reset their own counters.

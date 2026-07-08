@@ -30,6 +30,8 @@ Limit hits return an `isError` tool result with `kind: 'rate_limited'` and a `sc
 
 All bucket state is in-memory per worker: it resets on restart and is not shared across workers. For durable, restart-surviving limits, see the [Durable Quotas](durable-quotas.md) skill.
 
+On Harper versions before 5.2.0 the `perClient*`/`identityHeader` keys are **accepted and silently ignored** — verify `serverInfo.version` and prove a denial once before trusting the limit (see [Enabling MCP](enabling-mcp.md)).
+
 ## Examples
 
 Public docs server with a cost-bearing `answer` tool — bound instantaneous abuse:

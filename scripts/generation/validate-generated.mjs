@@ -322,6 +322,7 @@ async function checkAgentsRoundTrip(manifest, skill, scope, errors) {
 	}
 
 	const assembled = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
+		title: skill.agentsTitle,
 		lead: skill.agentsLead,
 	});
 	let expected;

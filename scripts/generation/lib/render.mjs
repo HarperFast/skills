@@ -146,10 +146,10 @@ function splitTitle(body) {
 // category in manifest order. Deterministic: same manifest + same rule bodies
 // always produce byte-identical output. `readBody(slug)` returns the rule's
 // body (frontmatter already stripped).
-export function assembleAgentsMd(manifest, readBody, { lead } = {}) {
+export function assembleAgentsMd(manifest, readBody, { title, lead } = {}) {
 	const rules = sortedRules(manifest);
 
-	const out = ['# Harper Best Practices', ''];
+	const out = [`# ${title ?? 'Harper Best Practices'}`, ''];
 	if (lead) out.push(lead.trim(), '');
 
 	// Group rules by category, preserving first-seen category order.

@@ -1,4 +1,4 @@
-# Harper Best Practices
+# Harper MCP
 
 Guidelines for exposing a Harper instance as a Model Context Protocol (MCP) server and for building the tools, prompts, and resources AI clients consume. Harper implements MCP Streamable HTTP (spec rev 2025-06-18) with two independent profiles: `application` (your app's surface) and `operations` (Harper administration).
 
@@ -235,6 +235,7 @@ export class Support extends tables.Ticket {
 			arguments: [{ name: 'ticketId', description: 'Ticket to reply to', required: true }],
 			async render(args) {
 				const ticket = await Support.get(args.ticketId);
+				if (!ticket) throw new Error(`ticket not found: ${args.ticketId}`);
 				return {
 					messages: [
 						{
@@ -334,7 +335,13 @@ export class DocsPages extends Resource {
 	}
 
 	async readPage(params /* { path } */, context /* { user, profile, sessionId } */) {
-		return { text: loadPage(params.path), mimeType: 'text/markdown' };
+		// {+path} spans segments BY DESIGN (it can contain `/` and `..`), so never
+		// hand it to filesystem path construction unvalidated. A keyed lookup like
+		// this is inherently safe; if you must touch the filesystem, resolve and
+		// verify containment first.
+		const page = PAGES.get(params.path);
+		if (!page) throw new Error(`no such page: ${params.path}`);
+		return { text: page, mimeType: 'text/markdown' };
 	}
 }
 ```

@@ -41,7 +41,13 @@ export class DocsPages extends Resource {
 	}
 
 	async readPage(params /* { path } */, context /* { user, profile, sessionId } */) {
-		return { text: loadPage(params.path), mimeType: 'text/markdown' };
+		// {+path} spans segments BY DESIGN (it can contain `/` and `..`), so never
+		// hand it to filesystem path construction unvalidated. A keyed lookup like
+		// this is inherently safe; if you must touch the filesystem, resolve and
+		// verify containment first.
+		const page = PAGES.get(params.path);
+		if (!page) throw new Error(`no such page: ${params.path}`);
+		return { text: page, mimeType: 'text/markdown' };
 	}
 }
 ```

@@ -16,7 +16,8 @@ export const SKILLS = [
 		rulesDir: 'rules',
 		skillFile: 'SKILL.md',
 		agentsFile: 'AGENTS.md',
-		// Lead paragraph of the assembled AGENTS.md, per skill.
+		// H1 title and lead paragraph of the assembled AGENTS.md, per skill.
+		agentsTitle: 'Harper Best Practices',
 		agentsLead:
 			'Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.',
 	},
@@ -26,6 +27,7 @@ export const SKILLS = [
 		rulesDir: 'rules',
 		skillFile: 'SKILL.md',
 		agentsFile: 'AGENTS.md',
+		agentsTitle: 'Harper MCP',
 		agentsLead:
 			"Guidelines for exposing a Harper instance as a Model Context Protocol (MCP) server and for building the tools, prompts, and resources AI clients consume. Harper implements MCP Streamable HTTP (spec rev 2025-06-18) with two independent profiles: `application` (your app's surface) and `operations` (Harper administration).",
 	},

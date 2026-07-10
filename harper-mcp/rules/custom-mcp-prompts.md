@@ -27,6 +27,7 @@ export class Support extends tables.Ticket {
 			arguments: [{ name: 'ticketId', description: 'Ticket to reply to', required: true }],
 			async render(args) {
 				const ticket = await Support.get(args.ticketId);
+				if (!ticket) throw new Error(`ticket not found: ${args.ticketId}`);
 				return {
 					messages: [
 						{

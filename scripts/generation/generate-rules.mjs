@@ -194,6 +194,7 @@ async function main() {
 				bodies.set(entry.rule, bodyOf(raw));
 			}
 			const agentsMd = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
+				title: skill.agentsTitle,
 				lead: skill.agentsLead,
 			});
 			const agentsPath = path.join(process.cwd(), skill.dir, skill.agentsFile);

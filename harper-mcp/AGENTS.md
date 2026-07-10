@@ -124,7 +124,7 @@ Use this skill when deciding what an MCP client will see for a given schema, whe
 3. **`exportTypes` gating.** A Resource registered with `exportTypes: { mcp: false }` is excluded from MCP enumeration entirely, independent of its REST exposure.
 4. **Surface controls.** On the application profile, trim per Resource with `exportTypes: { mcp: false }`; `maxTools` sets the `tools/list` page size (default 200, cursor pages overflow). The `allow`/`deny` glob filters belong to the **operations** profile's tool generation, not this one. Prefer trimming to what the AI actually needs — every tool costs client context.
 5. **Live registration (5.1.18+).** The tool registry rebuilds lazily when the underlying Resource registry changes (schema changes, deploys, components that finish loading after boot), so tools stay in sync without restarts; connected sessions receive `notifications/tools/list_changed` when their visible set actually changes. On earlier 5.1.x, registration depends on schema-creation events — a restart on an existing data root can come up with an **empty custom-tool registry** (the tables already exist, so no event fires); upgrading is the fix.
-6. **Plain `Resource` classes get partial tool families.** An exported non-table `Resource` subclass surfaces verb tools only for the REST verbs it actually has (typically a lone `create_*` from the base `post`) — if you export a class purely to host `mcpTools`/`mcpResources`, consider `exportTypes: { mcp: false }`-gating its verb surface or not exporting REST verbs at all.
+6. **Plain `Resource` classes get partial tool families.** An exported non-table `Resource` subclass surfaces verb tools only for the REST verbs it actually has (typically a lone `create_*` from the base `post`). To host `mcpTools`/`mcpResources` without any verb surface, register the class via `server.resources.set(name, Class, { mcp: false })`-style exportTypes at registration — note a `static exportTypes` field on the class is NOT read.
 
 #### Examples
 
@@ -449,12 +449,7 @@ type QuotaCounter @table {
 ```javascript
 const DAILY_LIMIT = 100;
 
-export class McpQuota extends tables.QuotaCounter {
-	// The hook class must be exported to be config-addressable — which would
-	// also surface update_/delete_McpQuota verb tools and a REST endpoint,
-	// letting a permitted client RESET ITS OWN COUNTER. Keep the quota table
-	// off the MCP surface and lock down its REST permissions.
-	static exportTypes = { mcp: false };
+class McpQuota extends tables.QuotaCounter {
 	static async allowMcpCall({ identity, tool }) {
 		const id = identity ?? 'unknown';
 		const today = new Date().toISOString().slice(0, 10);
@@ -469,7 +464,16 @@ export class McpQuota extends tables.QuotaCounter {
 		return true;
 	}
 }
+
+// Register the class so the hook can resolve it by name — do NOT module-export
+// it (that would surface update_/delete_McpQuota verb tools and a REST endpoint
+// letting a permitted client reset its own counter). `exportTypes` gates each
+// transport independently; a `static exportTypes` field on the class is NOT
+// read — only this registration call (or @export directives) sets it.
+server.resources.set('McpQuota', McpQuota, { mcp: false, rest: false });
 ```
+
+Keep any cost-bearing `mcpTools` on a **separate** class: `mcp: false` excludes the whole class from the MCP walk, custom tools included.
 
 The counter is a real table: operators can inspect or reset it over REST (subject to the permissions you set), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
 
@@ -503,4 +507,4 @@ Hardening checklist for a public application-profile endpoint:
 - [ ] The tool surface is trimmed to what the AI needs: `exportTypes: { mcp: false }` on internal Resources (application), a deliberate `allow` list (operations — remember it replaces the read-only default).
 - [ ] Audit log shipping somewhere you actually read.
 - [ ] Version verified (`serverInfo.version` ≥ the feature gates you rely on) and each protection **proven to deny once** — older versions accept and silently ignore `rateLimit.perClient*` / `quota.*` keys.
-- [ ] The quota hook's table is not itself exposed (`exportTypes: { mcp: false }` + restrictive REST permissions) — otherwise clients can reset their own counters.
+- [ ] The quota hook's table is not itself exposed — register it via `server.resources.set('McpQuota', McpQuota, { mcp: false, rest: false })` instead of module-exporting it (a `static exportTypes` field is not read); otherwise clients can reset their own counters.

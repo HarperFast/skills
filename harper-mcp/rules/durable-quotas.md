@@ -45,12 +45,7 @@ type QuotaCounter @table {
 ```javascript
 const DAILY_LIMIT = 100;
 
-export class McpQuota extends tables.QuotaCounter {
-	// The hook class must be exported to be config-addressable — which would
-	// also surface update_/delete_McpQuota verb tools and a REST endpoint,
-	// letting a permitted client RESET ITS OWN COUNTER. Keep the quota table
-	// off the MCP surface and lock down its REST permissions.
-	static exportTypes = { mcp: false };
+class McpQuota extends tables.QuotaCounter {
 	static async allowMcpCall({ identity, tool }) {
 		const id = identity ?? 'unknown';
 		const today = new Date().toISOString().slice(0, 10);
@@ -65,7 +60,16 @@ export class McpQuota extends tables.QuotaCounter {
 		return true;
 	}
 }
+
+// Register the class so the hook can resolve it by name — do NOT module-export
+// it (that would surface update_/delete_McpQuota verb tools and a REST endpoint
+// letting a permitted client reset its own counter). `exportTypes` gates each
+// transport independently; a `static exportTypes` field on the class is NOT
+// read — only this registration call (or @export directives) sets it.
+server.resources.set('McpQuota', McpQuota, { mcp: false, rest: false });
 ```
+
+Keep any cost-bearing `mcpTools` on a **separate** class: `mcp: false` excludes the whole class from the MCP walk, custom tools included.
 
 The counter is a real table: operators can inspect or reset it over REST (subject to the permissions you set), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
 

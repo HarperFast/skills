@@ -33,4 +33,4 @@ Hardening checklist for a public application-profile endpoint:
 - [ ] The tool surface is trimmed to what the AI needs: `exportTypes: { mcp: false }` on internal Resources (application), a deliberate `allow` list (operations — remember it replaces the read-only default).
 - [ ] Audit log shipping somewhere you actually read.
 - [ ] Version verified (`serverInfo.version` ≥ the feature gates you rely on) and each protection **proven to deny once** — older versions accept and silently ignore `rateLimit.perClient*` / `quota.*` keys.
-- [ ] The quota hook's table is not itself exposed (`exportTypes: { mcp: false }` + restrictive REST permissions) — otherwise clients can reset their own counters.
+- [ ] The quota hook's table is not itself exposed — register it via `server.resources.set('McpQuota', McpQuota, { mcp: false, rest: false })` instead of module-exporting it (a `static exportTypes` field is not read); otherwise clients can reset their own counters.

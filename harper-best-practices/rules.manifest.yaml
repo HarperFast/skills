@@ -402,3 +402,23 @@ rules:
       - 'process.env'
       - 'override'
       - 'config.yaml'
+
+  - rule: v5-upgrade
+    description: Breaking changes and recommended updates when migrating a Harper application to v5.
+    category: ops
+    priority: 4
+    order: 7
+    mode: generate
+    sources:
+      - path: release-notes/v5-lincoln/v5-migration.md
+        role: primary
+    must_cover:
+      - "from 'harper'"
+      - 'allowInstallScripts'
+      - 'loadedFromSource'
+      - 'getContext'
+      - 'allowedSpawnCommands'
+      - 'saveBeforeCommit'
+      - 'moduleLoader'
+      - 'lockdown'
+      - 'Table.get'

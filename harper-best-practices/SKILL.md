@@ -83,6 +83,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `serving-web-content` — How to serve static files and integrated Vite/React applications in Harper.
 - `logging` — Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
 - `load-env` — How to load environment variables from .env files into a Harper application using the loadEnv plugin.
+- `v5-upgrade` — Breaking changes and recommended updates when migrating a Harper application to v5.
 
 <!-- END GENERATED INDEX -->
 

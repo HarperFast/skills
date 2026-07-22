@@ -1,8 +1,15 @@
 ---
 name: enabling-mcp
-description: How to enable and configure Harper's MCP server profiles (application and operations).
+description: >-
+  How to enable and configure Harper's MCP server profiles (application and
+  operations).
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/mcp/overview.md
+    - reference/v5/mcp/configuration.md
+  sourceCommit: d7d2ddb120ce5f2ad39dc425f628f5a4f220c151
+  inputHash: 236b335c4fc56602
 ---
 
 # Enabling MCP
@@ -30,17 +37,17 @@ mcp:
     mountPath: /mcp # path on the operations port
 ```
 
-Each profile is independent — enable only what you need. Key per-profile options:
+A profile is enabled by the **presence** of its config sub-block — there is no separate `enabled` flag, so `mcp: { application: {} }` alone turns the application profile on with defaults. Each profile is independent; enable only what you need. Key per-profile options:
 
-- `mountPath` — where the endpoint mounts. Required to enable the profile.
+- `mountPath` — path the endpoint mounts on (default `/mcp`).
 - `allow` / `deny` (operations profile only) — glob patterns or literal operation names selecting which operations become tools. The default is a deliberately read-only list; setting `allow` **replaces** it (no merge), so destructive operations like `set_configuration` must be opted in explicitly.
 - `maxTools` — page size for `tools/list` responses (default 200); overflow pages via the MCP cursor.
 - `rateLimit.*` — see the [Rate Limiting](rate-limiting.md) skill.
-- `quota.*` — durable, operator-defined quotas; see the [Durable Quotas](durable-quotas.md) skill.
+- durable quotas — registered in code with `server.setMcpQuotaHandler`, not a config key; see the [Durable Quotas](durable-quotas.md) skill.
 
 Version notes: the transport and tool surface shipped across 5.1.x (complete protocol surface — prompts, resources, subscriptions, completions, cancellation, progress — in 5.1.10+). Custom content resources (`mcpResources`) are 5.1.18+. Per-client rate limiting and durable quotas are 5.2.0+.
 
-**Verify the version before relying on gated features.** Unsupported config keys (including the `rateLimit.perClient*` and `quota.*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
+**Verify the version before relying on gated features.** Unsupported config keys (such as the `rateLimit.perClient*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
 
 ## Examples
 

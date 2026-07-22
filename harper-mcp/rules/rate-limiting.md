@@ -1,8 +1,14 @@
 ---
 name: rate-limiting
-description: MCP tools/call rate limiting - per-tool, per-session, and per-client-identity token buckets, and the identityHeader trust model.
+description: >-
+  MCP tools/call rate limiting - per-tool, per-session, and per-client-identity
+  token buckets, and the identityHeader trust model.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/mcp/configuration.md#`mcp.<profile>.rateLimit.*`
+  sourceCommit: d7d2ddb120ce5f2ad39dc425f628f5a4f220c151
+  inputHash: c07b006ea6def652
 ---
 
 # Rate Limiting

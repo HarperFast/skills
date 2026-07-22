@@ -41,10 +41,10 @@ With `mcp.application.mountPath` set, `tools/list` (as a user with read/write on
 { "name": "create_Widget", "...": "..." }
 ```
 
-Excluding an exported Resource from MCP while keeping its REST surface:
+Excluding an exported Resource from MCP while keeping its REST surface — set the `mcp` exportType at registration (a `static exportTypes` field on the class is NOT read):
 
 ```javascript
-server.http(InternalThing, { name: 'internal-thing', exportTypes: { mcp: false } });
+server.resources.set('internal-thing', InternalThing, { mcp: false });
 ```
 
 To expose read-only _data_, rely on RBAC: a role without write permissions never sees `create_`/`update_`/`delete_` tools for the table.

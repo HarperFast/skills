@@ -69,7 +69,7 @@ See the concrete examples embedded in each rule (curl handshakes, `static mcpToo
 ### 4. Operations & Security (HIGH)
 
 - `rate-limiting` — MCP tools/call rate limiting - per-tool, per-session, and per-client-identity token buckets, and the identityHeader trust model.
-- `durable-quotas` — Operator-pluggable durable quotas for MCP tools/call via the config-named quota Resource hook, with a race-safe counter pattern.
+- `durable-quotas` — Operator-pluggable durable quotas for MCP tools/call via the server.setMcpQuotaHandler registration hook, with a race-safe counter pattern.
 - `security-posture` — The MCP security model - anonymous access, RBAC boundaries, origin validation, audit logging, and the hardening checklist for public instances.
 
 <!-- END GENERATED INDEX -->

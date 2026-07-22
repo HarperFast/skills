@@ -29,17 +29,17 @@ mcp:
     mountPath: /mcp # path on the operations port
 ```
 
-Each profile is independent — enable only what you need. Key per-profile options:
+A profile is enabled by the **presence** of its config sub-block — there is no separate `enabled` flag, so `mcp: { application: {} }` alone turns the application profile on with defaults. Each profile is independent; enable only what you need. Key per-profile options:
 
-- `mountPath` — where the endpoint mounts. Required to enable the profile.
+- `mountPath` — path the endpoint mounts on (default `/mcp`).
 - `allow` / `deny` (operations profile only) — glob patterns or literal operation names selecting which operations become tools. The default is a deliberately read-only list; setting `allow` **replaces** it (no merge), so destructive operations like `set_configuration` must be opted in explicitly.
 - `maxTools` — page size for `tools/list` responses (default 200); overflow pages via the MCP cursor.
 - `rateLimit.*` — see the [Rate Limiting](rate-limiting.md) skill.
-- `quota.*` — durable, operator-defined quotas; see the [Durable Quotas](durable-quotas.md) skill.
+- durable quotas — registered in code with `server.setMcpQuotaHandler`, not a config key; see the [Durable Quotas](durable-quotas.md) skill.
 
 Version notes: the transport and tool surface shipped across 5.1.x (complete protocol surface — prompts, resources, subscriptions, completions, cancellation, progress — in 5.1.10+). Custom content resources (`mcpResources`) are 5.1.18+. Per-client rate limiting and durable quotas are 5.2.0+.
 
-**Verify the version before relying on gated features.** Unsupported config keys (including the `rateLimit.perClient*` and `quota.*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
+**Verify the version before relying on gated features.** Unsupported config keys (such as the `rateLimit.perClient*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. Check `serverInfo.version` in the `initialize` response (or read `harper://about`) first, and after configuring a limit, prove it denies at least once before trusting it.
 
 #### Examples
 
@@ -145,10 +145,10 @@ With `mcp.application.mountPath` set, `tools/list` (as a user with read/write on
 { "name": "create_Widget", "...": "..." }
 ```
 
-Excluding an exported Resource from MCP while keeping its REST surface:
+Excluding an exported Resource from MCP while keeping its REST surface — set the `mcp` exportType at registration (a `static exportTypes` field on the class is NOT read):
 
 ```javascript
-server.http(InternalThing, { name: 'internal-thing', exportTypes: { mcp: false } });
+server.resources.set('internal-thing', InternalThing, { mcp: false });
 ```
 
 To expose read-only _data_, rely on RBAC: a role without write permissions never sees `create_`/`update_`/`delete_` tools for the table.
@@ -411,7 +411,7 @@ mcp:
 
 ### 4.2 Durable Quotas
 
-Persisted, restart-surviving cost controls for `tools/call`, implemented by your code behind a config hook (5.2.0+).
+Persisted, restart-surviving cost controls for `tools/call`, registered as a plain function in your component code (5.2.0+).
 
 #### When to Use
 
@@ -419,65 +419,56 @@ Use this skill when in-memory [rate limiting](rate-limiting.md) is not enough as
 
 #### How It Works
 
-1. **Name a quota Resource in config:**
-
-```yaml
-mcp:
-  application:
-    quota:
-      resource: McpQuota # exported Resource path
-      # method: allowMcpCall   # optional; this is the default
-```
-
-2. **Implement the static method.** Before each admitted `tools/call`, Harper calls it with `{ identity, tool, user, profile, sessionId }` (`identity` is the client identity from the rate-limit layer — socket IP or trusted-header value — and may be `undefined`). Return `true` to allow, or `{ allowed: false, message?, retryAfterSeconds? }` to deny; denials surface as `isError` tool results with `kind: 'quota_exceeded'` plus your message.
-3. **Ordering.** The hook runs _after_ the in-memory buckets admit the call, so rate-limited clients cannot spam a table-backed hook.
-4. **Fail-closed.** A hook that throws — or a configured `resource`/`method` that doesn't resolve — **denies** the call (sanitized `quota policy unavailable` / `quota check failed`; raw error in the server log). Cost protection that silently disables itself on a bug is worse than a hard failure. The blast radius is `tools/call` only; list/read surfaces stay up.
-5. **Race-safety is your hook's business.** It can run concurrently for the same identity — within a worker (interleavings across your own `await`s) and across workers. A naive `get` → `put used+1` counter undercounts under concurrency; make the read-modify-write atomic (a transaction that serializes conflicting writers, a compare-and-set retry loop, or a store with native atomic increments).
+1. **Register a handler function** with `server.setMcpQuotaHandler` at component load — the policy is a **function**, never an exposed Resource. It is opt-in: no handler registered means calls are allowed. The latest registration wins, so a reloaded component replaces the previous handler; pass `undefined` to clear it.
+2. **The handler is called before each admitted `tools/call`** with `{ identity, tool, user, profile, sessionId }` (`identity` is the client identity from the rate-limit layer — socket IP or trusted-header value — and may be `undefined`). Return `true` (or any truthy non-object) to allow, or `{ allowed: false, message?, retryAfterSeconds? }` to deny; denials surface as `isError` tool results with `kind: 'quota_exceeded'` plus your `message`/`retryAfterSeconds`.
+3. **Gate per profile in code.** The single handler receives `profile`, so branch on it (e.g. `if (profile !== 'application') return true`) rather than configuring per-profile hooks.
+4. **Ordering.** The handler runs _after_ the in-memory buckets admit the call, so rate-limited clients cannot spam a table-backed handler.
+5. **Fail-closed.** A handler that throws **denies** the call — the raw error goes to the server log only; the client sees a sanitized message. Cost protection that silently disables itself on a bug is worse than a hard failure. Harper calls the handler once per attempted tool call; whether you count on check or on success is your business.
+6. **Race-safety is your handler's business.** It can run concurrently for the same identity — within a worker (interleavings across your own `await`s) and across workers. A naive `get` → `put used+1` counter undercounts under concurrency and admits calls past the limit; make the read-modify-write atomic (a transaction that serializes conflicting writers, a compare-and-set retry loop, or a store with native atomic increments).
 
 #### Examples
 
-Persisted per-identity daily counter (schema + hook):
+Persisted per-identity counter backed by an **internal** table (schema + registration):
 
 ```graphql
+# schema.graphql — INTERNAL counter. No @export, so no client can read or reset it.
 type QuotaCounter @table {
-	id: ID @primaryKey # identity
+	id: ID @primaryKey
 	used: Int
-	day: String
 }
 ```
 
 ```javascript
+// resources.js
 const DAILY_LIMIT = 100;
 
-class McpQuota extends tables.QuotaCounter {
-	static async allowMcpCall({ identity, tool }) {
-		const id = identity ?? 'unknown';
-		const today = new Date().toISOString().slice(0, 10);
-		// NOTE: naive get-then-put shown for shape; production code must make
-		// this read-modify-write atomic (see Race-safety above).
-		const existing = await McpQuota.get(id);
-		const used = existing?.day === today ? existing.used + 1 : 1;
-		await McpQuota.put({ id, used, day: today });
-		if (used > DAILY_LIMIT) {
-			return { allowed: false, message: 'daily quota reached', retryAfterSeconds: 3600 };
-		}
-		return true;
+// The cost-bearing tool clients call (exported — this is the public surface).
+export class Answerer extends Resource {
+	static mcpTools = [{ name: 'answer', description: 'Answer a question', method: 'doAnswer' }];
+	async doAnswer(args) {
+		return { answered: args?.q ?? '' };
 	}
 }
 
-// Register the class so the hook can resolve it by name — do NOT module-export
-// it (that would surface update_/delete_McpQuota verb tools and a REST endpoint
-// letting a permitted client reset its own counter). `exportTypes` gates each
-// transport independently; a `static exportTypes` field on the class is NOT
-// read — only this registration call (or @export directives) sets it.
-server.resources.set('McpQuota', McpQuota, { mcp: false, rest: false });
+// Register the durable quota policy as a function, backed by the internal counter table.
+server.setMcpQuotaHandler(async ({ identity, tool, user, profile, sessionId }) => {
+	if (profile !== 'application') return true; // gate per profile in code
+	const id = identity ?? 'unknown';
+	// NOTE: naive get-then-put shown for shape; production code must make this
+	// read-modify-write atomic (see Race-safety above).
+	const existing = await tables.QuotaCounter.get(id);
+	const used = (existing?.used ?? 0) + 1;
+	await tables.QuotaCounter.put({ id, used });
+	if (used > DAILY_LIMIT) {
+		return { allowed: false, message: 'daily quota reached', retryAfterSeconds: 3600 };
+	}
+	return true;
+});
 ```
 
-Keep any cost-bearing `mcpTools` on a **separate** class: `mcp: false` excludes the whole class from the MCP walk, custom tools included.
+Because the policy is a plain function and not a Resource, it exposes no `update_/delete_` MCP tools or REST surface — unlike an exported class, whose inherited CRUD would let a permitted client reset its own counter. Keep the storage table **unexported** (no `@export`) so it stays off every transport.
 
-The counter is a real table: operators can inspect or reset it over REST (subject to the permissions you set), and it survives restarts — an attacker who exhausted their quota stays exhausted after the process bounces.
-
-Also verify the hook actually runs (call the tool past the limit once): on Harper versions before 5.2.0 the `quota.*` config keys are accepted and silently ignored — see [Enabling MCP](enabling-mcp.md).
+Also verify the handler actually runs (call the tool past the limit once): on Harper versions before 5.2.0 `server.setMcpQuotaHandler` is unavailable — see [Enabling MCP](enabling-mcp.md).
 
 ### 4.3 Security Posture
 

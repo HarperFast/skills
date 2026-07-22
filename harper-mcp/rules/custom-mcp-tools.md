@@ -1,8 +1,14 @@
 ---
 name: custom-mcp-tools
-description: How to expose custom instance methods as MCP tools via static mcpTools, including the anonymous-exposure security model.
+description: >-
+  How to expose custom instance methods as MCP tools via static mcpTools,
+  including the anonymous-exposure security model.
 metadata:
-  mode: synthesized
+  mode: generate
+  sources:
+    - reference/v5/mcp/tools-and-resources.md#Custom `mcpTools` opt-in
+  sourceCommit: d7d2ddb120ce5f2ad39dc425f628f5a4f220c151
+  inputHash: 84a2ffac9bb7b66a
 ---
 
 # Custom MCP Tools

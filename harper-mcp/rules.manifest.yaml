@@ -1,16 +1,22 @@
 # Rules manifest for the harper-mcp skill.
 #
 # Declarative source of truth for rule taxonomy, sources, and generation mode.
-# All rules are currently synthesized (hand-authored from the Harper 5.1/5.2
-# MCP implementation and its documentation). The commented `sources` /
-# `must_cover` blocks below record the 1:1 mapping to canonical
-# HarperFast/documentation pages for the rules that are candidates to flip to
-# mode: generate (the schema only permits live sources/must_cover on generate
-# rules; uncomment together with the mode flip once a generation run is
-# reviewed). Rules without a mapping (connecting-clients' debugging guidance,
-# custom-mcp-prompts — whose mcpPrompts feature is currently UNDOCUMENTED in
-# reference/mcp/ — and the security-posture checklist) are agent-oriented
-# synthesis with no single docs source and should stay synthesized.
+#
+# Four rules with a 1:1 mapping to canonical HarperFast/documentation pages are
+# `mode: generate` (derived from reference/v5/mcp/* so the skill and the docs
+# cannot drift): enabling-mcp, custom-mcp-tools, rate-limiting, durable-quotas.
+#
+# Three more rules are docs-mapped but held synthesized pending a source fix,
+# each with its `sources`/`must_cover` recorded as comments to uncomment on flip:
+#   - automatic-verb-tools — its source's exportTypes-gating example is wrong on
+#     docs main (see the rule's note); flip once the doc is corrected.
+#   - resources-surface, custom-mcp-resources — pending documentation#567, which
+#     adds the `harper+rest://` scheme and the custom `mcpResources` section.
+#
+# The rest (connecting-clients' debugging guidance, custom-mcp-prompts — whose
+# mcpPrompts feature is UNDOCUMENTED in reference/v5/mcp/, see documentation#575
+# — and the security-posture checklist) are agent-oriented synthesis with no
+# single docs source and stay synthesized.
 
 rules:
   # ===========================================================================
@@ -22,17 +28,17 @@ rules:
     category: setup
     priority: 1
     order: 1
-    mode: synthesized
-    # synthesized today; flip to generate once a generation run is reviewed
-    # sources:
-    # - path: reference/mcp/overview.md
-    # role: primary
-    # - path: reference/mcp/configuration.md
-    # role: supporting
-    # must_cover:
-    # - both profiles (application/operations) and their default ports
-    # - mountPath is what enables a profile
-    # - version availability of major MCP features
+    mode: generate
+    sources:
+      - path: reference/v5/mcp/overview.md
+        role: primary
+      - path: reference/v5/mcp/configuration.md
+        role: supplemental
+    must_cover:
+      - '9926'
+      - '9925'
+      - presence
+      - 5.2.0+
     cross_links:
       - connecting-clients
       - rate-limiting
@@ -54,14 +60,20 @@ rules:
     priority: 2
     order: 1
     mode: synthesized
+    # Blocked from generate: the source's `### exportTypes gating` example shows
+    # `server.http(Resource, { exportTypes: { mcp: false } })`, but server.http
+    # (= httpServer in harper server/http.ts) never reads exportTypes — MCP
+    # gating is `server.resources.set(path, Resource, { mcp: false })`. Flip once
+    # the doc is corrected. This rule already carries the correct mechanism
+    # (skill commit 9ad155d1); generating from the buggy source would regress it.
     # sources:
-    # - path: reference/mcp/tools-and-resources.md
+    # - path: reference/v5/mcp/tools-and-resources.md
     # section: 'Application profile — tool generation'
     # role: primary
     # must_cover:
     # - tool names preserve Resource-path case (get_Widget)
     # - tools/list is RBAC-filtered per user; calls enforce permissions
-    # - exportTypes.mcp gating
+    # - exportTypes.mcp gating via server.resources.set
     cross_links:
       - custom-mcp-tools
 
@@ -70,14 +82,16 @@ rules:
     category: tools
     priority: 2
     order: 2
-    mode: synthesized
-    # sources:
-    # - path: reference/mcp/tools-and-resources.md
-    # section: 'Custom mcpTools opt-in'
-    # role: primary
-    # must_cover:
-    # - custom tools are exposed to every session including anonymous ones
-    # - live-class dispatch; gating is the method's responsibility
+    mode: generate
+    sources:
+      - path: reference/v5/mcp/tools-and-resources.md
+        section: 'Custom `mcpTools` opt-in'
+        role: primary
+    must_cover:
+      - mcpTools
+      - anonymous
+      - live-class
+      - context.user
     cross_links:
       - rate-limiting
       - durable-quotas
@@ -89,8 +103,9 @@ rules:
     order: 3
     mode: synthesized
     # No canonical docs source exists for mcpPrompts yet (shipped 5.1.10,
-    # undocumented in reference/mcp/) — stays synthesized until that docs
-    # gap is filled; content grounded in the implementation.
+    # undocumented in reference/v5/mcp/, see documentation#575) — stays
+    # synthesized until that docs gap is filled; content grounded in the
+    # implementation.
 
   # ===========================================================================
   # Resources (priority 3 — MEDIUM)
@@ -102,12 +117,15 @@ rules:
     priority: 3
     order: 1
     mode: synthesized
+    # Flip to generate once documentation#567 merges: it adds the
+    # `harper+rest://` descriptor scheme (currently only under `https://` on
+    # docs main) that this rule's must_cover requires.
     # sources:
-    # - path: reference/mcp/tools-and-resources.md
+    # - path: reference/v5/mcp/tools-and-resources.md
     # section: 'Resources surface'
     # role: primary
-    # - path: reference/mcp/subscriptions.md
-    # role: supporting
+    # - path: reference/v5/mcp/subscriptions.md
+    # role: supplemental
     # must_cover:
     # - the harper:// metadata URIs and which profile serves each
     # - harper+rest:// descriptor scheme with http(s) back-compat
@@ -121,9 +139,12 @@ rules:
     priority: 3
     order: 2
     mode: synthesized
+    # Flip to generate once documentation#567 merges: the 'Custom `mcpResources`
+    # opt-in' section it adds does not yet exist on docs main, so sliceSection
+    # would fail.
     # sources:
-    # - path: reference/mcp/tools-and-resources.md
-    # section: 'Custom mcpResources opt-in'
+    # - path: reference/v5/mcp/tools-and-resources.md
+    # section: 'Custom `mcpResources` opt-in'
     # role: primary
     # must_cover:
     # - exactly one of uri/uriTemplate per entry; {name} vs {+name} semantics
@@ -143,32 +164,34 @@ rules:
     category: security
     priority: 4
     order: 1
-    mode: synthesized
-    # sources:
-    # - path: reference/mcp/configuration.md
-    # section: 'mcp.<profile>.rateLimit.*'
-    # role: primary
-    # must_cover:
-    # - session-scoped buckets are evadable by session cycling; per-client closes it
-    # - perClientBurst defaults to the rate, floored at one whole token
-    # - identityHeader is a spoofing trap unless the proxy strips it
+    mode: generate
+    sources:
+      - path: reference/v5/mcp/configuration.md
+        section: '`mcp.<profile>.rateLimit.*`'
+        role: primary
+    must_cover:
+      - rate_limited
+      - perClientPerSecond
+      - identityHeader
+      - x-forwarded-for
     cross_links:
       - durable-quotas
 
   - rule: durable-quotas
-    description: Operator-pluggable durable quotas for MCP tools/call via the config-named quota Resource hook, with a race-safe counter pattern.
+    description: Operator-pluggable durable quotas for MCP tools/call via the server.setMcpQuotaHandler registration hook, with a race-safe counter pattern.
     category: security
     priority: 4
     order: 2
-    mode: synthesized
-    # sources:
-    # - path: reference/mcp/configuration.md
-    # section: 'mcp.<profile>.quota.*'
-    # role: primary
-    # must_cover:
-    # - fail-closed on hook errors or misconfiguration
-    # - hook runs after the in-memory buckets admit
-    # - read-modify-write counters must be atomic
+    mode: generate
+    sources:
+      - path: reference/v5/mcp/configuration.md
+        section: 'Durable quota handler'
+        role: primary
+    must_cover:
+      - setMcpQuotaHandler
+      - quota_exceeded
+      - Fail-closed
+      - read-modify-write
     cross_links:
       - rate-limiting
 

@@ -6,8 +6,8 @@ metadata:
   sources:
     - reference/v5/rest/overview.md
     - reference/v5/rest/websockets.md
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: 8fcf0cfe190e013e
+  sourceCommit: 3749d0c54be457a2a65d9a63c738a5dc88989ecd
+  inputHash: 6c7013b1307d9f7b
 ---
 
 # Automatic APIs
@@ -20,13 +20,13 @@ Apply this rule when adding REST or WebSocket API access to Harper tables or cus
 
 ## How It Works
 
-1. **Enable the REST plugin**: Add `rest: true` to your application's `config.yaml`. This activates the HTTP REST interface and enables WebSocket support by default.
+1. **Enable the REST plugin**: Add `rest: true` to your application's `config.yaml`. This activates the HTTP REST interface on the application server port (default `9926`) and enables WebSocket support automatically.
 
    ```yaml
    rest: true
    ```
 
-   To configure optional behavior:
+   To configure options explicitly:
 
    ```yaml
    rest:
@@ -34,69 +34,26 @@ Apply this rule when adding REST or WebSocket API access to Harper tables or cus
      webSocket: false # disables automatic WebSocket support (enabled by default)
    ```
 
-2. **Export your resource in the schema**: Tables are not exposed by default. Use the `@export` directive in your schema definition to make a table available as a REST endpoint. The exported name defines the base URL path, served on the application HTTP server port (default `9926`).
+2. **Export your resource in the schema**: Tables are not exposed by default. Use the `@export` directive in your schema definition to expose a table as a REST endpoint. The exported name defines the base URL path.
 
-3. **Use the correct URL structure**: The REST interface follows a consistent path convention.
+3. **Use the correct URL structure**: Target resources using these path conventions:
 
-   | Path                                         | Description                                                                        |
-   | -------------------------------------------- | ---------------------------------------------------------------------------------- |
-   | `/my-resource`                               | Returns a description of the resource (e.g., table metadata)                       |
-   | `/my-resource/`                              | Trailing slash — represents the full collection; append query parameters to search |
-   | `/my-resource/record-id`                     | A specific record identified by its primary key                                    |
-   | `/my-resource/record-id/`                    | Trailing slash — collection of records with the given id prefix                    |
-   | `/my-resource/record-id/with/multiple/parts` | Record id with multiple path segments                                              |
+   | Path                                         | Description                                                 |
+   | -------------------------------------------- | ----------------------------------------------------------- |
+   | `/my-resource`                               | Returns resource metadata                                   |
+   | `/my-resource/`                              | Collection — all records; append query parameters to search |
+   | `/my-resource/record-id`                     | Specific record by primary key                              |
+   | `/my-resource/record-id/`                    | Collection of records with the given id prefix              |
+   | `/my-resource/record-id/with/multiple/parts` | Record id with multiple path segments                       |
 
-4. **Map HTTP methods to operations**: Each HTTP method maps to a resource method and operation.
-   - **GET** — Retrieve a record or search. Calls `get()`.
+4. **Map operations to HTTP methods**: Each HTTP method maps to a resource method:
+   - **GET** — Retrieve a record or search. Calls `get()`. Responses include an `ETag` header; send `If-None-Match` on subsequent requests to receive `304 Not Modified` when unchanged.
+   - **PUT** — Create or replace a record (upsert). Calls `put(record)`. The stored record exactly matches the submitted body; omitted properties are removed.
+   - **POST** — Create a record without specifying a primary key. Calls `post(data)`. The assigned key is returned in the `Location` response header.
+   - **PATCH** — Partially update a record, merging only provided top-level properties. Calls the resource's patch handler. Merge is **shallow** — nested objects are replaced entirely, not deep-merged.
+   - **DELETE** — Delete a record by id or all records matching a query.
 
-     ```
-     GET /MyTable/123
-     GET /MyTable/?name=Harper
-     GET /MyTable/123.propertyName
-     ```
-
-     Responses include an `ETag` header. Clients may send `If-None-Match` to receive `304 Not Modified` when the record is unchanged.
-
-   - **PUT** — Create or replace a record (upsert). Calls `put(record)`. Properties not in the body are removed.
-
-     ```
-     PUT /MyTable/123
-     Content-Type: application/json
-
-     { "name": "some data" }
-     ```
-
-   - **POST** — Create a new record without specifying a primary key. Calls `post(data)`. The assigned key is returned in the `Location` response header.
-
-     ```
-     POST /MyTable/
-     Content-Type: application/json
-
-     { "name": "some data" }
-     ```
-
-   - **PATCH** — Partially update a record, merging only provided properties. Unspecified properties are preserved.
-
-     ```
-     PATCH /MyTable/123
-     Content-Type: application/json
-
-     { "status": "active" }
-     ```
-
-   - **DELETE** — Delete a record or all records matching a query.
-     ```
-     DELETE /MyTable/123
-     DELETE /MyTable/?status=archived
-     ```
-
-5. **Access the auto-generated OpenAPI spec**: Harper generates an OpenAPI specification for all exported resources. Retrieve it at:
-
-   ```
-   GET /openapi
-   ```
-
-6. **Connect via WebSocket**: When `rest` is enabled, WebSocket support is on by default. Connect to a resource URL to subscribe to change events for that resource.
+5. **Connect via WebSocket**: A WebSocket connection to a resource URL subscribes to that resource and streams change events. See [real-time-apps.md](real-time-apps.md) for full real-time patterns.
 
    ```javascript
    let ws = new WebSocket('wss://server/my-resource/341');
@@ -105,13 +62,17 @@ Apply this rule when adding REST or WebSocket API access to Harper tables or cus
    };
    ```
 
-   Connecting to `wss://server/my-resource/341` accesses the `my-resource` resource with record id `341` and subscribes to it. When the record changes or a message is published to it, the WebSocket connection receives the update.
+6. **Implement a custom `connect()` handler** on a resource class to control WebSocket behavior. The method receives `incomingMessages` and must return an async iterable producing messages to send to the client.
 
-7. **Implement a custom `connect()` handler**: Override `connect(incomingMessages)` on a resource class to control WebSocket behavior. The method must return an async iterable or generator that produces messages to send to the client.
+7. **Retrieve the OpenAPI spec**: Harper auto-generates an OpenAPI specification for all exported resources, available at:
+
+   ```
+   GET /openapi
+   ```
 
 ## Examples
 
-**Simple echo server using an async generator**:
+**Simple echo WebSocket server**:
 
 ```javascript
 export class Echo extends Resource {
@@ -123,7 +84,7 @@ export class Echo extends Resource {
 }
 ```
 
-**Using the default `connect()` with event-style access and a timer**:
+**Custom `connect()` using the default iterable with `send()` and `close` event**:
 
 ```javascript
 export class Example extends Resource {
@@ -147,19 +108,26 @@ export class Example extends Resource {
 }
 ```
 
-**Minimal `config.yaml` enabling REST with WebSocket disabled**:
+**Common REST operations**:
 
-```yaml
-rest:
-  webSocket: false
+```
+GET /MyTable/123
+GET /MyTable/?name=Harper
+PUT /MyTable/123
+PATCH /MyTable/123
+DELETE /MyTable/?status=archived
+```
+
+```json
+{ "name": "some data" }
 ```
 
 ## Notes
 
-- Tables must be explicitly exported using `@export` in the schema — they are not exposed by default.
-- `rest: true` is the minimal configuration to enable both REST and WebSocket support. See [real-time-apps.md](real-time-apps.md) for patterns around real-time WebSocket usage.
-- For full query syntax on `GET` and `DELETE` with query parameters, see [querying-rest-apis.md](querying-rest-apis.md).
-- The default `connect()` returns an iterable with a `send(message)` method and a `close` event for cleanup on disconnect.
-- For MQTT over WebSockets, set the sub-protocol header `Sec-WebSocket-Protocol: mqtt`.
-- In distributed environments, non-retained messages are delivered in the order received per node; retained messages (PUT/updated records) keep only the latest-timestamp version as the winning record across the cluster.
-- Use the `Content-Type` request header to specify body format and the `Accept` header to request a specific response format.
+- `rest: true` is the minimal config to enable both REST and WebSocket support. Set `webSocket: false` under the `rest` key to disable WebSocket only.
+- The `@export` directive in the schema is required for any table to appear as a REST endpoint — tables are not exported by default.
+- PATCH merges are shallow (top-level only). Nested objects in the request body replace the entire existing sub-object. Dot-path keys (e.g., `"settings.theme"`) are stored as literal keys, not interpreted as paths.
+- For MQTT over WebSocket, set the sub-protocol header `Sec-WebSocket-Protocol: mqtt`.
+- In distributed environments, non-retained messages are delivered in arrival order; retained messages (PUT/updated records) keep only the latest timestamp as the winning record.
+- For full query syntax on GET and DELETE, see [querying-rest-apis.md](querying-rest-apis.md).
+- For building real-time features with WebSocket subscriptions, see [real-time-apps.md](real-time-apps.md).

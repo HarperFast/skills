@@ -6,8 +6,8 @@ metadata:
   sources:
     - reference/v5/database/schema.md#Relationships
     - reference/v5/rest/querying.md#Relationships and Joins
-  sourceCommit: 4fe4c9c95e0974eaa77032f6f10e36fbd8ec64ac
-  inputHash: 6953f507f0cde0f7
+  sourceCommit: 3749d0c54be457a2a65d9a63c738a5dc88989ecd
+  inputHash: fd399fd81a88f13e
 ---
 
 # Defining Relationships Between Tables in Harper
@@ -16,17 +16,17 @@ Instructions for the agent to follow when defining and querying relationships be
 
 ## When to Use
 
-Apply this rule whenever a schema requires linking two tables via a foreign key — for example, modeling shows and networks, products and brands, or orders and items. Use it when queries need to filter or select nested related records using dot-syntax.
+Apply this rule when adding foreign key relationships between schema tables, enabling join queries, or returning nested related records in query results. Use it any time a schema type needs to reference records in another table via a foreign key attribute.
 
 ## How It Works
 
-1. **Use `@relationship(from: attribute)` for many-to-one or many-to-many**: Place this on a field in the current table when the foreign key lives in this table and references the primary key of the target table.
+1. **Use `@relationship(from: attribute)` for many-to-one or many-to-many**: Place this on the field in the table that holds the foreign key. The `from` parameter names the attribute on this table that stores the foreign key referencing the target table's primary key.
 
    ```graphql
    type RealityShow @table @export {
    	id: Long @primaryKey
    	networkId: Long @indexed
-   	network: Network @relationship(from: networkId)
+   	network: Network @relationship(from: networkId) # many-to-one
    	title: String @indexed
    }
 
@@ -36,7 +36,7 @@ Apply this rule whenever a schema requires linking two tables via a foreign key 
    }
    ```
 
-   For a many-to-many relationship, make the foreign key an array:
+   If the foreign key attribute is an array, the relationship becomes many-to-many:
 
    ```graphql
    type RealityShow @table @export {
@@ -46,24 +46,24 @@ Apply this rule whenever a schema requires linking two tables via a foreign key 
    }
    ```
 
-2. **Use `@relationship(to: attribute)` for one-to-many or many-to-many**: Place this on a field in the current table when the foreign key lives in the target table and references the primary key of this table. The result type must be an array.
+2. **Use `@relationship(to: attribute)` for one-to-many or many-to-many**: Place this on the table whose primary key is referenced by the foreign key in the target table. The `to` parameter names the attribute on the target table that holds the foreign key. The result type **must** be an array.
 
    ```graphql
    type Network @table @export {
    	id: Long @primaryKey
    	name: String @indexed
-   	shows: [RealityShow] @relationship(to: networkId)
+   	shows: [RealityShow] @relationship(to: networkId) # one-to-many
    }
    ```
 
-3. **Use `@relationship(from: attribute, to: attribute)` for foreign key to foreign key joins**: Specify both `from` and `to` when neither side uses the primary key. This is useful for joining on non-primary-key attributes.
+3. **Use `@relationship(from: attribute, to: attribute)` for foreign key to foreign key joins**: Specify both `from` and `to` when neither side uses the primary key. Harper resolves the relationship by searching the target table's `to` attribute for matches using this record's `from` attribute value. The result type must be an array.
 
    ```graphql
    type OrderItem @table @export {
    	id: Long @primaryKey
    	orderId: Long @indexed
    	productSku: Long @indexed
-   	product: Product @relationship(from: productSku, to: sku)
+   	products: [Product] @relationship(from: productSku, to: sku)
    }
 
    type Product @table @export {
@@ -73,15 +73,14 @@ Apply this rule whenever a schema requires linking two tables via a foreign key 
    }
    ```
 
-4. **Query across relationships using dot-syntax**: Filter by related table attributes using chained dot notation. This behaves as an INNER JOIN.
+4. **Query across relationships using dot-syntax**: Filter records by related table attributes using chained dot notation. This behaves as an INNER JOIN — only records with a matching related record are returned.
 
    ```
-   GET /RealityShow?network.name=Bravo
    GET /Product/?brand.name=Microsoft
    GET /Brand/?products.name=Keyboard
    ```
 
-5. **Select nested relationship fields with `select()`**: Relationship attributes are not included by default. Use `select()` to include them in results. When selecting without a filter on the related table, this acts as a LEFT JOIN — the relationship property is omitted if the foreign key is null or references a non-existent record.
+5. **Include relationship fields in results using `select()`**: Relationship attributes are not returned by default. Use `select()` to include them, optionally specifying nested fields with `{}`.
 
    ```
    GET /Product/?brand.name=Microsoft&select(name,brand)
@@ -89,77 +88,56 @@ Apply this rule whenever a schema requires linking two tables via a foreign key 
    GET /Product/?name=Keyboard&select(name,brand{name,id})
    ```
 
+   When selecting a relationship without filtering on it, Harper performs a LEFT JOIN — the relationship property is omitted if the foreign key is null or references a non-existent record.
+
+6. **Model many-to-many without a junction table**: Store an array of foreign key values and use `@relationship(from: ...)` pointing to that array attribute. The array order of the foreign key values is preserved when resolving the relationship.
+
+   ```graphql
+   type Product @table @export {
+   	id: Long @primaryKey
+   	name: String
+   	resellerIds: [Long] @indexed
+   	resellers: [Reseller] @relationship(from: "resellerIds")
+   }
+   ```
+
+7. **Define self-referential relationships** for parent-child hierarchies by pointing `@relationship` back at the same table type.
+
 ## Examples
 
-**Many-to-one relationship** — a show belongs to a network:
-
-```graphql
-type RealityShow @table @export {
-	id: Long @primaryKey
-	networkId: Long @indexed
-	network: Network @relationship(from: networkId)
-	title: String @indexed
-}
-
-type Network @table @export {
-	id: Long @primaryKey
-	name: String @indexed
-}
-```
-
-Query:
-
-```
-GET /RealityShow?network.name=Bravo
-```
-
-**One-to-many relationship** — a network has many shows:
-
-```graphql
-type Network @table @export {
-	id: Long @primaryKey
-	name: String @indexed
-	shows: [RealityShow] @relationship(to: networkId)
-}
-```
-
-**Many-to-many with array foreign keys** — a product has multiple resellers:
+**Full schema with bidirectional relationships:**
 
 ```graphql
 type Product @table @export {
 	id: Long @primaryKey
 	name: String
-	resellerIds: [Long] @indexed
-	resellers: [Reseller] @relationship(from: resellerIds)
+	brandId: Long @indexed
+	brand: Brand @relationship(from: "brandId")
+}
+
+type Brand @table @export {
+	id: Long @primaryKey
+	name: String
+	products: [Product] @relationship(to: "brandId")
 }
 ```
 
-Query with nested select:
+**Querying with joins and nested select:**
+
+```
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Brand/?products.name=Keyboard
+```
+
+**Many-to-many query with nested select:**
 
 ```
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-**Foreign key to foreign key join** — order item joined on SKU:
-
-```graphql
-type OrderItem @table @export {
-	id: Long @primaryKey
-	orderId: Long @indexed
-	productSku: Long @indexed
-	product: Product @relationship(from: productSku, to: sku)
-}
-
-type Product @table @export {
-	id: Long @primaryKey
-	sku: Long @indexed
-	name: String
-}
-```
-
 ## Notes
 
-- The `@relationship` directive requires the referenced attribute to be `@indexed` on the foreign key side.
-- Self-referential relationships are supported, enabling parent-child hierarchies within a single table.
-- The array order of foreign key values (e.g., `resellerIds`) is preserved when resolving many-to-many relationships.
-- When using `select()` without a filter on the related table, the join behaves as a LEFT JOIN — missing or null foreign keys result in the relationship property being omitted rather than causing an error.
+- Every attribute named in `from` or `to` must exist on the respective table and be annotated with `@indexed` to support join queries.
+- The `to`-only and `from`+`to` forms both require the result field type to be an array (e.g., `[RealityShow]`).
+- The `from`-only form on a non-array attribute produces a many-to-one relationship; on an array attribute it produces many-to-many.
+- Self-referential relationships are supported for hierarchical data within a single table.

@@ -15,7 +15,8 @@
 	"repository": "github:HarperFast/skills",
 	"files": [
 		"dist",
-		"harper-best-practices"
+		"harper-best-practices",
+		"harper-mcp"
 	],
 	"type": "module",
 	"exports": {

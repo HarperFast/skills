@@ -43,9 +43,6 @@ import {
 	SKILL_INDEX_END,
 } from './lib/render.mjs';
 
-const AGENTS_LEAD =
-	'Guidelines for building scalable, secure, and performant applications on Harper. These practices cover everything from initial schema design to advanced deployment strategies.';
-
 const MIN_GENERATED_BODY_CHARS = 200;
 
 function parseArgs(argv) {
@@ -324,7 +321,10 @@ async function checkAgentsRoundTrip(manifest, skill, scope, errors) {
 		}
 	}
 
-	const assembled = assembleAgentsMd(manifest, (slug) => bodies.get(slug), { lead: AGENTS_LEAD });
+	const assembled = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
+		title: skill.agentsTitle,
+		lead: skill.agentsLead,
+	});
 	let expected;
 	try {
 		expected = oxfmtString(assembled);

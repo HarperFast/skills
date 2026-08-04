@@ -24,6 +24,11 @@ const CATEGORY_IMPACT = {
 	api: 'HIGH',
 	logic: 'MEDIUM',
 	ops: 'MEDIUM',
+	// harper-mcp categories
+	setup: 'HIGH',
+	tools: 'HIGH',
+	resources: 'MEDIUM',
+	security: 'HIGH',
 };
 
 // URL-path prefix convention for each category.
@@ -32,6 +37,11 @@ const CATEGORY_PREFIX = {
 	api: 'api-',
 	logic: 'logic-',
 	ops: 'ops-',
+	// harper-mcp categories
+	setup: 'setup-',
+	tools: 'tools-',
+	resources: 'resources-',
+	security: 'ops-',
 };
 
 // Produce the "Rule Categories by Priority" table + "Quick Reference" grouped
@@ -136,10 +146,10 @@ function splitTitle(body) {
 // category in manifest order. Deterministic: same manifest + same rule bodies
 // always produce byte-identical output. `readBody(slug)` returns the rule's
 // body (frontmatter already stripped).
-export function assembleAgentsMd(manifest, readBody, { lead } = {}) {
+export function assembleAgentsMd(manifest, readBody, { title, lead } = {}) {
 	const rules = sortedRules(manifest);
 
-	const out = ['# Harper Best Practices', ''];
+	const out = [`# ${title ?? 'Harper Best Practices'}`, ''];
 	if (lead) out.push(lead.trim(), '');
 
 	// Group rules by category, preserving first-seen category order.

@@ -1191,11 +1191,13 @@ Instructions for the agent to follow when handling user authentication, sessions
 
 #### When to Use
 
-Apply this rule when implementing login/logout flows, protecting Resource endpoints behind authentication checks, issuing or refreshing JWT tokens, or configuring token expiry in a Harper application. Use it alongside [custom-resources.md](custom-resources.md) when building Resource-style auth endpoints.
+Apply this rule when implementing sign-in/sign-out flows, inspecting the current user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Harper endpoint must gate access based on identity or produce credentials for downstream consumers. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.
 
 #### How It Works
 
-1. **Check the current user**: Call `getCurrentUser()` inside any Resource method to retrieve the authenticated user or `undefined` if unauthenticated. Guard protected endpoints by returning a `401` when no user is present.
+##### 1. Inspect the Current User
+
+1. **Call `getCurrentUser()`** inside any Resource method to retrieve the authenticated user for the request, or `undefined` if unauthenticated.
 
    ```javascript
    async get(target) {
@@ -1207,14 +1209,16 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
 
    The returned object exposes `username`, `role`, and `role.permission` flags.
 
-2. **Enable sessions**: To use cookie-based sessions, set `authentication.enableSessions: true` in `harperdb-config.yaml`. This is required before `context.login` or `context.session` will work.
+##### 2. Handle Sessions via `getContext()`
+
+2. **Enable sessions** in `harperdb-config.yaml` before using session-based login:
 
    ```yaml
    authentication:
      enableSessions: true
    ```
 
-3. **Log in and out via context**: Call `getContext()` inside a Resource method to access `context.login` and `context.session`. Use `context.login(username, password)` to verify credentials and establish a session cookie. To end a session, delete it via `context.session.delete(context.session.id)`.
+3. **Call `context.login`** to verify credentials and establish a session cookie:
 
    ```javascript
    export class SignIn extends Resource {
@@ -1228,7 +1232,11 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
    		return new Response('Logged in', { status: 200 });
    	}
    }
+   ```
 
+4. **Delete the session** to sign out:
+
+   ```javascript
    export class SignOut extends Resource {
    	async post() {
    		const context = this.getContext();
@@ -1239,9 +1247,11 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
    }
    ```
 
-   Cookie-based sessions are intended for browser clients. For non-browser clients (CLI tools, mobile apps, service-to-service), use JWT issuance instead (see steps below).
+   Cookie-based sessions are intended for browser clients. For non-browser clients, use JWT issuance (see steps below).
 
-4. **Issue JWT tokens via the Operations API**: Call `create_authentication_tokens` with credentials. No `Authorization` header is required for this operation.
+##### 3. Issue JWT Tokens via the Operations API
+
+5. **Call `create_authentication_tokens`** with credentials. No `Authorization` header is needed for this operation:
 
    ```json
    {
@@ -1251,7 +1261,7 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
    }
    ```
 
-   The response returns an `operation_token` and a `refresh_token`:
+   Response:
 
    ```json
    {
@@ -1260,7 +1270,7 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
    }
    ```
 
-5. **Use the operation token**: Pass the `operation_token` as a `Bearer` token in the `Authorization` header on subsequent requests.
+6. **Pass the `operation_token`** as a `Bearer` token on subsequent requests:
 
    ```bash
    curl --location --request POST 'http://localhost:9925' \
@@ -1275,7 +1285,9 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
      }'
    ```
 
-6. **Refresh an expired operation token**: When the `operation_token` expires, use `refresh_operation_token` with the `refresh_token` as the `Bearer` token to obtain a new one.
+##### 4. Refresh an Expired Operation Token
+
+7. **Call `refresh_operation_token`** using the `refresh_token` as the `Bearer` token when the `operation_token` expires:
 
    ```bash
    curl --location --request POST 'http://localhost:9925' \
@@ -1296,7 +1308,52 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
 
    When both tokens have expired, call `create_authentication_tokens` again with username and password.
 
-7. **Mint tokens from a custom Resource using `server.operation`**: Import `server` from `harper` and invoke `server.operation()` to issue or refresh tokens programmatically from a Resource endpoint. Pass `true` as the third argument (`authorize`) to run the operation as the current authenticated user; omit it or pass `false` when the operation supplies its own credentials.
+##### 5. Mint Scoped Tokens
+
+8. **Issue a scoped token** as a super user by passing an inline `role` object to `create_authentication_tokens`. Do not include `password`. Use `add_role`-style `permission` structure. Set `expires_in` to control lifetime:
+
+   ```json
+   {
+   	"operation": "create_authentication_tokens",
+   	"username": "reporting-service",
+   	"role": {
+   		"permission": {
+   			"operations": ["read_only"],
+   			"dev": {
+   				"tables": {
+   					"dog": {
+   						"read": true,
+   						"insert": false,
+   						"update": false,
+   						"delete": false,
+   						"attribute_permissions": []
+   					}
+   				}
+   			}
+   		}
+   	},
+   	"expires_in": "7d"
+   }
+   ```
+
+   Response:
+
+   ```json
+   {
+   	"operation_token": "<jwt-scoped-token>"
+   }
+   ```
+
+   Key constraints for scoped tokens:
+   - `username` is attribution only and must not match an existing `hdb_user`.
+   - `super_user` and `cluster_user` are always forced to `false` in the embedded role.
+   - No refresh token is issued; no user record is created.
+   - Scoped tokens cannot be revoked before expiry — choose short `expires_in` values in high-security environments.
+   - The permission object is validated at mint time; the resulting token must fit within a 12 KB `Authorization` header.
+
+##### 6. Issue Tokens from a Custom Resource via `server.operation`
+
+9. **Import `server`** and call `server.operation` to mint or refresh tokens programmatically from a Resource:
 
    ```javascript
    import { Resource, server } from 'harper';
@@ -1340,20 +1397,52 @@ Apply this rule when implementing login/logout flows, protecting Resource endpoi
    }
    ```
 
-8. **Configure token expiry**: Set `operationTokenTimeout` and `refreshTokenTimeout` under the `authentication` key in `harper-config.yaml`. Values follow the `jsonwebtoken` package duration string format (e.g., `1d`, `12h`, `60m`).
+   Pass `true` as the third argument to `server.operation` when the operation should run as the current authenticated user. Omit it (or pass `false`) when the operation supplies its own credentials.
 
-   ```yaml
-   authentication:
-     operationTokenTimeout: 1d # Default: 1 day
-     refreshTokenTimeout: 30d # Default: 30 days
-   ```
+##### 7. Configure Token Expiry
+
+10. **Set token timeouts** in `harper-config.yaml` under the `authentication` section:
+
+    ```yaml
+    authentication:
+      operationTokenTimeout: 1d # Default: 1 day
+      refreshTokenTimeout: 30d # Default: 30 days
+    ```
+
+    Duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
 
 #### Examples
 
-**Full JWT issuance flow via cURL:**
+**Full sign-in/sign-out Resource pair with session:**
+
+```javascript
+import { Resource } from 'harper';
+
+export class SignIn extends Resource {
+	async post(_target, data) {
+		const context = this.getContext();
+		try {
+			await context.login(data.username, data.password);
+		} catch {
+			return new Response('Invalid credentials', { status: 403 });
+		}
+		return new Response('Logged in', { status: 200 });
+	}
+}
+
+export class SignOut extends Resource {
+	async post() {
+		const context = this.getContext();
+		if (!context.session) return new Response(null, { status: 401 });
+		await context.session.delete(context.session.id);
+		return new Response('Logged out', { status: 200 });
+	}
+}
+```
+
+**Mint tokens via cURL:**
 
 ```bash
-# Step 1: Get tokens
 curl --location --request POST 'http://localhost:9925' \
   --header 'Content-Type: application/json' \
   --data-raw '{
@@ -1361,20 +1450,11 @@ curl --location --request POST 'http://localhost:9925' \
     "username": "username",
     "password": "password"
   }'
+```
 
-# Step 2: Use the operation_token
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <operation_token>' \
-  --data-raw '{
-    "operation": "search_by_hash",
-    "schema": "dev",
-    "table": "dog",
-    "hash_values": [1],
-    "get_attributes": ["*"]
-  }'
+**Refresh an operation token via cURL:**
 
-# Step 3: Refresh when expired
+```bash
 curl --location --request POST 'http://localhost:9925' \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Bearer <refresh_token>' \
@@ -1385,11 +1465,11 @@ curl --location --request POST 'http://localhost:9925' \
 
 #### Notes
 
-- `getCurrentUser()` and `getContext()` are instance methods available inside Resource method bodies.
-- `context.login` and `context.session` are only available when `enableSessions: true` is set in `harperdb-config.yaml`.
-- Cookie-based sessions are for browser clients only. Use JWT tokens (`create_authentication_tokens`) for non-browser clients.
-- `server.operation` is the programmatic equivalent of the Operations API — use it inside Resources to avoid exposing raw operation endpoints. See [custom-resources.md](custom-resources.md) for Resource authoring patterns.
-- When both the `operation_token` and `refresh_token` have expired, re-authenticate with `create_authentication_tokens` using username and password.
+- Always use HTTPS in production to protect tokens in transit. Tokens must be treated like passwords.
+- If a token is compromised, it remains valid until expiry. Use shorter `operationTokenTimeout` values in high-security environments.
+- `enableSessions` must be `true` in `harperdb-config.yaml` for `context.login` and `context.session` to function.
+- Scoped tokens are not tied to a user row; rotating the instance's JWT keys is the only way to invalidate them before `expires_in` elapses.
+- In mixed-version clusters, only nodes with scoped-token support accept scoped tokens; older nodes return 401.
 
 ## 3. Logic & Extension
 

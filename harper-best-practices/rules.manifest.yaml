@@ -207,9 +207,25 @@ rules:
       - path: reference/v5/resources/resource-api.md
         section: 'Session and Login from a Resource'
         role: primary
-      # JWT half. Sectioned deliberately: as a whole-file `supplemental` this
-      # collapsed to a single "use JWT instead" pointer, dropping the token
-      # issue/refresh flow entirely. The must_cover anchors below are the gate.
+      # JWT half. Sectioned *and* anchored deliberately.
+      #
+      # The generator concatenates every resolved source into one unlabeled
+      # blob (lib/sources.mjs `resolveSources`) and the system prompt tells the
+      # model to "keep it tight" and omit tangential detail. So whatever no
+      # `must_cover` anchor requires is exactly what gets compressed away —
+      # anchor starvation, not source ordering or size. As a whole-file source
+      # with no JWT anchors, this half collapsed to a single "use JWT instead"
+      # pointer and lost the token issue/refresh flow entirely.
+      #
+      # `must_cover` is the actual gate: it is enforced verbatim
+      # (validate-generated.mjs, `body.includes(must)`) and is echoed to the
+      # model as a hard requirement. `section:` only narrows what gets fed in —
+      # it helps because it tends to come with anchors, not on its own. Prefer
+      # identifier-shaped anchors that occur in exactly one sourced section; an
+      # anchor matching many sections gates nothing in particular.
+      #
+      # `role:` is a human-facing annotation only — the generator never reads
+      # it (it is enum-checked by the validator and otherwise unused).
       - path: reference/v5/security/jwt-authentication.md
         section: 'Create Authentication Tokens'
         role: primary
@@ -220,10 +236,16 @@ rules:
         section: 'Refreshing the Operation Token'
         role: primary
       - path: reference/v5/security/jwt-authentication.md
+        section: 'Scoped Tokens (Inline Role)'
+        role: primary
+      - path: reference/v5/security/jwt-authentication.md
         section: 'Issuing Tokens from a Custom Resource'
         role: primary
       - path: reference/v5/security/jwt-authentication.md
         section: 'Token Expiry Configuration'
+        role: supplemental
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'Security Notes'
         role: supplemental
     must_cover:
       # Session half.
@@ -231,11 +253,20 @@ rules:
       - 'getContext()'
       - 'context.login'
       - 'enableSessions'
-      # JWT half.
+      # JWT half. One anchor per sourced section wherever an identifier is
+      # unique to it: `server.operation` pins the custom-resource section,
+      # `add_role`/`expires_in` the scoped-token section, `HTTPS` the security
+      # notes (`operationTokenTimeout` alone no longer distinguishes those two,
+      # since it occurs in both). `create_authentication_tokens` is the one
+      # unavoidably broad anchor — it is the subject of its own section but is
+      # back-referenced by three others, so it gates presence, not depth.
       - 'create_authentication_tokens'
       - 'refresh_operation_token'
       - 'server.operation'
+      - 'add_role'
+      - 'expires_in'
       - 'operationTokenTimeout'
+      - 'HTTPS'
     cross_links:
       - custom-resources
 

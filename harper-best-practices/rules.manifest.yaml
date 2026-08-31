@@ -207,13 +207,35 @@ rules:
       - path: reference/v5/resources/resource-api.md
         section: 'Session and Login from a Resource'
         role: primary
+      # JWT half. Sectioned deliberately: as a whole-file `supplemental` this
+      # collapsed to a single "use JWT instead" pointer, dropping the token
+      # issue/refresh flow entirely. The must_cover anchors below are the gate.
       - path: reference/v5/security/jwt-authentication.md
+        section: 'Create Authentication Tokens'
+        role: primary
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'Using the Operation Token'
+        role: supplemental
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'Refreshing the Operation Token'
+        role: primary
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'Issuing Tokens from a Custom Resource'
+        role: primary
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'Token Expiry Configuration'
         role: supplemental
     must_cover:
+      # Session half.
       - 'getCurrentUser()'
       - 'getContext()'
       - 'context.login'
       - 'enableSessions'
+      # JWT half.
+      - 'create_authentication_tokens'
+      - 'refresh_operation_token'
+      - 'server.operation'
+      - 'operationTokenTimeout'
     cross_links:
       - custom-resources
 

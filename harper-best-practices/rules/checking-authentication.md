@@ -9,137 +9,48 @@ metadata:
       undefined`
     - reference/v5/resources/resource-api.md#Session and Login from a Resource
     - reference/v5/security/jwt-authentication.md
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: fdd9ec3b11011490
+  sourceCommit: 677ad213d67822e109c83619e181ca23a59823db
+  inputHash: bc60a8c93d0f829b
 ---
 
 # Checking Authentication
 
-Instructions for the agent to follow when handling user authentication and session management inside Harper Resources.
+Instructions for the agent to handle user authentication and session management within Harper Resources.
 
 ## When to Use
 
-Apply this rule when implementing authentication checks, login/logout flows, or token issuance inside a custom Resource. Use it any time a Resource needs to identify the current user, establish a session, or issue JWTs to clients. See [custom-resources.md](custom-resources.md) for the general Resource authoring pattern.
+Apply this rule when implementing authentication checks, login/logout flows, or session handling inside a custom Resource. Use it whenever a Resource needs to identify the current user, guard endpoints behind authentication, or establish/destroy cookie-based sessions. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.
 
 ## How It Works
 
-1. **Check the current user** with `getCurrentUser()`. Call it inside any Resource method to retrieve the authenticated user or `undefined` if no user is authenticated. Guard protected endpoints by returning a `401` when the result is `undefined`.
+1. **Check the current user with `getCurrentUser()`**: Call `this.getCurrentUser()` inside any Resource method to retrieve the authenticated user for the request. Returns `undefined` if no user is authenticated. The returned object exposes `username`, `role`, and `role.permission` flags.
 
    ```javascript
    async get(target) {
-     const user = this.getCurrentUser();
-     if (!user) return new Response(null, { status: 401 });
-     return { username: user.username, role: user.role };
+       const user = this.getCurrentUser();
+       if (!user) return new Response(null, { status: 401 });
+       return { username: user.username, role: user.role };
    }
    ```
 
-   The returned object exposes `username`, `role`, and `role.permission` flags.
+2. **Access login and session via `getContext()`**: Call `this.getContext()` to obtain the request context. The context exposes `context.login` and `context.session` for sign-in and sign-out flows.
 
-2. **Enable sessions** before using session-based login. Set `authentication.enableSessions: true` in `harperdb-config.yaml`:
+3. **Enable sessions in config**: Sessions require `authentication.enableSessions: true` in `harperdb-config.yaml` before `context.login` or `context.session` will function.
 
    ```yaml
    authentication:
      enableSessions: true
    ```
 
-3. **Access login and session helpers** via `getContext()`. The context object exposes `context.login` and `context.session` for sign-in/out flows.
-   - Call `context.login(username, password)` to verify credentials and establish a session cookie on success.
-   - To end a session, delete it via `context.session.delete(context.session.id)`.
+4. **Implement login**: Call `context.login(username, password)` to verify credentials and establish a session cookie on success. Catch errors and return a `403` on failure.
 
-4. **Implement sign-in and sign-out Resources** using the context helpers:
+5. **Implement logout**: Access `context.session` to check for an active session, then call `context.session.delete(context.session.id)` to end it.
 
-   ```javascript
-   export class SignIn extends Resource {
-   	async post(_target, data) {
-   		const context = this.getContext();
-   		try {
-   			await context.login(data.username, data.password);
-   		} catch {
-   			return new Response('Invalid credentials', { status: 403 });
-   		}
-   		return new Response('Logged in', { status: 200 });
-   	}
-   }
-
-   export class SignOut extends Resource {
-   	async post() {
-   		const context = this.getContext();
-   		if (!context.session) return new Response(null, { status: 401 });
-   		await context.session.delete(context.session.id);
-   		return new Response('Logged out', { status: 200 });
-   	}
-   }
-   ```
-
-5. **Issue JWTs for non-browser clients** (CLI tools, mobile apps, service-to-service). Cookie-based sessions are intended for browser clients. For other clients, mint tokens programmatically using `server.operation()`:
-
-   ```javascript
-   import { Resource, server } from 'harper';
-
-   export class IssueTokens extends Resource {
-   	static async get(_target, context) {
-   		const { operation_token, refresh_token } = await server.operation(
-   			{ operation: 'create_authentication_tokens' },
-   			context,
-   			true,
-   		);
-   		return { operation_token, refresh_token };
-   	}
-
-   	static async post(_target, data) {
-   		const { username, password } = await data;
-   		if (!username || !password) {
-   			return new Response('username and password required', { status: 400 });
-   		}
-   		const { operation_token, refresh_token } = await server.operation({
-   			operation: 'create_authentication_tokens',
-   			username,
-   			password,
-   		});
-   		return { operation_token, refresh_token };
-   	}
-   }
-
-   export class RefreshJWT extends Resource {
-   	static async post(_target, data) {
-   		const { refresh_token } = await data;
-   		if (!refresh_token) {
-   			return new Response('refresh_token required', { status: 400 });
-   		}
-   		const { operation_token } = await server.operation({
-   			operation: 'refresh_operation_token',
-   			refresh_token,
-   		});
-   		return { operation_token };
-   	}
-   }
-   ```
-
-   Pass `true` as the third argument to `server.operation()` when the operation should run as the current authenticated user. Omit it or pass `false` when the operation supplies its own credentials.
-
-6. **Configure JWT token expiry** in `harperdb-config.yaml` under the `authentication` section:
-
-   ```yaml
-   authentication:
-     operationTokenTimeout: 1d
-     refreshTokenTimeout: 30d
-   ```
-
-   Duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
+6. **Choose the right auth mechanism for your client**: Cookie-based sessions are intended for browser clients. For non-browser clients (CLI tools, mobile apps, service-to-service), use JWT issuance instead.
 
 ## Examples
 
-**Protecting a resource endpoint and returning user info:**
-
-```javascript
-async get(target) {
-  const user = this.getCurrentUser();
-  if (!user) return new Response(null, { status: 401 });
-  return { username: user.username, role: user.role };
-}
-```
-
-**Full session-based sign-in/sign-out flow:**
+### Sign-in and sign-out Resources
 
 ```javascript
 export class SignIn extends Resource {
@@ -164,27 +75,19 @@ export class SignOut extends Resource {
 }
 ```
 
-**JWT token refresh endpoint:**
+### Guarding a GET endpoint with `getCurrentUser()`
 
 ```javascript
-export class RefreshJWT extends Resource {
-	static async post(_target, data) {
-		const { refresh_token } = await data;
-		if (!refresh_token) {
-			return new Response('refresh_token required', { status: 400 });
-		}
-		const { operation_token } = await server.operation({
-			operation: 'refresh_operation_token',
-			refresh_token,
-		});
-		return { operation_token };
-	}
+async get(target) {
+    const user = this.getCurrentUser();
+    if (!user) return new Response(null, { status: 401 });
+    return { username: user.username, role: user.role };
 }
 ```
 
 ## Notes
 
-- `getCurrentUser()` and `getContext()` are instance methods; call them with `this` inside non-static Resource methods.
-- `enableSessions` must be `true` in config before `context.login` or `context.session` will function.
-- Cookie-based sessions target browser clients. Use JWT issuance via `server.operation()` for all other client types.
-- When both `operation_token` and `refresh_token` have expired, the client must call `create_authentication_tokens` again with credentials.
+- `getCurrentUser()` returns `undefined` for unauthenticated requests — always guard against this before accessing user properties.
+- `context.login` establishes a session cookie; the client must support cookies for this flow to work.
+- `enableSessions` must be set in `harperdb-config.yaml` or session-based login will not function.
+- Cookie-based sessions are for browser clients only. For non-browser clients, use JWT-based authentication via `create_authentication_tokens` or a custom token-issuing Resource.

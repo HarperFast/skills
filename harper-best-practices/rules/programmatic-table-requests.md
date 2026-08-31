@@ -14,8 +14,8 @@ metadata:
       reference/v5/resources/resource-api.md#`addTo(property: string, value:
       number)`
     - reference/v5/components/javascript-environment.md#Module Loading
-  sourceCommit: 3749d0c54be457a2a65d9a63c738a5dc88989ecd
-  inputHash: ace5c3f4a0ad4519
+  sourceCommit: 677ad213d67822e109c83619e181ca23a59823db
+  inputHash: ce2181ecade6522f
 ---
 
 # Programmatic Table Requests
@@ -24,11 +24,11 @@ Instructions for the agent to interact with Harper tables programmatically using
 
 ## When to Use
 
-Apply this rule when writing server-side code that reads from or writes to Harper tables directly — for example, in request handlers, background jobs, or SSR rendering — without going through the REST API. Use it whenever you need to construct queries with `conditions`, `select`, `sort`, or `search(`.
+Apply this rule when writing server-side Harper code that reads, writes, or queries table data directly — for example, in HTTP handlers, background jobs, or SSR entry points. Use it whenever you need to construct a `search()` query with `conditions`, `select`, `sort`, or other query parameters, or when you need to perform CRDT-safe mutations with `addTo`.
 
 ## How It Works
 
-1. **Import `tables`**: Pull `tables` from the `harper` package. Each property on `tables` corresponds to a table defined in `schema.graphql`.
+1. **Import `tables`**: Import from the `harper` package. Each table defined in `schema.graphql` with `@table` is available as a property.
 
    ```javascript
    import { tables } from 'harper';
@@ -36,17 +36,7 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    // same as: databases.data.Product
    ```
 
-2. **Define your schema**: Declare tables with `@table` in `schema.graphql`. Each type becomes a property on `tables`.
-
-   ```graphql
-   type Product @table {
-   	id: Long @primaryKey
-   	name: String
-   	price: Float
-   }
-   ```
-
-3. **Create and modify records**: Use `create`, `patch`, and `get` for basic CRUD.
+2. **Create, patch, and retrieve records**: Use `create`, `patch`, and `get` on the table class.
 
    ```javascript
    const created = await Product.create({ name: 'Shirt', price: 9.5 });
@@ -54,18 +44,18 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    const record = await Product.get(created.id);
    ```
 
-4. **Query with `search(`**: Pass a query object to `Product.search(query)`. It returns an async iterable.
+3. **Query with `search(` and `conditions`**: Pass a query object to `search()`. The `conditions` array filters records.
 
    ```javascript
    const query = {
    	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
    };
    for await (const record of Product.search(query)) {
-   	// process record
+   	// ...
    }
    ```
 
-5. **Build `conditions`**: Each condition object filters records. Nest conditions with `operator` for boolean logic.
+   Each condition object supports these properties:
 
    | Property     | Description                                                                                                                                              |
    | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,29 +65,28 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    | `conditions` | Nested conditions array                                                                                                                                  |
    | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
 
-6. **Use `select`** to control which properties are returned. Accepts an array of property names, a string for a single property, or nested objects for relationships.
+4. **Use `select` to shape results**: Pass `select` in the query object to control which properties are returned.
+   - Array of names: `['name', 'price']`
+   - Single string: `'id'`
+   - Nested select for relationships: `[{ name: 'brand', select: ['id', 'name'] }]`
+   - Special properties: `$id`, `$updatedtime`, `$distance`
 
    ```javascript
-   // Array of names
-   Product.search({ select: ['name', 'price'] });
-
-   // Nested relationship select
-   Book.get({ id: 42, select: ['id', 'title', { name: 'author', select: ['name'] }] });
+   const book = await Book.get({
+   	id: 42,
+   	select: ['id', 'title', { name: 'author', select: ['name'] }],
+   });
    ```
 
-   Special `select` values:
-   - `$id` — returns the primary key regardless of its name
-   - `$updatedtime` — returns the last-updated timestamp
-   - `$distance` — returns the computed distance when querying a vector index
+5. **Sort results**: Include a `sort` object in the query. The `attribute` must be `@indexed`, or at least one `conditions` entry must be present.
 
-7. **Use `addTo`** for concurrent-safe numeric increments (CRDT incrementation, safe across threads and nodes).
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
 
-   ```javascript
-   const record = await Product.update(target.id);
-   record.addTo('quantity', -1);
-   ```
-
-8. **Apply `sort`, `limit`, and `offset`** for ordering and pagination. A `sort` attribute must be `@indexed`, or at least one `conditions` entry must be present. Pass `allowFullScan: true` to permit an unconditional ordered scan.
+   To iterate a whole table in primary-key order, add an open-ended range condition:
 
    ```javascript
    Product.search({
@@ -106,15 +95,22 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    });
    ```
 
-   | Sort property | Description                                                |
-   | ------------- | ---------------------------------------------------------- |
-   | `attribute`   | Property name (or array for chained relationship property) |
-   | `descending`  | Sort descending if `true` (default: `false`)               |
-   | `next`        | Secondary sort to resolve ties (same structure)            |
+   Pass `allowFullScan: true` to permit an unconditional ordered scan without conditions.
+
+6. **Perform CRDT-safe increments with `addTo`**: Use `addTo` on a mutable resource instance to safely increment or decrement a numeric property across concurrent threads and nodes.
+
+   ```javascript
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1); // decrement safely across nodes
+   }
+   ```
+
+7. **Scope destructive operations carefully**: `update`, `patch`, and `delete` operate directly on stored data. Always scope with specific `conditions`, validate the affected set before writing, and gate behind authorization controls.
 
 ## Examples
 
-**Nested conditions with `or`:**
+**Nested conditions with `operator: 'or'`:**
 
 ```javascript
 Product.search({
@@ -131,25 +127,34 @@ Product.search({
 });
 ```
 
-**Chained attribute reference (relationship join):**
+**Chained attribute reference for relationships:**
 
 ```javascript
 Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
 ```
 
-**Deep nested `select` across multiple relationships:**
+**Selecting nested related records:**
 
 ```javascript
-Product.search({
-	select: [
-		'id',
-		'name',
-		{ name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] },
-	],
+// Whole related record
+const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
+book.author.name;
+
+// Partial related record
+const book = await Book.get({
+	id: 42,
+	select: ['id', 'title', { name: 'author', select: ['name'] }],
 });
+
+// Multi-level nesting
+select: [
+	'id',
+	'name',
+	{ name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] },
+];
 ```
 
-**SSR usage — read directly from `tables` in a render function:**
+**SSR usage:**
 
 ```typescript
 import { tables } from 'harper';
@@ -162,9 +167,10 @@ export async function render(url: string): Promise<string> {
 
 ## Notes
 
-- Scope destructive operations (`update`, `patch`, `delete`) with specific `conditions` and validate the affected set before writing. These operate on live data and are not easily reversible.
-- Sorting by a bare `@primaryKey` with no conditions raises `HdbError: <attribute> is not indexed and not combined with any other conditions`. Add an open-ended condition or pass `allowFullScan: true`.
-- Selecting a relationship field without filtering on it behaves as a **LEFT JOIN**. Adding a condition on a related attribute (e.g. `attribute: ['author', 'name']`) behaves as an **INNER JOIN**.
-- A to-many relationship resolves to an array; `await` the property before iterating when needed.
-- `tables` and `databases.data` reference the same live objects — a record written through one component is immediately visible to all others.
+- `tables` is shorthand for `databases.data` — both reference the same live, process-wide objects.
+- Calls through `tables` run in a trusted server-side context and do **not** automatically apply the target table's role permissions.
+- Selecting a relationship without filtering on it behaves as a **LEFT JOIN**; adding a condition on a related attribute behaves as an **INNER JOIN**.
+- A non-indexed `sort` attribute with zero `conditions` raises `HdbError: <attribute> is not indexed and not combined with any other conditions`. The bare `@primaryKey` is treated as not indexed for this purpose.
+- Use `explain: true` in the query object to see conditions reordered as Harper will execute them (debugging/optimization).
+- Use `enforceExecutionOrder: true` to force conditions to execute in the supplied order, disabling automatic re-ordering.
 - Keep `harper` external when bundling for SSR (e.g. `ssr: { external: ['harper'] }` in `vite.config`) so it resolves to the runtime.

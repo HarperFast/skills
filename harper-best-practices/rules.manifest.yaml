@@ -149,14 +149,61 @@ rules:
     order: 1
     mode: generate
     sources:
+      # overview.md is sourced section-by-section rather than whole-file: at
+      # ~15KB it was the largest single input in the skill, and the compression
+      # dropped conditional requests, content negotiation, and the `GET`
+      # caveats outright. Listing sections narrows the input and makes a docs
+      # rename fail loudly in sliceSection. The dropped headings are the
+      # `# REST Overview` preamble (marketing + a version badge) and
+      # `## See Also` (link list); `## OpenAPI` is kept because the rule
+      # documents `GET /openapi`.
       - path: reference/v5/rest/overview.md
+        section: 'How the REST Interface Works'
         role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'Configuration'
+        role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'Tables and Their Automatic Endpoints'
+        role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'URL Structure'
+        role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'HTTP Methods'
+        role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'Content Types'
+        role: primary
+      - path: reference/v5/rest/overview.md
+        section: 'OpenAPI'
+        role: supplemental
       - path: reference/v5/rest/websockets.md
         role: supplemental
     must_cover:
       - 'rest: true'
       - '@export'
       - 'WebSocket'
+      # Each of the following occurs exactly once across the sourced sections,
+      # so each pins one previously-dropped section:
+      #   If-None-Match / 304 Not Modified → `#### Conditional Requests and Caching`
+      #   `Accept`                         → `## Content Types` (bare `Accept`
+      #     would be satisfied by the SSE `Accept: text/event-stream` mention
+      #     under `## Tables and Their Automatic Endpoints`, which gates nothing)
+      #   .msgpack                         → the reserved content-type selector
+      #     suffixes and the undeclared-property caveat in `### GET`
+      - 'If-None-Match'
+      - '304 Not Modified'
+      - 'ETag'
+      - '`Accept`'
+      - '.msgpack'
+      # Pinned after the first regen dropped them while restoring the three
+      # sections above — an unanchored fact is only ever one regen from being
+      # compressed away, whichever fact it is:
+      #   Location (2×)     → the primary key POST returns in that header
+      #   @updatedTime (1×) → the three exceptions PUT always applies
+      - 'Location'
+      - '@updatedTime'
     cross_links:
       - querying-rest-apis
       - real-time-apps
@@ -346,6 +393,36 @@ rules:
       - 'search('
       - 'addTo'
       - 'select'
+      # Query Object options that were covered before the transaction material
+      # was pinned, and that the regen then compressed out to make room. They
+      # are anchored now rather than left to survive on luck; each occurs only
+      # in § Query Object. `sort` also carries the `@indexed`-or-`conditions`
+      # requirement and `allowFullScan`, which have no meaning without it.
+      - 'sort'
+      - '@indexed'
+      - 'explain'
+      - 'enforceExecutionOrder'
+      # The `transaction(context?, callback)` source was already declared with a
+      # `section:` and was still dropped in full — proof that sectioning narrows
+      # the input but does not hold content in. Only an anchor does. Each of
+      # these occurs in exactly one sourced section:
+      #   transaction() (2×)     → § `transaction(context?, callback)`
+      #   resetReadSnapshot() (1×) → its `### Transaction Object` member table
+      #   atomicity (1×)         → `### Transaction Scope and Atomicity`
+      #   limit / offset (1× each) → § Query Object, the pagination pair
+      # Balanced parens deliberately: anchoring the bare `transaction(` also
+      # gates the section, but the model satisfies it literally and writes
+      # prose like "wrap background work in `transaction(`". `transaction()`
+      # contains `transaction(`, so it is the stricter anchor as well.
+      - 'transaction()'
+      - 'resetReadSnapshot()'
+      - 'atomicity'
+      - 'limit'
+      - 'offset'
+      # § Module Loading's one piece of actionable build guidance: keep `harper`
+      # external when bundling for SSR, or it is bundled instead of resolving
+      # to the runtime. Only occurrence of `vite.config` in the sources.
+      - 'vite.config'
 
   - rule: typescript-type-stripping
     description: How to run TypeScript files directly in Harper without a build step.
@@ -400,6 +477,28 @@ rules:
     must_cover:
       - 'harper deploy'
       - 'harper login'
+      # `### Provisioning a Deploy Credential` is already inside the sourced
+      # `## Remote Management` slice, and its security guidance was compressed
+      # away anyway. These anchors pin it; each occurs only in that slice:
+      #   fine-grained (2×) → prefer a fine-grained PAT over the `gh` CLI token
+      #   read:org (1×)     → the account-wide scopes the `gh` token carries
+      #   enc:v1: (1×)      → the client-side-encryption envelope
+      # They double as the rename detector for that subheading: if it is
+      # retitled or removed, the content goes and these anchors fail.
+      - 'fine-grained'
+      - 'Contents: Read-only'
+      - 'read:org'
+      - 'enc:v1:'
+      # Pinned after the first regen dropped it while restoring the credential
+      # guidance: `refs/heads/*` and `refs/tags/*` (or a bare branch/tag) are
+      # the only refs a `by_ref` deploy can fetch.
+      - 'refs/tags'
+      # Also pinned after a regen dropped it: `setup=true` calls
+      # `get_secrets_public_key` / `set_secret` / `grant_secret`, so it must be
+      # run with an administrative credential, not the CI identity it
+      # provisions for. The source escapes it as `super\_user`; every generated
+      # body so far unescapes, so the anchor is the unescaped form.
+      - 'super_user'
     cross_links:
       - creating-a-fabric-account-and-cluster
 
@@ -475,6 +574,9 @@ rules:
       - 'moduleLoader'
       - 'lockdown'
       - 'Table.get'
+      # `## Response Objects` had no anchor and was dropped in full. Every
+      # occurrence of `headers` in the whole-file source is in that section.
+      - 'headers'
 
   - rule: delegating-to-the-built-in-agent
     description: How to delegate tasks to Harper's built-in agent via the CLI and the agent operations API.

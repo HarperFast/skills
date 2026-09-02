@@ -14,9 +14,15 @@
 // Layer 1 (basic skill schema) is handled separately by validate-skills.mjs.
 //
 // Some Layer 4 checks need the docs build output (source-exists,
-// byte-identical). Pass --docs-path <docs-checkout> to enable them; without
-// it they are skipped with a note. CI runs with --docs-path; a bare local
+// byte-identical, fact-retention). Pass --docs-path <docs-checkout> to enable
+// them; without it they are skipped with a note. A bare local
 // `npm run validate` runs everything that doesn't require docs.
+//
+// Note on where the gate bites: the auto-sync workflow's Validate step passes
+// --docs-path, so fact-retention blocks a lossy regeneration before it opens
+// or updates the sync PR. The PR-time validate-skills workflow runs plain
+// `npm run validate` with no docs checkout, so a green check there does NOT
+// mean retention was verified.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -553,7 +559,7 @@ async function main() {
 	}
 	const docsNote = docsBuildDir
 		? ''
-		: ' (source-exists / byte-identical checks skipped — no --docs-path)';
+		: ' (source-exists / byte-identical / fact-retention checks skipped — no --docs-path)';
 	console.log(
 		`✓ validate-generated: manifest, frontmatter, AGENTS.md, and SKILL.md checks passed${docsNote}`,
 	);

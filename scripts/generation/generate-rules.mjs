@@ -18,6 +18,8 @@
 //   --docs-path <dir>  Path to the docs repo checkout (default: ../documentation,
 //                      or DOCS_PATH env). The build output is <docs-path>/build.
 //   --rule <slug>      Only (re)generate this one rule. Useful for local iteration.
+//                      AGENTS.md and the SKILL.md index are still reassembled from
+//                      the on-disk rule bodies, so the result is committable.
 //   --force            Regenerate even if the input hash is unchanged.
 //
 // Environment:
@@ -94,6 +96,10 @@ async function main() {
 	let changed = 0;
 	let skipped = 0;
 	let synthesized = 0;
+	// Whether `--rule <slug>` matched an entry in *any* skill's manifest. A slug
+	// lives in exactly one manifest, so the not-found check cannot be made per
+	// skill — it belongs after the loop over SKILLS.
+	let ruleMatched = false;
 	let totalUsage = { input: 0, output: 0, cacheRead: 0 };
 
 	for (const skill of SKILLS) {
@@ -103,10 +109,7 @@ async function main() {
 			? manifest.rules.filter((r) => r.rule === args.rule)
 			: sortedRules(manifest);
 
-		if (args.rule && rules.length === 0) {
-			console.error(`Rule "${args.rule}" not found in ${skill.manifestFile}`);
-			process.exit(1);
-		}
+		if (args.rule && rules.length > 0) ruleMatched = true;
 
 		for (const entry of rules) {
 			const filePath = path.join(rulesDir, `${entry.rule}.md`);
@@ -173,6 +176,14 @@ async function main() {
 		skill.__rulesDir = rulesDir;
 	}
 
+	// Unknown --rule slug: nothing was written, so exit before the formatting
+	// and reassembly phases below.
+	if (args.rule && !ruleMatched) {
+		const manifests = SKILLS.map((s) => path.join(s.dir, s.manifestFile)).join(', ');
+		console.error(`Rule "${args.rule}" not found in any manifest (${manifests})`);
+		process.exit(1);
+	}
+
 	// Format the generated rule files first, so AGENTS.md is assembled from the
 	// final (formatted) rule bodies. This keeps the validator's round-trip check
 	// exact: it assembles from the same formatted bodies and re-runs oxfmt.
@@ -182,67 +193,68 @@ async function main() {
 		console.warn(`Could not run formatter after generation: ${err.message}`);
 	}
 
-	// Reassemble AGENTS.md from the formatted rule bodies (skip on single-rule
-	// runs — AGENTS.md is regenerated on the next full run).
-	if (!args.rule) {
-		for (const skill of SKILLS) {
-			const manifest = skill.__manifest ?? (await loadManifest(skill));
-			const rulesDir = skill.__rulesDir ?? path.join(process.cwd(), skill.dir, skill.rulesDir);
-			const bodies = new Map();
-			for (const entry of manifest.rules) {
-				const raw = await fs.readFile(path.join(rulesDir, `${entry.rule}.md`), 'utf-8');
-				bodies.set(entry.rule, bodyOf(raw));
-			}
-			const agentsMd = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
-				title: skill.agentsTitle,
-				lead: skill.agentsLead,
-			});
-			const agentsPath = path.join(process.cwd(), skill.dir, skill.agentsFile);
-			await fs.writeFile(agentsPath, agentsMd, 'utf-8');
-			// Format AGENTS.md itself so the committed file equals
-			// oxfmt(assemble(formatted bodies)) — the exact value the validator
-			// recomputes for its round-trip equality check. execFileSync (no
-			// shell) avoids any quoting concern with the path argument.
-			try {
-				execFileSync('npx', ['oxfmt', agentsPath], { stdio: 'inherit' });
-			} catch (err) {
-				console.warn(`Could not format ${skill.agentsFile}: ${err.message}`);
-			}
+	// Reassemble AGENTS.md from the formatted rule bodies. This runs on
+	// single-rule runs too: it is a pure function of the on-disk rule bodies plus
+	// the manifest, so it is cheap and idempotent, and the validator asserts
+	// AGENTS.md is an exact round-trip of those bodies — skipping it would leave
+	// a `--rule` run in a state that cannot be committed.
+	for (const skill of SKILLS) {
+		const manifest = skill.__manifest ?? (await loadManifest(skill));
+		const rulesDir = skill.__rulesDir ?? path.join(process.cwd(), skill.dir, skill.rulesDir);
+		const bodies = new Map();
+		for (const entry of manifest.rules) {
+			const raw = await fs.readFile(path.join(rulesDir, `${entry.rule}.md`), 'utf-8');
+			bodies.set(entry.rule, bodyOf(raw));
+		}
+		const agentsMd = assembleAgentsMd(manifest, (slug) => bodies.get(slug), {
+			title: skill.agentsTitle,
+			lead: skill.agentsLead,
+		});
+		const agentsPath = path.join(process.cwd(), skill.dir, skill.agentsFile);
+		await fs.writeFile(agentsPath, agentsMd, 'utf-8');
+		// Format AGENTS.md itself so the committed file equals
+		// oxfmt(assemble(formatted bodies)) — the exact value the validator
+		// recomputes for its round-trip equality check. execFileSync (no
+		// shell) avoids any quoting concern with the path argument.
+		try {
+			execFileSync('npx', ['oxfmt', agentsPath], { stdio: 'inherit' });
+		} catch (err) {
+			console.warn(`Could not format ${skill.agentsFile}: ${err.message}`);
+		}
 
-			// Splice the generated index block into SKILL.md. The sentinel
-			// comments delimit the region the generator owns; everything outside
-			// them is human-authored and left untouched.
-			const skillPath = path.join(process.cwd(), skill.dir, skill.skillFile);
-			let rawSkill;
-			try {
-				rawSkill = await fs.readFile(skillPath, 'utf-8');
-			} catch (err) {
-				console.warn(`Could not read ${skill.skillFile} for index update: ${err.message}`);
-				rawSkill = null;
-			}
-			if (rawSkill !== null) {
-				const startIdx = rawSkill.indexOf(SKILL_INDEX_BEGIN);
-				const endIdx = rawSkill.indexOf(SKILL_INDEX_END);
-				if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-					const newIndex = assembleSkillIndex(manifest);
-					const updated =
-						rawSkill.slice(0, startIdx + SKILL_INDEX_BEGIN.length) +
-						'\n\n' +
-						newIndex +
-						'\n\n' +
-						rawSkill.slice(endIdx);
-					await fs.writeFile(skillPath, updated, 'utf-8');
-					try {
-						execFileSync('npx', ['oxfmt', skillPath], { stdio: 'inherit' });
-					} catch (err) {
-						console.warn(`Could not format ${skill.skillFile}: ${err.message}`);
-					}
-				} else {
-					console.warn(
-						`${skill.skillFile} is missing sentinel comments — index not updated. ` +
-							`Add ${SKILL_INDEX_BEGIN} / ${SKILL_INDEX_END} to mark the generated block.`,
-					);
+		// Splice the generated index block into SKILL.md. The sentinel
+		// comments delimit the region the generator owns; everything outside
+		// them is human-authored and left untouched.
+		const skillPath = path.join(process.cwd(), skill.dir, skill.skillFile);
+		let rawSkill;
+		try {
+			rawSkill = await fs.readFile(skillPath, 'utf-8');
+		} catch (err) {
+			console.warn(`Could not read ${skill.skillFile} for index update: ${err.message}`);
+			rawSkill = null;
+		}
+		if (rawSkill !== null) {
+			const startIdx = rawSkill.indexOf(SKILL_INDEX_BEGIN);
+			const endIdx = rawSkill.indexOf(SKILL_INDEX_END);
+			if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+				const newIndex = assembleSkillIndex(manifest);
+				const updated =
+					rawSkill.slice(0, startIdx + SKILL_INDEX_BEGIN.length) +
+					'\n\n' +
+					newIndex +
+					'\n\n' +
+					rawSkill.slice(endIdx);
+				await fs.writeFile(skillPath, updated, 'utf-8');
+				try {
+					execFileSync('npx', ['oxfmt', skillPath], { stdio: 'inherit' });
+				} catch (err) {
+					console.warn(`Could not format ${skill.skillFile}: ${err.message}`);
 				}
+			} else {
+				console.warn(
+					`${skill.skillFile} is missing sentinel comments — index not updated. ` +
+						`Add ${SKILL_INDEX_BEGIN} / ${SKILL_INDEX_END} to mark the generated block.`,
+				);
 			}
 		}
 	}

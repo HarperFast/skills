@@ -1237,17 +1237,15 @@ export class Example extends Resource {
 
 ### 2.4 Checking Authentication
 
-Instructions for the agent to follow when handling user authentication, sessions, and JWT token issuance in Harper Resources.
+Instructions for the agent to handle user authentication, sessions, and JWT token issuance in Harper Resources.
 
 #### When to Use
 
-Apply this rule when implementing sign-in/sign-out flows, inspecting the current user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Harper endpoint must gate access based on identity or produce credentials for downstream consumers. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.
+Apply this rule when implementing login/logout flows, protecting Resource endpoints by checking the current user, issuing or refreshing JWT tokens, or configuring token expiry in Harper. Use it whenever a custom Resource needs to authenticate callers or mint credentials for downstream consumers. See [custom-resources.md](custom-resources.md) for the broader Resource authoring context.
 
 #### How It Works
 
-##### 1. Inspect the Current User
-
-1. **Call `getCurrentUser()`** inside any Resource method to retrieve the authenticated user for the request, or `undefined` if unauthenticated.
+1. **Check the current authenticated user**: Call `getCurrentUser()` inside any Resource method. It returns the user object (with `username`, `role`, and `role.permission`) or `undefined` if unauthenticated. Guard endpoints by returning a 401 when no user is present.
 
    ```javascript
    async get(target) {
@@ -1257,18 +1255,9 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-   The returned object exposes `username`, `role`, and `role.permission` flags.
+2. **Enable sessions before using login/logout**: Set `authentication.enableSessions: true` in `harperdb-config.yaml`. Without this, `context.login` and `context.session` are unavailable.
 
-##### 2. Handle Sessions via `getContext()`
-
-2. **Enable sessions** in `harperdb-config.yaml` before using session-based login:
-
-   ```yaml
-   authentication:
-     enableSessions: true
-   ```
-
-3. **Call `context.login`** to verify credentials and establish a session cookie:
+3. **Implement login via `getContext()`**: Call `this.getContext()` to obtain the request context, then call `context.login(username, password)` to verify credentials and establish a session cookie.
 
    ```javascript
    export class SignIn extends Resource {
@@ -1284,7 +1273,7 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-4. **Delete the session** to sign out:
+4. **Implement logout**: Delete the session via `context.session.delete(context.session.id)`.
 
    ```javascript
    export class SignOut extends Resource {
@@ -1297,11 +1286,9 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-   Cookie-based sessions are intended for browser clients. For non-browser clients, use JWT issuance (see steps below).
+   Cookie-based sessions are intended for browser clients. For non-browser clients, use JWT issuance (steps below).
 
-##### 3. Issue JWT Tokens via the Operations API
-
-5. **Call `create_authentication_tokens`** with credentials. No `Authorization` header is needed for this operation:
+5. **Create authentication tokens**: Call `create_authentication_tokens` with credentials. No `Authorization` header is required for this operation.
 
    ```json
    {
@@ -1320,24 +1307,22 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-6. **Pass the `operation_token`** as a `Bearer` token on subsequent requests:
+6. **Use the operation token**: Pass it as a `Bearer` token in the `Authorization` header on subsequent requests.
 
    ```bash
    curl --location --request POST 'http://localhost:9925' \
      --header 'Content-Type: application/json' \
      --header 'Authorization: Bearer <operation_token>' \
      --data-raw '{
-       "operation": "search_by_hash",
-       "schema": "dev",
-       "table": "dog",
-       "hash_values": [1],
-       "get_attributes": ["*"]
+         "operation": "search_by_hash",
+         "schema": "dev",
+         "table": "dog",
+         "hash_values": [1],
+         "get_attributes": ["*"]
      }'
    ```
 
-##### 4. Refresh an Expired Operation Token
-
-7. **Call `refresh_operation_token`** using the `refresh_token` as the `Bearer` token when the `operation_token` expires:
+7. **Refresh an expired operation token**: When the `operation_token` expires, use `refresh_operation_token` and pass the `refresh_token` as `Bearer <refresh_token>`.
 
    ```bash
    curl --location --request POST 'http://localhost:9925' \
@@ -1358,9 +1343,7 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
 
    When both tokens have expired, call `create_authentication_tokens` again with username and password.
 
-##### 5. Mint Scoped Tokens
-
-8. **Issue a scoped token** as a super user by passing an inline `role` object to `create_authentication_tokens`. Do not include `password`. Use `add_role`-style `permission` structure. Set `expires_in` to control lifetime:
+8. **Mint scoped tokens for limited access**: A super user can embed an inline role in `create_authentication_tokens` using the same `permission` structure as `add_role`. Include `expires_in` to control lifetime. Do not include a `password` field. The `username` is attribution only and must not match an existing user.
 
    ```json
    {
@@ -1386,24 +1369,13 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-   Response:
-
-   ```json
-   {
-   	"operation_token": "<jwt-scoped-token>"
-   }
-   ```
-
    Key constraints for scoped tokens:
-   - `username` is attribution only and must not match an existing `hdb_user`.
-   - `super_user` and `cluster_user` are always forced to `false` in the embedded role.
    - No refresh token is issued; no user record is created.
-   - Scoped tokens cannot be revoked before expiry — choose short `expires_in` values in high-security environments.
-   - The permission object is validated at mint time; the resulting token must fit within a 12 KB `Authorization` header.
+   - Scoped tokens cannot be revoked before expiry — choose short `expires_in` values.
+   - `super_user` and `cluster_user` are always forced to `false` in the embedded role.
+   - In mixed-version clusters, only nodes with scoped-token support accept these tokens; older nodes return 401.
 
-##### 6. Issue Tokens from a Custom Resource via `server.operation`
-
-9. **Import `server`** and call `server.operation` to mint or refresh tokens programmatically from a Resource:
+9. **Issue tokens from a custom Resource using `server.operation`**: Import `server` from `harper` and call `server.operation()` to mint tokens programmatically. Pass `true` as the **third argument** to run the operation as the current authenticated user; omit it when supplying credentials directly.
 
    ```javascript
    import { Resource, server } from 'harper';
@@ -1447,11 +1419,7 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
    }
    ```
 
-   Pass `true` as the third argument to `server.operation` when the operation should run as the current authenticated user. Omit it (or pass `false`) when the operation supplies its own credentials.
-
-##### 7. Configure Token Expiry
-
-10. **Set token timeouts** in `harper-config.yaml` under the `authentication` section:
+10. **Configure token expiry**: Set timeouts in `harper-config.yaml` under the `authentication` section. Values follow the `jsonwebtoken` duration string format (e.g., `1d`, `12h`, `60m`).
 
     ```yaml
     authentication:
@@ -1459,15 +1427,44 @@ Apply this rule when implementing sign-in/sign-out flows, inspecting the current
       refreshTokenTimeout: 30d # Default: 30 days
     ```
 
-    Duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
-
 #### Examples
 
-**Full sign-in/sign-out Resource pair with session:**
+##### Full JWT flow via cURL
+
+```bash
+# Step 1: Create tokens
+curl --location --request POST 'http://localhost:9925' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+      "operation": "create_authentication_tokens",
+      "username": "username",
+      "password": "password"
+  }'
+
+# Step 2: Use operation token
+curl --location --request POST 'http://localhost:9925' \
+  --header 'Content-Type: application/json' \
+  --header 'Authorization: Bearer <operation_token>' \
+  --data-raw '{
+      "operation": "search_by_hash",
+      "schema": "dev",
+      "table": "dog",
+      "hash_values": [1],
+      "get_attributes": ["*"]
+  }'
+
+# Step 3: Refresh when operation token expires
+curl --location --request POST 'http://localhost:9925' \
+  --header 'Content-Type: application/json' \
+  --header 'Authorization: Bearer <refresh_token>' \
+  --data-raw '{
+    "operation": "refresh_operation_token"
+  }'
+```
+
+##### Session-based login/logout Resource
 
 ```javascript
-import { Resource } from 'harper';
-
 export class SignIn extends Resource {
 	async post(_target, data) {
 		const context = this.getContext();
@@ -1490,36 +1487,14 @@ export class SignOut extends Resource {
 }
 ```
 
-**Mint tokens via cURL:**
-
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --data-raw '{
-    "operation": "create_authentication_tokens",
-    "username": "username",
-    "password": "password"
-  }'
-```
-
-**Refresh an operation token via cURL:**
-
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <refresh_token>' \
-  --data-raw '{
-    "operation": "refresh_operation_token"
-  }'
-```
-
 #### Notes
 
-- Always use HTTPS in production to protect tokens in transit. Tokens must be treated like passwords.
-- If a token is compromised, it remains valid until expiry. Use shorter `operationTokenTimeout` values in high-security environments.
-- `enableSessions` must be `true` in `harperdb-config.yaml` for `context.login` and `context.session` to function.
-- Scoped tokens are not tied to a user row; rotating the instance's JWT keys is the only way to invalidate them before `expires_in` elapses.
-- In mixed-version clusters, only nodes with scoped-token support accept scoped tokens; older nodes return 401.
+- JWT authentication is **preferred over Basic Auth** when you want to avoid sending credentials on every request, when the client can store tokens, or when making multiple sequential requests. For simple or server-to-server scenarios, use Basic Authentication.
+- Always use **HTTPS** in production to protect tokens in transit.
+- Treat tokens like passwords. If a token is compromised, it remains valid until expiry — use shorter `operationTokenTimeout` values in high-security environments.
+- `enableSessions` must be `true` in config before `context.login` or `context.session` will work.
+- The `third argument` (`true`) to `server.operation` controls whether the operation runs as the current authenticated user. Omit it when the operation body supplies its own credentials.
+- Scoped tokens have a 12KB limit when encoded into an `Authorization` header.
 
 ## 3. Logic & Extension
 

@@ -291,6 +291,14 @@ rules:
       - path: reference/v5/security/jwt-authentication.md
         section: 'Token Expiry Configuration'
         role: supplemental
+      # Sourced so the rule carries the *negative* recommendation too. Without
+      # it the generated body pushed JWT at every non-browser client, while the
+      # source actually points simple and server-to-server callers at Basic
+      # Authentication — i.e. the rule was inviting token lifecycle complexity
+      # the docs tell you to avoid.
+      - path: reference/v5/security/jwt-authentication.md
+        section: 'When to Use JWT Auth'
+        role: primary
       - path: reference/v5/security/jwt-authentication.md
         section: 'Security Notes'
         role: supplemental
@@ -314,6 +322,55 @@ rules:
       - 'expires_in'
       - 'operationTokenTimeout'
       - 'HTTPS'
+      # Scoped tokens are rejected with a 401 by nodes too old to understand
+      # them. Unanchored, that bullet was dropped the first time this rule was
+      # regenerated after the section was added — a rollout hazard, so it gets
+      # its own anchor rather than relying on the section being sourced.
+      - 'mixed-version'
+      # Operation names alone gate vocabulary, not mechanics: a regeneration
+      # could keep `create_authentication_tokens`/`refresh_operation_token` and
+      # still drop the token exchange, the refresh timeout, or what the third
+      # `server.operation` argument does. The anchors below pin those specific
+      # semantics. Each occurs exactly once in the doc and in exactly one
+      # sourced section, so it forces depth in that section rather than a
+      # passing mention anywhere.
+      #
+      # Two caveats this list is deliberately built around:
+      #
+      # 1. `must_cover` is a substring test (`body.includes(must)`), so an
+      #    anchor contained in another anchor gates nothing extra.
+      #    `operation_token` is already implied by `refresh_operation_token`,
+      #    and `refresh_token` by `Bearer <refresh_token>` — listing either
+      #    separately would be noise, not coverage.
+      # 2. A bare-fragment anchor invites literal satisfaction. Anchoring the
+      #    exchange as `Bearer <refresh_token>` — rather than `refresh_token`,
+      #    which occurs in three sourced sections — requires the body to show
+      #    the refresh token actually being presented as the Bearer credential.
+      #
+      # `third argument` + `current authenticated user` pin the authorize
+      # behavior together. `authorize: true` is the doc's prose name for it but
+      # is rejected as an anchor: the code passes `true` positionally, so
+      # forcing that string risks a body an agent transcribes as an options
+      # object.
+      - 'Bearer <refresh_token>'
+      - 'refreshTokenTimeout'
+      - 'third argument'
+      - 'current authenticated user'
+      # When to Use JWT Auth. `Basic Authentication` is a superstring of the
+      # plain `Basic Auth` the section also contains — which is the better
+      # anchor, since `Basic Auth` additionally appears in a code comment in
+      # the custom-resource section and could be satisfied from there while the
+      # recommendation itself stayed compressed away. `server-to-server` pins
+      # the scenario the source actually steers away from JWT.
+      #
+      # `preferred over Basic Auth` carries the source's *conditional* framing.
+      # It is anchored because sourcing the section alone was not enough: the
+      # body kept a flat "for non-browser clients, use JWT" directive and filed
+      # the Basic Auth alternative under Notes, which reads as a contradiction.
+      # Anchoring the conditional forces the choice to be stated as a tradeoff.
+      - 'Basic Authentication'
+      - 'server-to-server'
+      - 'preferred over Basic Auth'
     cross_links:
       - custom-resources
 

@@ -14,21 +14,21 @@ metadata:
       reference/v5/resources/resource-api.md#`addTo(property: string, value:
       number)`
     - reference/v5/components/javascript-environment.md#Module Loading
-  sourceCommit: 3749d0c54be457a2a65d9a63c738a5dc88989ecd
-  inputHash: ace5c3f4a0ad4519
+  sourceCommit: 677ad213d67822e109c83619e181ca23a59823db
+  inputHash: ce2181ecade6522f
 ---
 
 # Programmatic Table Requests
 
-Instructions for the agent to interact with Harper tables programmatically using the `tables` object and its query API.
+Instructions for the agent to interact with Harper tables programmatically using the `tables` object, including querying, transactions, and module integration.
 
 ## When to Use
 
-Apply this rule when writing server-side code that reads from or writes to Harper tables directly — for example, in request handlers, background jobs, or SSR rendering — without going through the REST API. Use it whenever you need to construct queries with `conditions`, `select`, `sort`, or `search(`.
+Apply this rule when writing server-side Harper component code that reads from or writes to tables directly — bypassing REST endpoints — such as in request handlers, background jobs, timers, or SSR rendering. Use it whenever you need to construct queries with `conditions`, manage transactions explicitly, or perform CRDT-safe mutations.
 
 ## How It Works
 
-1. **Import `tables`**: Pull `tables` from the `harper` package. Each property on `tables` corresponds to a table defined in `schema.graphql`.
+1. **Import `tables` from `harper`**: Access all tables in the default `data` database via the `tables` object. Each table defined with `@table` in `schema.graphql` is a property.
 
    ```javascript
    import { tables } from 'harper';
@@ -36,7 +36,7 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    // same as: databases.data.Product
    ```
 
-2. **Define your schema**: Declare tables with `@table` in `schema.graphql`. Each type becomes a property on `tables`.
+2. **Define your schema with `@table`**: Tables must be declared in `schema.graphql`. Use `@indexed` on attributes you intend to sort or filter efficiently.
 
    ```graphql
    type Product @table {
@@ -46,15 +46,7 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    }
    ```
 
-3. **Create and modify records**: Use `create`, `patch`, and `get` for basic CRUD.
-
-   ```javascript
-   const created = await Product.create({ name: 'Shirt', price: 9.5 });
-   await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
-   const record = await Product.get(created.id);
-   ```
-
-4. **Query with `search(`**: Pass a query object to `Product.search(query)`. It returns an async iterable.
+3. **Use `search(` to query records**: Pass a Query object to `search(`. Iterate results with `for await`.
 
    ```javascript
    const query = {
@@ -65,7 +57,7 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    }
    ```
 
-5. **Build `conditions`**: Each condition object filters records. Nest conditions with `operator` for boolean logic.
+4. **Build `conditions` arrays to filter**: Each condition object supports these properties:
 
    | Property     | Description                                                                                                                                              |
    | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,46 +67,95 @@ Apply this rule when writing server-side code that reads from or writes to Harpe
    | `conditions` | Nested conditions array                                                                                                                                  |
    | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
 
-6. **Use `select`** to control which properties are returned. Accepts an array of property names, a string for a single property, or nested objects for relationships.
+5. **Apply `select` to shape results**: Return only the fields you need. Supports arrays, nested relationship selects, and special properties.
 
    ```javascript
-   // Array of names
+   // Array of fields
    Product.search({ select: ['name', 'price'] });
 
    // Nested relationship select
    Book.get({ id: 42, select: ['id', 'title', { name: 'author', select: ['name'] }] });
    ```
 
-   Special `select` values:
-   - `$id` — returns the primary key regardless of its name
-   - `$updatedtime` — returns the last-updated timestamp
-   - `$distance` — returns the computed distance when querying a vector index
+   Special `select` values: `$id`, `$updatedtime`, `$distance`.
 
-7. **Use `addTo`** for concurrent-safe numeric increments (CRDT incrementation, safe across threads and nodes).
+6. **Apply `sort` with an `@indexed` attribute**: Harper uses an index to provide sort order. Sort by an `@indexed` attribute without requiring a condition, or provide at least one condition when sorting by a non-indexed attribute.
 
    ```javascript
-   const record = await Product.update(target.id);
-   record.addTo('quantity', -1);
-   ```
-
-8. **Apply `sort`, `limit`, and `offset`** for ordering and pagination. A `sort` attribute must be `@indexed`, or at least one `conditions` entry must be present. Pass `allowFullScan: true` to permit an unconditional ordered scan.
-
-   ```javascript
+   // Sort by primary key with an open-ended condition to avoid scan error
    Product.search({
    	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
    	sort: { attribute: 'id' },
    });
    ```
 
-   | Sort property | Description                                                |
-   | ------------- | ---------------------------------------------------------- |
-   | `attribute`   | Property name (or array for chained relationship property) |
-   | `descending`  | Sort descending if `true` (default: `false`)               |
-   | `next`        | Secondary sort to resolve ties (same structure)            |
+   Sort object properties:
+
+   | Property     | Description                                              |
+   | ------------ | -------------------------------------------------------- |
+   | `attribute`  | Property name or array for chained relationship property |
+   | `descending` | Sort descending if `true` (default: `false`)             |
+   | `next`       | Secondary sort to resolve ties (same structure)          |
+
+7. **Use `limit` and `offset` for pagination**:
+
+   ```javascript
+   Product.search({ conditions: [...], limit: 20, offset: 40 });
+   ```
+
+8. **Use `explain` and `enforceExecutionOrder` for debugging**:
+   - `explain: true` — returns conditions reordered as Harper will execute them.
+   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling automatic re-ordering.
+
+9. **Use `addTo` for concurrent-safe numeric updates**: `addTo` uses CRDT incrementation, safe across threads and nodes.
+
+   ```javascript
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1); // decrement safely across nodes
+   }
+   ```
+
+10. **Wrap background work in `transaction()`**: HTTP handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
+
+    ```javascript
+    import { tables } from 'harper';
+    const { MyTable } = tables;
+
+    if (isMainThread) {
+    	setInterval(async () => {
+    		let data = await (await fetch('https://example.com/data')).json();
+    		transaction(async (txn) => {
+    			for (let item of data) {
+    				await MyTable.put(item, txn);
+    			}
+    		});
+    	}, 3600000); // every hour
+    }
+    ```
+
+    The `txn` object members:
+
+    | Member                | Type            | Description                                            |
+    | --------------------- | --------------- | ------------------------------------------------------ |
+    | `commit()`            | `() => Promise` | Commits the current transaction                        |
+    | `abort()`             | `() => void`    | Aborts the transaction and resets it                   |
+    | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
+    | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
+
+11. **Understand atomicity boundaries**: All tables within the same database share one transactional context — writes across multiple tables commit atomically. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
+
+12. **Keep `harper` external in bundlers**: When using SSR bundlers, mark `harper` as external so it resolves to the live runtime. In `vite.config`:
+
+    ```javascript
+    ssr: {
+    	external: ['harper'];
+    }
+    ```
 
 ## Examples
 
-**Nested conditions with `or`:**
+### Nested conditions query
 
 ```javascript
 Product.search({
@@ -131,25 +172,34 @@ Product.search({
 });
 ```
 
-**Chained attribute reference (relationship join):**
+### Chained attribute reference (join/relationship)
 
 ```javascript
 Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
 ```
 
-**Deep nested `select` across multiple relationships:**
+### Full CRUD sequence
 
 ```javascript
-Product.search({
-	select: [
-		'id',
-		'name',
-		{ name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] },
-	],
-});
+// Create a new record (id auto-generated)
+const created = await Product.create({ name: 'Shirt', price: 9.5 });
+
+// Modify the record
+await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
+
+// Retrieve by primary key
+const record = await Product.get(created.id);
+
+// Query with conditions
+const query = {
+	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
+};
+for await (const record of Product.search(query)) {
+	// process record
+}
 ```
 
-**SSR usage — read directly from `tables` in a render function:**
+### SSR rendering with `tables`
 
 ```typescript
 import { tables } from 'harper';
@@ -160,11 +210,20 @@ export async function render(url: string): Promise<string> {
 }
 ```
 
+### Mutable update with `addTo`
+
+```javascript
+const product = await Product.update(32);
+product.status = 'active';
+product.subtractFrom('quantity', 1);
+product.save();
+```
+
 ## Notes
 
-- Scope destructive operations (`update`, `patch`, `delete`) with specific `conditions` and validate the affected set before writing. These operate on live data and are not easily reversible.
-- Sorting by a bare `@primaryKey` with no conditions raises `HdbError: <attribute> is not indexed and not combined with any other conditions`. Add an open-ended condition or pass `allowFullScan: true`.
-- Selecting a relationship field without filtering on it behaves as a **LEFT JOIN**. Adding a condition on a related attribute (e.g. `attribute: ['author', 'name']`) behaves as an **INNER JOIN**.
-- A to-many relationship resolves to an array; `await` the property before iterating when needed.
-- `tables` and `databases.data` reference the same live objects — a record written through one component is immediately visible to all others.
-- Keep `harper` external when bundling for SSR (e.g. `ssr: { external: ['harper'] }` in `vite.config`) so it resolves to the runtime.
+- `tables` calls run in a trusted server-side context and do **not** automatically apply the target table's role permissions. Enforce authorization in your own application logic.
+- Destructive operations (`update`, `patch`, `delete`) act on live data and are not easily reversible. Always scope with specific `conditions`, validate the affected set before writing, and gate behind authorization controls.
+- Sorting by the bare `@primaryKey` alone with no conditions triggers `HdbError: <attribute> is not indexed and not combined with any other conditions`. Add an open-ended range condition or pass `allowFullScan: true` to permit an unconditional scan.
+- Selecting a relationship field without filtering on it behaves as a **LEFT JOIN**; adding a condition on a related attribute behaves as an **INNER JOIN**.
+- `transaction()` is safe to call defensively — if a transaction is already active on the context, it reuses it and executes the callback immediately.
+- Link the `harper` package for correct typings in standalone component directories: `npm link harper`.

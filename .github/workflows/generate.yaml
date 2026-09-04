@@ -83,6 +83,58 @@ jobs:
         working-directory: skills
         run: npm ci
 
+      - name: Check out the rolling sync branch
+        working-directory: skills
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        # Generate on top of the sync branch when an OPEN sync PR owns it,
+        # rather than from main. Two reasons:
+        #   1. Rules already regenerated at the current docs commit have a
+        #      matching inputHash and are skipped, so an unrelated docs commit
+        #      no longer re-samples every drifted rule. Re-sampling is what made
+        #      facts appear and disappear between runs of the same PR.
+        #   2. Fixes committed to the branch during review survive the next run
+        #      instead of being force-pushed away.
+        # The branch is still rolling: one open sync PR, updated in place.
+        run: |
+          set -euo pipefail
+          BRANCH="auto/docs-sync"
+
+          # Identity must be set before any merge below: actions/checkout does
+          # not configure one, and a merge that is not a fast-forward writes a
+          # commit. main advances routinely (semantic-release), so that is the
+          # normal path, not an edge case. The commit step sets these again;
+          # git config is idempotent.
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+          # Reuse the branch only while an OPEN PR owns it. Branch existence is
+          # not the same thing: closing a rejected sync PR leaves its head
+          # branch behind, and building on that would carry abandoned generated
+          # content into the next PR — or replay the conflict that caused the
+          # rejection, defeating the "close the PR and re-run" recovery.
+          PR_STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
+
+          if [ "$PR_STATE" = "OPEN" ]; then
+            echo "Open sync PR owns $BRANCH — generating on top of it."
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            # Pick up anything that landed on main since the branch was cut.
+            if ! git merge --no-edit origin/main; then
+              if [ -n "$(git ls-files --unmerged)" ]; then
+                git merge --abort || true
+                echo "::error::$BRANCH conflicts with main in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Resolve on the branch, or close the sync PR and re-run — the next run then starts clean from main."
+              else
+                echo "::error::git merge failed on $BRANCH without conflicts — see the log above."
+              fi
+              exit 1
+            fi
+          else
+            # No open PR: start clean from main. --force-with-lease on the push
+            # still refuses to clobber anything pushed after this checkout.
+            echo "No open sync PR (state: ${PR_STATE:-none}) — starting from main."
+            git checkout -B "$BRANCH" origin/main
+          fi
+
       - name: Capture pre-sync provenance
         working-directory: skills
         # Snapshot each rule's recorded baseline (sourceCommit/inputHash) and
@@ -138,6 +190,9 @@ jobs:
           - Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`.
           - Section heading renamed or removed — update \`sources[].section\`.
           - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
+          - Regeneration dropped a fact its sources still document — the model restructured a
+            rule and lost content. Re-run generation, or if the removal is correct, record it
+            under \`rules[<slug>].allow_dropped\` in the manifest.
 
           After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR.")
             echo "Opened failure issue ${NEW_ISSUE_URL}"
@@ -158,8 +213,15 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          # The generator only writes rule bodies + AGENTS.md under this path.
-          if git diff --quiet -- harper-best-practices; then
+          # Every skill directory the generator writes to, from the SKILLS
+          # registry in lib/manifest.mjs. Hardcoding one directory here meant a
+          # skill added later (harper-mcp) was regenerated on every run and then
+          # never staged, so it could not sync and an MCP-only docs change
+          # reported "no changes".
+          mapfile -t SKILL_DIRS < <(node scripts/generation/skill-dirs.mjs)
+
+          # The generator writes rule bodies, AGENTS.md and SKILL.md under these.
+          if git diff --quiet -- "${SKILL_DIRS[@]}"; then
             echo "No changes — skills are already in sync with docs."
             exit 0
           fi
@@ -171,14 +233,15 @@ jobs:
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
 
-          # Single rolling branch: at most one open auto-sync PR at a time. If
-          # docs change again before it merges, the same PR is force-updated.
-          git checkout -B "$BRANCH"
-          git add harper-best-practices
+          # The branch is already checked out (see "Check out the rolling sync
+          # branch"), so this commit lands on top of its existing history.
+          git add -- "${SKILL_DIRS[@]}"
           git commit -m "docs: regenerate rules from documentation@${SHORT}"
-          # Force is intentional: each run replaces the rolling branch's prior
-          # commit in place so the open sync PR always reflects the latest docs.
-          git push --force origin "$BRANCH"
+          # This commit is a descendant of origin/$BRANCH (or of main on a fresh
+          # branch), so the push normally fast-forwards. --force-with-lease
+          # still covers the fresh-branch case while refusing to clobber a push
+          # that landed after this job's checkout.
+          git push --force-with-lease origin "$BRANCH"
 
           # Compose a provenance-rich body from the pre-sync snapshot: which
           # rules changed, the docs commit each was last synced from, and the

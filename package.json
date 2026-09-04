@@ -31,7 +31,8 @@
 		"format:check": "oxfmt --check",
 		"generate": "node scripts/generation/generate-rules.mjs",
 		"sync:report": "node scripts/generation/sync-report.mjs",
-		"validate": "npm run format:check && npm run build && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
+		"test": "node --test \"scripts/**/*.test.mjs\"",
+		"validate": "npm run format:check && npm run build && npm test && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sdk": "^0.98.0",

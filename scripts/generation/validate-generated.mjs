@@ -40,7 +40,12 @@ import {
 	VALID_MODES,
 	VALID_SOURCE_ROLES,
 } from './lib/manifest.mjs';
-import { computeInputHash, resolveSources, sourceFilePath } from './lib/sources.mjs';
+import {
+	computeInputHash,
+	resolveSources,
+	sourceFilePath,
+	stripFencedBlocks,
+} from './lib/sources.mjs';
 import {
 	assembleAgentsMd,
 	assembleSkillIndex,
@@ -70,9 +75,11 @@ function isNonEmptyString(v) {
 }
 
 // Remove fenced and inline code so leaked-MDX heuristics don't false-positive
-// on legitimate `import`/JSX-like syntax inside code examples.
+// on legitimate `import`/JSX-like syntax inside code examples. Fences are
+// stripped by the shared scanner so tilde fences and long delimiter runs are
+// handled the same way sliceSection handles them.
 function stripCode(md) {
-	return md.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+	return stripFencedBlocks(md).replace(/`[^`]*`/g, '');
 }
 
 // ===========================================================================
@@ -321,9 +328,12 @@ const MAX_REPORTED_FACTS = 12;
 //
 // Fenced blocks are excluded too: a body may legitimately move an example into
 // a cross-linked rule, and fence contents would otherwise pin whole snippets
-// in place.
+// in place. Stripping them needs the fence-aware scanner rather than a
+// ```-only regex — a backtick expression inside a ~~~ fence would otherwise
+// register as a fact, so deleting that example later would falsely block
+// generation for as long as the token survived anywhere in the docs source.
 function inlineCodeSpans(md) {
-	const withoutFences = md.replace(/```[\s\S]*?```/g, '');
+	const withoutFences = stripFencedBlocks(md);
 	const spans = new Set();
 	for (const m of withoutFences.matchAll(/`([^`\n]+)`/g)) {
 		const token = m[1].trim();

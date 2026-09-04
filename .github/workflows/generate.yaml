@@ -85,30 +85,53 @@ jobs:
 
       - name: Check out the rolling sync branch
         working-directory: skills
-        # Generate on top of the open sync branch when one exists, rather than
-        # from main. Two reasons:
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        # Generate on top of the sync branch when an OPEN sync PR owns it,
+        # rather than from main. Two reasons:
         #   1. Rules already regenerated at the current docs commit have a
         #      matching inputHash and are skipped, so an unrelated docs commit
         #      no longer re-samples every drifted rule. Re-sampling is what made
         #      facts appear and disappear between runs of the same PR.
         #   2. Fixes committed to the branch during review survive the next run
         #      instead of being force-pushed away.
-        # The branch is still rolling: one open sync PR, force-pushed in place.
+        # The branch is still rolling: one open sync PR, updated in place.
         run: |
           set -euo pipefail
           BRANCH="auto/docs-sync"
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Existing sync branch found — generating on top of it."
+
+          # Identity must be set before any merge below: actions/checkout does
+          # not configure one, and a merge that is not a fast-forward writes a
+          # commit. main advances routinely (semantic-release), so that is the
+          # normal path, not an edge case. The commit step sets these again;
+          # git config is idempotent.
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+          # Reuse the branch only while an OPEN PR owns it. Branch existence is
+          # not the same thing: closing a rejected sync PR leaves its head
+          # branch behind, and building on that would carry abandoned generated
+          # content into the next PR — or replay the conflict that caused the
+          # rejection, defeating the "close the PR and re-run" recovery.
+          PR_STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
+
+          if [ "$PR_STATE" = "OPEN" ]; then
+            echo "Open sync PR owns $BRANCH — generating on top of it."
             git checkout -B "$BRANCH" "origin/$BRANCH"
-            # Pick up anything that landed on main since the branch was cut. A
-            # conflict means the branch and main touched the same rules; stop
-            # loudly here rather than resolving it by discarding the branch.
+            # Pick up anything that landed on main since the branch was cut.
             if ! git merge --no-edit origin/main; then
-              echo "::error::Sync branch conflicts with main. Rebase or close the open sync PR, then re-run."
+              if [ -n "$(git ls-files --unmerged)" ]; then
+                git merge --abort || true
+                echo "::error::$BRANCH conflicts with main in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Resolve on the branch, or close the sync PR and re-run — the next run then starts clean from main."
+              else
+                echo "::error::git merge failed on $BRANCH without conflicts — see the log above."
+              fi
               exit 1
             fi
           else
-            echo "No sync branch yet — starting from main."
+            # No open PR: start clean from main. --force-with-lease on the push
+            # still refuses to clobber anything pushed after this checkout.
+            echo "No open sync PR (state: ${PR_STATE:-none}) — starting from main."
             git checkout -B "$BRANCH" origin/main
           fi
 

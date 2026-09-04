@@ -46,6 +46,15 @@ Comprehensive guidelines for building, extending, and deploying Harper applicati
 - Custom resources and table extensions.
 - Advanced features like Vector Indexing and Caching.
 
+### [Harper MCP](harper-mcp/SKILL.md)
+
+Comprehensive guide to Harper's Model Context Protocol (MCP) interface. Covers:
+
+- Enabling the MCP server profiles and connecting AI clients.
+- Automatic CRUD verb tools and custom `mcpTools` / `mcpPrompts` / `mcpResources`.
+- The resources surface (`harper://`, `harper+rest://`, custom URIs and templates).
+- Rate limiting, durable quotas, and the security model for public endpoints.
+
 ## How it Works
 
 These skills are structured to be easily consumed by Large Language Models (LLMs) and AI agents. For a technical overview of how agents use these files, see [AGENTS.md](AGENTS.md).

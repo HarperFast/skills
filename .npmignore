@@ -1,5 +1,6 @@
 *
 !harper-best-practices/**/*
+!harper-mcp/**/*
 !dist/**/*
 !AGENTS.md
 !LICENSE

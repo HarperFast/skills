@@ -5,8 +5,8 @@ metadata:
   mode: generate
   sources:
     - reference/v5/rest/querying.md
-  sourceCommit: b7fbddadd42eb4487190b650a9abc4bcfeef5819
-  inputHash: 9f8c981a629ef606
+  sourceCommit: 677ad213d67822e109c83619e181ca23a59823db
+  inputHash: 0f8efee293628a52
 ---
 
 # Querying REST APIs
@@ -15,7 +15,7 @@ Instructions for the agent to filter, sort, select, and paginate Harper REST API
 
 ## When to Use
 
-Apply this rule when building or modifying code that queries Harper REST endpoints with filtering, sorting, field selection, or pagination. Use it whenever constructing URLs against collection paths exposed by Harper's automatic REST interface (see [automatic-apis.md](automatic-apis.md)).
+Apply this rule whenever building or modifying code that queries Harper REST collection endpoints. Use it when you need to filter records by attribute values, apply comparison operators, sort or paginate results, or join across related tables. See [automatic-apis.md](automatic-apis.md) for how Harper exposes tables as REST endpoints.
 
 ## How It Works
 
@@ -26,21 +26,21 @@ Apply this rule when building or modifying code that queries Harper REST endpoin
    GET /Product/?category=software&inStock=true
    ```
 
-2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators directly in query parameter values.
+2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for numeric, string, and date comparisons.
 
-   | Operator     | Meaning                                |
-   | ------------ | -------------------------------------- |
-   | `==`         | Equal                                  |
-   | `=lt=`       | Less than                              |
-   | `=le=`       | Less than or equal                     |
-   | `=gt=`       | Greater than                           |
-   | `=ge=`       | Greater than or equal                  |
-   | `=ne=`, `!=` | Not equal                              |
-   | `=ct=`       | Contains (strings)                     |
-   | `=sw=`       | Starts with (strings)                  |
-   | `=ew=`       | Ends with (strings)                    |
-   | `=`, `===`   | Strict equality (no type conversion)   |
-   | `!==`        | Strict inequality (no type conversion) |
+   | Operator             | Meaning                                |
+   | -------------------- | -------------------------------------- |
+   | `==`                 | Equal                                  |
+   | `=lt=`               | Less than                              |
+   | `=le=`               | Less than or equal                     |
+   | `=gt=`               | Greater than                           |
+   | `=ge=`               | Greater than or equal                  |
+   | `=ne=`, `!=`         | Not equal                              |
+   | `=ct=`               | Contains (strings)                     |
+   | `=sw=`, `==<value>*` | Starts with (strings)                  |
+   | `=ew=`               | Ends with (strings)                    |
+   | `=`, `===`           | Strict equality (no type conversion)   |
+   | `!==`                | Strict inequality (no type conversion) |
 
    ```
    GET /Product/?price=gt=100
@@ -61,26 +61,40 @@ Apply this rule when building or modifying code that queries Harper REST endpoin
    GET /Product/?price=gt=100&lt=200
    ```
 
-4. **Combine conditions with OR logic**: Use `|` instead of `&`.
+4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically. Use explicit prefixes to force a type.
+
+   | Syntax                                    | Behavior                                    |
+   | ----------------------------------------- | ------------------------------------------- |
+   | `name==null`                              | Converts to `null`                          |
+   | `name==123`                               | Converts to number if attribute is untyped  |
+   | `name==true`                              | Converts to boolean if attribute is untyped |
+   | `name==number:123`                        | Explicit number conversion                  |
+   | `name==boolean:true`                      | Explicit boolean conversion                 |
+   | `name==string:some%20text`                | Keep as string with URL decode              |
+   | `name==date:2024-01-05T20%3A07%3A27.955Z` | Explicit Date conversion                    |
+
+   For strict operators (`=`, `===`, `!==`), no automatic type conversion is applied.
+
+5. **Combine conditions with OR logic**: Use `|` instead of `&`.
 
    ```
    GET /Product/?rating=5|featured=true
    ```
 
-5. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
+6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
 
    ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
    GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
    ```
 
-   Construct grouped queries from JavaScript:
+   Construct from JavaScript:
 
    ```javascript
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-6. **Select specific properties with `select(`**: Use `select()` to control which fields are returned.
+7. **Select specific properties with `select(`**: Append `select(...)` as a query function separated by `&`.
 
    | Syntax                                 | Returns                                     |
    | -------------------------------------- | ------------------------------------------- |
@@ -90,54 +104,35 @@ Apply this rule when building or modifying code that queries Harper REST endpoin
    | `?select(property1,)`                  | Objects with a single specified property    |
    | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties |
 
-   ```
-   GET /Product/?category=software&select(name)
-   GET /Product/?brand.name=Microsoft&select(name,brand{name})
-   ```
+8. **Paginate with `limit(`**: Use `limit(end)` or `limit(start,end)` to control result count and offset.
 
-7. **Limit results with `limit(`**: Use `limit(end)` or `limit(start,end)` to paginate.
+9. **Sort with `sort(`**: Use `sort(property)` or `sort(+property,-property,...)`. Prefix `+` or no prefix = ascending; `-` = descending.
 
-   ```
-   GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
-   GET /Product/?rating=gt=3&limit(10,30)
-   ```
+10. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined in the schema using `@relationship`. Relationship attributes are not included by default — use `select()` to include them.
 
-8. **Sort results with `sort(`**: Use `sort(property)` or `sort(+property,-property,...)`. Prefix `+` or no prefix = ascending; `-` = descending.
-
-   ```
-   GET /Product/?rating=gt=3&sort(+name)
-   GET /Product/?sort(+rating,-price)
-   ```
-
-9. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined in the schema using `@relation`.
-
-   ```
-   GET /Product/?brand.name=Microsoft
-   GET /Brand/?products.name=Keyboard
-   ```
-
-   Use `select()` to include relationship attributes in the response (they are not included by default):
-
-   ```
-   GET /Product/?brand.name=Microsoft&select(name,brand{name})
-   ```
-
-10. **Access a specific property by URL**: Append the property name with dot syntax to the record ID. Only works for properties declared in the schema.
     ```
-    GET /MyTable/123.propertyName
+    GET /Product/?brand.name=Microsoft&select(name,brand{name})
+    ```
+
+11. **Query for null values**: Use `=null` as the value to match null or non-null records.
+    ```
+    GET /Product/?discount=null
     ```
 
 ## Examples
 
-**Range filter with select and limit:**
+**Filter with comparison operators and select:**
 
 ```
-GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)&limit(20)
+GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)
 ```
 
-**Sort descending with multiple fields:**
+**Paginate and sort:**
 
 ```
+GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
+GET /Product/?rating=gt=3&limit(10,30)
+GET /Product/?rating=gt=3&sort(+name)
 GET /Product/?sort(+rating,-price)
 ```
 
@@ -149,34 +144,37 @@ GET /Product/?price=lt=100|[rating=5&[tag=fast|tag=scalable|tag=efficient]&inSto
 
 **Relationship join with nested select:**
 
-```
-GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
-```
-
-**Schema defining a relationship for join queries:**
+Define the schema:
 
 ```graphql
 type Product @table @export {
 	id: Long @primaryKey
 	name: String
 	brandId: Long @indexed
-	brand: Brand @relation(from: "brandId")
+	brand: Brand @relationship(from: "brandId")
 }
 type Brand @table @export {
 	id: Long @primaryKey
 	name: String
-	products: [Product] @relation(to: "brandId")
+	products: [Product] @relationship(to: "brandId")
 }
 ```
 
-**Many-to-many relationship query:**
+Query with join:
+
+```
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Brand/?products.name=Keyboard
+```
+
+**Many-to-many relationship:**
 
 ```graphql
 type Product @table @export {
 	id: Long @primaryKey
 	name: String
 	resellerIds: [Long] @indexed
-	resellers: [Reseller] @relation(from: "resellerId")
+	resellers: [Reseller] @relationship(from: "resellerIds")
 }
 ```
 
@@ -184,19 +182,16 @@ type Product @table @export {
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-**Type conversion with explicit prefix:**
+**Access a specific property by record ID:**
 
 ```
-GET /Product/?price==number:123
-GET /Product/?active==boolean:true
-GET /Product/?listDate==date:2024-01-05T20%3A07%3A27.955Z
+GET /MyTable/123.propertyName
 ```
 
 ## Notes
 
-- Only indexed attributes can be used as the primary filter; additional unindexed attributes can be combined with `&` once at least one indexed attribute is present.
-- For null value queries, use `?attribute=null`. Indexes must have been created with null indexing support; existing indexes must be removed and re-added to support null queries.
-- FIQL comparators (`==`, `!=`, `=gt=`, etc.) apply automatic type conversion based on value syntax or schema-declared type. Strict operators (`=`, `===`, `!==`) skip automatic type conversion.
-- Filtering by a related attribute produces INNER JOIN behavior (only records with a matching related record are returned). Using `select()` on a relationship without a filter produces LEFT JOIN behavior.
-- The array order of foreign key values in many-to-many relationships is preserved when resolving the relationship.
-- See [automatic-apis.md](automatic-apis.md) for how Harper tables are automatically exposed as REST endpoints.
+- Only indexed attributes can be used as the primary filter attribute; when combining multiple attributes, only one needs to be indexed.
+- Relationship attributes are excluded from responses by default. Always use `select(` to include them.
+- When selecting a related attribute without filtering on it, the behavior is a LEFT JOIN — the property is omitted if the foreign key is null or references a non-existent record.
+- The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` in URL paths are reserved as content-type selectors and take precedence over a property of the same name.
+- Square brackets are preferred over parentheses when building grouped queries programmatically, because `[` and `]` are safely URL-encoded by standard encoding functions while `(` is not.

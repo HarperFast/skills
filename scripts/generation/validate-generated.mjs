@@ -14,9 +14,15 @@
 // Layer 1 (basic skill schema) is handled separately by validate-skills.mjs.
 //
 // Some Layer 4 checks need the docs build output (source-exists,
-// byte-identical). Pass --docs-path <docs-checkout> to enable them; without
-// it they are skipped with a note. CI runs with --docs-path; a bare local
+// byte-identical, fact-retention). Pass --docs-path <docs-checkout> to enable
+// them; without it they are skipped with a note. A bare local
 // `npm run validate` runs everything that doesn't require docs.
+//
+// Note on where the gate bites: the auto-sync workflow's Validate step passes
+// --docs-path, so fact-retention blocks a lossy regeneration before it opens
+// or updates the sync PR. The PR-time validate-skills workflow runs plain
+// `npm run validate` with no docs checkout, so a green check there does NOT
+// mean retention was verified.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -34,7 +40,12 @@ import {
 	VALID_MODES,
 	VALID_SOURCE_ROLES,
 } from './lib/manifest.mjs';
-import { computeInputHash, resolveSources, sourceFilePath } from './lib/sources.mjs';
+import {
+	computeInputHash,
+	resolveSources,
+	sourceFilePath,
+	stripFencedBlocks,
+} from './lib/sources.mjs';
 import {
 	assembleAgentsMd,
 	assembleSkillIndex,
@@ -64,9 +75,11 @@ function isNonEmptyString(v) {
 }
 
 // Remove fenced and inline code so leaked-MDX heuristics don't false-positive
-// on legitimate `import`/JSX-like syntax inside code examples.
+// on legitimate `import`/JSX-like syntax inside code examples. Fences are
+// stripped by the shared scanner so tilde fences and long delimiter runs are
+// handled the same way sliceSection handles them.
 function stripCode(md) {
-	return md.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+	return stripFencedBlocks(md).replace(/`[^`]*`/g, '');
 }
 
 // ===========================================================================
@@ -144,6 +157,23 @@ function lintManifest(manifest, scope, errors) {
 			}
 		} else if (e.must_cover !== undefined) {
 			errors.push(`${where}: "must_cover" only applies to mode "generate"`);
+		}
+
+		// Facts the fact-retention check may stop enforcing for this rule —
+		// each entry is a deliberate, reviewed removal.
+		if (e.mode === 'generate') {
+			if (e.allow_dropped !== undefined) {
+				if (!Array.isArray(e.allow_dropped))
+					errors.push(`${where}: "allow_dropped" must be an array`);
+				else {
+					e.allow_dropped.forEach((d, di) => {
+						if (!isNonEmptyString(d))
+							errors.push(`${where}.allow_dropped[${di}]: must be a non-empty string`);
+					});
+				}
+			}
+		} else if (e.allow_dropped !== undefined) {
+			errors.push(`${where}: "allow_dropped" only applies to mode "generate"`);
 		}
 
 		if (e.cross_links !== undefined) {
@@ -274,6 +304,119 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 					errors.push(`${where}: cannot resolve sources for byte-identical check — ${err.message}`);
 				}
 			}
+		}
+	}
+}
+
+// ===========================================================================
+// Fact retention
+// ===========================================================================
+
+// Minimum length of a code span to treat as a retainable fact. Below this the
+// tokens are things like `id`, `or`, `{}` — too generic to carry meaning and
+// too noisy to gate on. `409` (3 chars) is the shortest real one observed.
+const MIN_FACT_CHARS = 3;
+
+// Cap per rule so one heavily-restructured body cannot bury the rest of the
+// report. The count is always stated, so nothing is silently hidden.
+const MAX_REPORTED_FACTS = 12;
+
+// Inline code spans, which is where this corpus keeps its facts: identifiers,
+// config keys, status codes, header names, enum values, error strings. Prose
+// is deliberately excluded — rewording prose is expected and legitimate;
+// dropping `Sec-WebSocket-Protocol: mqtt` is not.
+//
+// Fenced blocks are excluded too: a body may legitimately move an example into
+// a cross-linked rule, and fence contents would otherwise pin whole snippets
+// in place. Stripping them needs the fence-aware scanner rather than a
+// ```-only regex — a backtick expression inside a ~~~ fence would otherwise
+// register as a fact, so deleting that example later would falsely block
+// generation for as long as the token survived anywhere in the docs source.
+function inlineCodeSpans(md) {
+	const withoutFences = stripFencedBlocks(md);
+	const spans = new Set();
+	for (const m of withoutFences.matchAll(/`([^`\n]+)`/g)) {
+		const token = m[1].trim();
+		if (token.length >= MIN_FACT_CHARS) spans.add(token);
+	}
+	return spans;
+}
+
+// The rule body as committed at HEAD, or null when it cannot be read (a new
+// rule, a shallow checkout, or a non-git tree). Callers skip on null rather
+// than failing: absence of a baseline is not a retention violation.
+function bodyAtHead(relPath) {
+	try {
+		const raw = execFileSync('git', ['show', `HEAD:${relPath}`], {
+			encoding: 'utf-8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+		});
+		return matter(raw).content.trim();
+	} catch {
+		return null;
+	}
+}
+
+// Fail when a fact that is present in BOTH the previously committed body AND
+// the current docs source has disappeared from the regenerated body.
+//
+// Requiring presence in the current source is what makes this safe to gate on:
+// a fact deleted upstream is correctly dropped and never reported. Only facts
+// the docs still assert, and that this rule used to carry, are enforced.
+//
+// This is the retention check `must_cover` cannot be: must_cover requires a
+// human to have predicted each fact in advance, and a substring assertion
+// passes as long as the word appears somewhere — it cannot tell "the term is
+// still here" from "the fact is still intact". This check is derived from the
+// diff instead, so it covers facts nobody thought to anchor.
+async function checkFactRetention(manifest, skill, scope, docsBuildDir, errors) {
+	if (!docsBuildDir) return; // needs the current source to avoid false positives
+
+	const rulesDir = path.join(process.cwd(), skill.dir, skill.rulesDir);
+	for (const entry of manifest.rules) {
+		if (entry.mode !== 'generate') continue;
+
+		const slug = entry.rule;
+		const where = `[${scope}] ${slug}`;
+		const relPath = path.posix.join(skill.dir, skill.rulesDir, `${slug}.md`);
+
+		const previousBody = bodyAtHead(relPath);
+		if (previousBody === null) continue; // no committed baseline to compare against
+
+		let currentBody;
+		try {
+			currentBody = matter(await fs.readFile(path.join(rulesDir, `${slug}.md`), 'utf-8')).content;
+		} catch {
+			continue; // missing-file case is already reported by checkRules
+		}
+
+		let source;
+		try {
+			source = await resolveSources(docsBuildDir, entry.sources);
+		} catch {
+			continue; // unresolvable sources are already reported by checkRules
+		}
+
+		const waived = new Set(entry.allow_dropped ?? []);
+		const dropped = [];
+		for (const fact of inlineCodeSpans(previousBody)) {
+			if (waived.has(fact)) continue;
+			if (!source.includes(fact)) continue; // no longer documented upstream
+			if (currentBody.includes(fact)) continue; // still covered
+			dropped.push(fact);
+		}
+
+		if (dropped.length > 0) {
+			dropped.sort();
+			const shown = dropped.slice(0, MAX_REPORTED_FACTS);
+			const more = dropped.length - shown.length;
+			errors.push(
+				`${where}: regeneration dropped ${dropped.length} fact${dropped.length === 1 ? '' : 's'} ` +
+					`still documented in its sources: ${shown.map((f) => JSON.stringify(f)).join(', ')}` +
+					`${more > 0 ? ` (+${more} more)` : ''}. ` +
+					`Restore them, or record the removal in ${skill.manifestFile} under ` +
+					`rules[${slug}].allow_dropped if it is intentional.`,
+			);
 		}
 	}
 }
@@ -412,6 +555,7 @@ async function main() {
 
 		if (!lintManifest(manifest, scope, errors)) continue; // can't reconcile a broken manifest
 		await checkRules(manifest, skill, scope, docsBuildDir, errors);
+		await checkFactRetention(manifest, skill, scope, docsBuildDir, errors);
 		await checkAgentsRoundTrip(manifest, skill, scope, errors);
 		await checkSkillIndexRoundTrip(manifest, skill, scope, errors);
 	}
@@ -425,7 +569,7 @@ async function main() {
 	}
 	const docsNote = docsBuildDir
 		? ''
-		: ' (source-exists / byte-identical checks skipped — no --docs-path)';
+		: ' (source-exists / byte-identical / fact-retention checks skipped — no --docs-path)';
 	console.log(
 		`✓ validate-generated: manifest, frontmatter, AGENTS.md, and SKILL.md checks passed${docsNote}`,
 	);

@@ -83,6 +83,76 @@ jobs:
         working-directory: skills
         run: npm ci
 
+      - name: Check out the rolling sync branch
+        id: syncbranch
+        working-directory: skills
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        # Generate on top of the sync branch when an OPEN sync PR owns it,
+        # rather than from main. Two reasons:
+        #   1. Rules already regenerated at the current docs commit have a
+        #      matching inputHash and are skipped, so an unrelated docs commit
+        #      no longer re-samples every drifted rule. Re-sampling is what made
+        #      facts appear and disappear between runs of the same PR.
+        #   2. Fixes committed to the branch during review survive the next run
+        #      instead of being force-pushed away.
+        # The branch is still rolling: one open sync PR, updated in place.
+        run: |
+          set -euo pipefail
+          BRANCH="auto/docs-sync"
+
+          # Identity must be set before any merge below: actions/checkout does
+          # not configure one, and a merge that is not a fast-forward writes a
+          # commit. main advances routinely (semantic-release), so that is the
+          # normal path, not an edge case. The commit step sets these again;
+          # git config is idempotent.
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+          # Reuse the branch only while an OPEN PR owns it. Branch existence is
+          # not the same thing: closing a rejected sync PR leaves its head
+          # branch behind, and building on that would carry abandoned generated
+          # content into the next PR — or replay the conflict that caused the
+          # rejection, defeating the "close the PR and re-run" recovery.
+          #
+          # `gh pr list` rather than `gh pr view`: list exits 0 with an empty
+          # array when no PR matches, so "no PR" is distinguishable from a
+          # transient or auth failure. `gh pr view` exits non-zero for both,
+          # and treating a lookup failure as "no PR" would reset the branch to
+          # main and discard an open PR's review fixes.
+          if ! OPEN_PR=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length'); then
+            echo "::error::Could not determine whether an open sync PR owns $BRANCH. Refusing to touch the branch."
+            exit 1
+          fi
+
+          if [ "$OPEN_PR" -gt 0 ]; then
+            echo "Open sync PR owns $BRANCH — generating on top of it."
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            # Pick up anything that landed on main since the branch was cut.
+            if ! git merge --no-edit origin/main; then
+              # Capture the conflicted paths BEFORE aborting: --abort clears the
+              # index, after which --diff-filter=U reports nothing.
+              CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+              if [ -n "$CONFLICTS" ]; then
+                git merge --abort || true
+                echo "::error::$BRANCH conflicts with main in: ${CONFLICTS}. Resolve on the branch, or close the sync PR and re-run — the next run then starts clean from main."
+              else
+                git merge --abort || true
+                echo "::error::git merge failed on $BRANCH without conflicts — see the log above."
+              fi
+              exit 1
+            fi
+            # Record that this run reused the branch, so the push step can
+            # re-check ownership before overwriting it.
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            # No open PR: start clean from main. --force-with-lease on the push
+            # still refuses to clobber anything pushed after this checkout.
+            echo "No open sync PR owns $BRANCH — starting from main."
+            git checkout -B "$BRANCH" origin/main
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Capture pre-sync provenance
         working-directory: skills
         # Snapshot each rule's recorded baseline (sourceCommit/inputHash) and
@@ -125,8 +195,17 @@ jobs:
 
           if [ -n "$EXISTING" ]; then
             echo "Existing failure issue #${EXISTING} — appending comment."
-            gh issue comment "$EXISTING" --body \
-              "Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+            # REST, not `gh issue comment`: that uses the GraphQL addComment
+            # mutation, which this App token cannot call ("Resource not
+            # accessible by integration"), even though it can create issues
+            # over REST. That failure used to abort this step under `set -e`,
+            # so a repeat failure for an already-reported docs SHA produced no
+            # comment AND no visible reason — the 2026-09-07 run left no trace
+            # at all. Non-fatal either way: reporting must never mask the
+            # generation failure it exists to report.
+            gh api -X POST "/repos/${{ github.repository }}/issues/${EXISTING}/comments" \
+              -f body="Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." \
+              || echo "Could not append a comment to #${EXISTING} (non-fatal)."
           else
             NEW_ISSUE_URL=$(gh issue create \
               --title "${TITLE}" \
@@ -138,6 +217,9 @@ jobs:
           - Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`.
           - Section heading renamed or removed — update \`sources[].section\`.
           - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
+          - Regeneration dropped a fact its sources still document — the model restructured a
+            rule and lost content. Re-run generation, or if the removal is correct, record it
+            under \`rules[<slug>].allow_dropped\` in the manifest.
 
           After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR.")
             echo "Opened failure issue ${NEW_ISSUE_URL}"
@@ -158,8 +240,15 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          # The generator only writes rule bodies + AGENTS.md under this path.
-          if git diff --quiet -- harper-best-practices; then
+          # Every skill directory the generator writes to, from the SKILLS
+          # registry in lib/manifest.mjs. Hardcoding one directory here meant a
+          # skill added later (harper-mcp) was regenerated on every run and then
+          # never staged, so it could not sync and an MCP-only docs change
+          # reported "no changes".
+          mapfile -t SKILL_DIRS < <(node scripts/generation/skill-dirs.mjs)
+
+          # The generator writes rule bodies, AGENTS.md and SKILL.md under these.
+          if git diff --quiet -- "${SKILL_DIRS[@]}"; then
             echo "No changes — skills are already in sync with docs."
             exit 0
           fi
@@ -171,14 +260,31 @@ jobs:
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
 
-          # Single rolling branch: at most one open auto-sync PR at a time. If
-          # docs change again before it merges, the same PR is force-updated.
-          git checkout -B "$BRANCH"
-          git add harper-best-practices
+          # Re-check ownership before overwriting a branch this run reused. The
+          # open-PR snapshot was taken before generation, which can take
+          # minutes; if the PR was closed in that window, its content is
+          # abandoned and pushing would resurrect it — possibly into a new PR.
+          # Stop instead, and let the next run start clean from main.
+          if [ "${{ steps.syncbranch.outputs.reused }}" = "true" ]; then
+            if ! STILL_OPEN=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length'); then
+              echo "::error::Could not re-check the sync PR before pushing $BRANCH. Refusing to push."
+              exit 1
+            fi
+            if [ "$STILL_OPEN" -eq 0 ]; then
+              echo "::error::The sync PR for $BRANCH was closed during this run. Not pushing the reused branch — re-run to regenerate cleanly from main."
+              exit 1
+            fi
+          fi
+
+          # The branch is already checked out (see "Check out the rolling sync
+          # branch"), so this commit lands on top of its existing history.
+          git add -- "${SKILL_DIRS[@]}"
           git commit -m "docs: regenerate rules from documentation@${SHORT}"
-          # Force is intentional: each run replaces the rolling branch's prior
-          # commit in place so the open sync PR always reflects the latest docs.
-          git push --force origin "$BRANCH"
+          # This commit is a descendant of origin/$BRANCH (or of main on a fresh
+          # branch), so the push normally fast-forwards. --force-with-lease
+          # still covers the fresh-branch case while refusing to clobber a push
+          # that landed after this job's checkout.
+          git push --force-with-lease origin "$BRANCH"
 
           # Compose a provenance-rich body from the pre-sync snapshot: which
           # rules changed, the docs commit each was last synced from, and the

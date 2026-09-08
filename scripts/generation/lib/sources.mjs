@@ -33,6 +33,41 @@ export async function resolveSources(docsBuildDir, sources) {
 	return parts.join('\n\n');
 }
 
+// Opening fence: 3+ backticks or 3+ tildes, indented at most 3 spaces (more
+// than that is an indented code block, not a fence). Captured groups are the
+// indent, the delimiter character, and the full delimiter run.
+const FENCE_OPEN_RE = /^( {0,3})(([`~])\3{2,})/;
+
+// Remove fenced code blocks, returning the remaining Markdown.
+//
+// Handles both delimiter characters and delimiter runs longer than three, per
+// CommonMark: a fence closes only on the same character, with a run at least
+// as long as the opener, and nothing but whitespace after it. That matters
+// because a shorter run of the *other* character — or a ``` inside a ~~~
+// block — is content, not a boundary.
+//
+// An unterminated fence runs to the end of the document, which is also what
+// CommonMark specifies. Callers rely on that: it means a malformed body can
+// never leak fence contents into prose-level analysis.
+export function stripFencedBlocks(markdown) {
+	const out = [];
+	let closeRe = null; // non-null while inside a fence
+	for (const line of markdown.split('\n')) {
+		if (closeRe === null) {
+			const open = FENCE_OPEN_RE.exec(line);
+			if (open) {
+				const delim = open[2];
+				closeRe = new RegExp(`^ {0,3}${delim[0]}{${delim.length},}\\s*$`);
+				continue;
+			}
+			out.push(line);
+		} else if (closeRe.test(line)) {
+			closeRe = null;
+		}
+	}
+	return out.join('\n');
+}
+
 // Extract the Markdown subtree under the heading whose text matches `section`.
 // The slice runs from the matching heading up to (but not including) the next
 // heading at the same or shallower level. Lines inside fenced code blocks are

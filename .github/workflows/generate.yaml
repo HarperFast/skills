@@ -84,6 +84,7 @@ jobs:
         run: npm ci
 
       - name: Check out the rolling sync branch
+        id: syncbranch
         working-directory: skills
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -113,26 +114,43 @@ jobs:
           # branch behind, and building on that would carry abandoned generated
           # content into the next PR — or replay the conflict that caused the
           # rejection, defeating the "close the PR and re-run" recovery.
-          PR_STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
+          #
+          # `gh pr list` rather than `gh pr view`: list exits 0 with an empty
+          # array when no PR matches, so "no PR" is distinguishable from a
+          # transient or auth failure. `gh pr view` exits non-zero for both,
+          # and treating a lookup failure as "no PR" would reset the branch to
+          # main and discard an open PR's review fixes.
+          if ! OPEN_PR=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length'); then
+            echo "::error::Could not determine whether an open sync PR owns $BRANCH. Refusing to touch the branch."
+            exit 1
+          fi
 
-          if [ "$PR_STATE" = "OPEN" ]; then
+          if [ "$OPEN_PR" -gt 0 ]; then
             echo "Open sync PR owns $BRANCH — generating on top of it."
             git checkout -B "$BRANCH" "origin/$BRANCH"
             # Pick up anything that landed on main since the branch was cut.
             if ! git merge --no-edit origin/main; then
-              if [ -n "$(git ls-files --unmerged)" ]; then
+              # Capture the conflicted paths BEFORE aborting: --abort clears the
+              # index, after which --diff-filter=U reports nothing.
+              CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+              if [ -n "$CONFLICTS" ]; then
                 git merge --abort || true
-                echo "::error::$BRANCH conflicts with main in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Resolve on the branch, or close the sync PR and re-run — the next run then starts clean from main."
+                echo "::error::$BRANCH conflicts with main in: ${CONFLICTS}. Resolve on the branch, or close the sync PR and re-run — the next run then starts clean from main."
               else
+                git merge --abort || true
                 echo "::error::git merge failed on $BRANCH without conflicts — see the log above."
               fi
               exit 1
             fi
+            # Record that this run reused the branch, so the push step can
+            # re-check ownership before overwriting it.
+            echo "reused=true" >> "$GITHUB_OUTPUT"
           else
             # No open PR: start clean from main. --force-with-lease on the push
             # still refuses to clobber anything pushed after this checkout.
-            echo "No open sync PR (state: ${PR_STATE:-none}) — starting from main."
+            echo "No open sync PR owns $BRANCH — starting from main."
             git checkout -B "$BRANCH" origin/main
+            echo "reused=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Capture pre-sync provenance
@@ -232,6 +250,22 @@ jobs:
 
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+          # Re-check ownership before overwriting a branch this run reused. The
+          # open-PR snapshot was taken before generation, which can take
+          # minutes; if the PR was closed in that window, its content is
+          # abandoned and pushing would resurrect it — possibly into a new PR.
+          # Stop instead, and let the next run start clean from main.
+          if [ "${{ steps.syncbranch.outputs.reused }}" = "true" ]; then
+            if ! STILL_OPEN=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length'); then
+              echo "::error::Could not re-check the sync PR before pushing $BRANCH. Refusing to push."
+              exit 1
+            fi
+            if [ "$STILL_OPEN" -eq 0 ]; then
+              echo "::error::The sync PR for $BRANCH was closed during this run. Not pushing the reused branch — re-run to regenerate cleanly from main."
+              exit 1
+            fi
+          fi
 
           # The branch is already checked out (see "Check out the rolling sync
           # branch"), so this commit lands on top of its existing history.

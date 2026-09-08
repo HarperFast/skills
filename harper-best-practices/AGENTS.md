@@ -1275,7 +1275,7 @@ When triggered by HTTP, the context also exposes `url`, `method`, `headers`, `re
 
 ##### 3. Handling Sessions and Login
 
-Enable sessions in `harperdb-config.yaml`:
+Enable sessions in `harper-config.yaml`:
 
 ```yaml
 authentication:

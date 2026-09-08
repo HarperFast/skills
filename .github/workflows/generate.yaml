@@ -195,8 +195,17 @@ jobs:
 
           if [ -n "$EXISTING" ]; then
             echo "Existing failure issue #${EXISTING} — appending comment."
-            gh issue comment "$EXISTING" --body \
-              "Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+            # REST, not `gh issue comment`: that uses the GraphQL addComment
+            # mutation, which this App token cannot call ("Resource not
+            # accessible by integration"), even though it can create issues
+            # over REST. That failure used to abort this step under `set -e`,
+            # so a repeat failure for an already-reported docs SHA produced no
+            # comment AND no visible reason — the 2026-09-07 run left no trace
+            # at all. Non-fatal either way: reporting must never mask the
+            # generation failure it exists to report.
+            gh api -X POST "/repos/${{ github.repository }}/issues/${EXISTING}/comments" \
+              -f body="Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." \
+              || echo "Could not append a comment to #${EXISTING} (non-fatal)."
           else
             NEW_ISSUE_URL=$(gh issue create \
               --title "${TITLE}" \

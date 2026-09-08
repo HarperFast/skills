@@ -251,6 +251,18 @@ rules:
       - path: reference/v5/resources/resource-api.md
         section: '`getCurrentUser(): User | undefined`'
         role: primary
+      # Sourced for the `getContext()` anchor below, which was unsatisfiable
+      # without it: `getContext()` does not occur in any other sourced section
+      # (`Session and Login from a Resource` uses the `(target, data, context)`
+      # trailing-argument form throughout), so the anchor demanded a string the
+      # model could only invent — and the system prompt forbids inventing, so
+      # every run failed validation instead. This section also carries the
+      # instance-vs-static contract the rule needs: `getContext()` is an
+      # instance method, and a static verb must read the context from its
+      # trailing argument or use the `harper` module export.
+      - path: reference/v5/resources/resource-api.md
+        section: '`getContext(): Context`'
+        role: supplemental
       - path: reference/v5/resources/resource-api.md
         section: 'Session and Login from a Resource'
         role: primary
@@ -371,6 +383,13 @@ rules:
       - 'Basic Authentication'
       - 'server-to-server'
       - 'preferred over Basic Auth'
+    # Notation, not content. The old body wrote the dotted config path as one
+    # code span; the new one states the same requirement as a YAML block under
+    # `authentication:` plus prose, and the `enableSessions` anchor above still
+    # holds it. The fact-retention check compares whole code spans, so it
+    # cannot see that the two notations say the same thing.
+    allow_dropped:
+      - 'authentication.enableSessions: true'
     cross_links:
       - custom-resources
 
@@ -392,13 +411,29 @@ rules:
         section: 'Exporting Resources as Endpoints'
         role: primary
       - path: reference/v5/components/javascript-environment.md
-        section: 'Module Loading'
+        section: 'Module Formats'
         role: supplemental
     must_cover:
       - 'extends Resource'
       - 'export class'
       - 'server.resources.set('
       - 'static'
+    # Both surfaced by the fact-retention check and both judged notation
+    # rather than content:
+    #
+    # `{param}` — the old body illustrated MCP URI templates as "`{param}`
+    #   URI templates"; the new one keeps the same sentence with a concrete
+    #   `/widget/{id}/action/{action}` example, which is strictly clearer.
+    #
+    # `databases` — came from a Notes bullet asserting that `tables` and
+    #   `databases` are the same live objects "regardless of which component
+    #   accesses them". `programmatic-table-requests` owns that topic, and the
+    #   globals-vs-import framing of that bullet was flagged as contentious
+    #   during the #84 review (the docs assert it in one place and caution
+    #   against globals in another), so it is not re-pinned here.
+    allow_dropped:
+      - '{param}'
+      - 'databases'
 
   - rule: extending-tables
     description: How to add custom logic to automatically generated table resources in Harper.
@@ -442,7 +477,7 @@ rules:
         section: '`addTo(property: string, value: number)`'
         role: supplemental
       - path: reference/v5/components/javascript-environment.md
-        section: 'Module Loading'
+        section: 'Module Formats'
         role: supplemental
     must_cover:
       - 'tables'
@@ -476,10 +511,34 @@ rules:
       - 'atomicity'
       - 'limit'
       - 'offset'
-      # § Module Loading's one piece of actionable build guidance: keep `harper`
+      # § Module Formats' one piece of actionable build guidance: keep `harper`
       # external when bundling for SSR, or it is bundled instead of resolving
       # to the runtime. Only occurrence of `vite.config` in the sources.
       - 'vite.config'
+      # Both anchored after the fact-retention check caught this regeneration
+      # dropping them. The literal error string is how an agent matches the
+      # runtime failure to the fix; a body that only says "throws an error"
+      # (which is what regeneration produced) leaves it guessing. Anchored
+      # verbatim rather than as a `HdbError:` prefix, because retention
+      # compares whole code spans — a truncated variant would satisfy a short
+      # anchor and still register as a loss.
+      - 'HdbError: <attribute> is not indexed and not combined with any other conditions'
+      - 'npm link harper'
+    # The `txn` member table lost its Type column on regeneration. All four
+    # members and their behavior survived (and `resetReadSnapshot()` is
+    # anchored above), so what went is the type annotation, not the fact.
+    # Waived rather than anchored for two reasons: `number` is generic enough
+    # that requiring it pins nothing in particular, and the old `() => Promise`
+    # was already a degraded value — `commit()` returns `Promise<void>`, and
+    # the `<void>` had been stripped somewhere upstream of the rule.
+    #
+    # This is the fact-retention check's noise floor: it compares code spans,
+    # so a dropped table column reads the same as a dropped fact. Waiving is
+    # the intended response, and it stays visible here in review.
+    allow_dropped:
+      - '() => Promise'
+      - '() => void'
+      - 'number'
 
   - rule: typescript-type-stripping
     description: How to run TypeScript files directly in Harper without a build step.

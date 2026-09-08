@@ -140,7 +140,30 @@ async function main() {
 			const existingMeta = await readExistingMeta(filePath);
 			const unchanged =
 				existingMeta && existingMeta.mode === entry.mode && existingMeta.inputHash === inputHash;
-			if (unchanged && !args.force) {
+
+			// ...but not if the body on disk does not satisfy its own anchors.
+			// `inputHash` covers the resolved sources only, so editing
+			// `must_cover` leaves it matching and the rule is skipped — the new
+			// anchor never reaches the model, and validate-generated then fails
+			// on it forever. That is the remediation path the fact-retention
+			// check points at ("restore them"), so it has to actually work
+			// without a manual --force.
+			let anchorsUnsatisfied = false;
+			if (unchanged && entry.mode === 'generate' && entry.must_cover?.length) {
+				try {
+					const existingBody = bodyOf(await fs.readFile(filePath, 'utf-8'));
+					anchorsUnsatisfied = entry.must_cover.some((m) => !existingBody.includes(m));
+					if (anchorsUnsatisfied) {
+						console.log(
+							`  ${entry.rule}: source unchanged but must_cover unsatisfied — regenerating`,
+						);
+					}
+				} catch {
+					anchorsUnsatisfied = true; // unreadable body: regenerate rather than skip
+				}
+			}
+
+			if (unchanged && !anchorsUnsatisfied && !args.force) {
 				skipped++;
 				continue;
 			}

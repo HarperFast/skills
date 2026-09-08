@@ -90,7 +90,7 @@ rules:
     must_cover:
       - mcpTools
       - anonymous
-      - live-class
+      - 'allow*'
       - context.user
     cross_links:
       - rate-limiting

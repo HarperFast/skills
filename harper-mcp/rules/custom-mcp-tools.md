@@ -7,29 +7,83 @@ metadata:
   mode: generate
   sources:
     - reference/v5/mcp/tools-and-resources.md#Custom `mcpTools` opt-in
-  sourceCommit: d7d2ddb120ce5f2ad39dc425f628f5a4f220c151
-  inputHash: 84a2ffac9bb7b66a
+  sourceCommit: 9e6ecf87dd25bb488ad44dc2876ca6439ccd682e
+  inputHash: 692801362e747c73
 ---
 
 # Custom MCP Tools
 
-Expose non-CRUD operations — an LLM-backed `answer`, a domain action, a report generator — as first-class MCP tools.
+Instructions for the agent to follow when exposing custom instance methods as MCP tools via a static `mcpTools` array on a Resource class.
 
 ## When to Use
 
-Use this skill when the auto-generated verb tools aren't enough: the AI should invoke _behavior_, not just CRUD. Also read it before shipping any custom tool on a publicly reachable instance — the security model differs from verb tools.
+Apply this rule when a component needs to expose non-verb instance methods as callable MCP tools. Use it whenever you need custom business logic (e.g., reconciliation, aggregation, batch operations) accessible via the MCP transport beyond the auto-generated verb tools.
 
 ## How It Works
 
-1. **Declare `static mcpTools`** on a Resource class (typically in `resources.js`/`resources.ts`):
+1. **Declare a static `mcpTools` array** on the Resource class. Each entry names the tool, maps it to an instance method, provides a description, and defines an `inputSchema`.
+
+   ```javascript
+   class Orders extends Tables.orders {
+   	static mcpTools = [
+   		{
+   			name: 'reconcile_unsettled',
+   			method: 'reconcileUnsettled',
+   			description: 'Reconcile all orders flagged as unsettled and emit a summary',
+   			inputSchema: {
+   				type: 'object',
+   				properties: { since: { type: 'string', description: 'ISO 8601 timestamp' } },
+   			},
+   		},
+   	];
+
+   	async reconcileUnsettled({ since }) {
+   		/* ... */
+   	}
+   }
+   ```
+
+2. **Understand the security model.** Custom tools are exposed to **every** MCP session — including `anonymous`, unauthenticated ones. The MCP layer does **not**:
+   - Run an `allow*` gate automatically.
+   - Open a Resource transaction automatically.
+   - Filter the tool from `tools/list` based on user role.
+
+   Unlike auto-generated verb tools (which are RBAC-filtered per user at `tools/list` time and enforce table permissions on call), a custom tool is listed to every session and its method executes even when no user is logged in. `context.user` may be empty.
+
+3. **Enforce access control inside the method.** Because the MCP layer performs no authentication or ACL check, the method itself is fully responsible. Check `context.user` at the top of the method and throw when the caller doesn't qualify:
+
+   ```javascript
+   async reconcileUnsettled({ since }) {
+     if (!context.user || !context.user.roles.includes('admin')) {
+       throw new Error('Unauthorized');
+     }
+     /* ... */
+   }
+   ```
+
+4. **Delegate to static Resource operations correctly.** The MCP-created instance context carries the authenticated user and a one-shot `authorize` flag:
+   - For the **first** delegated operation, pass `this.getContext()` directly — the `authorize` flag is consumed by that call:
+     ```javascript
+     const result = await Orders.get(target, this.getContext());
+     ```
+   - For **every subsequent** delegated operation, create a fresh `RequestTarget`, set `target.checkPermission = true` so authorization derives from `context.user`, and pass `this.getContext()`:
+     ```javascript
+     target.checkPermission = true;
+     const next = await Orders.get(target, this.getContext());
+     ```
+   - **Never** accept `checkPermission` from tool arguments or other client input.
+
+## Examples
+
+Full class with a custom MCP tool that guards access via `context.user`:
 
 ```javascript
-export class Orders extends tables.Orders {
+class Orders extends Tables.orders {
 	static mcpTools = [
 		{
 			name: 'reconcile_unsettled',
-			description: 'Reconcile all unsettled orders and return a summary',
 			method: 'reconcileUnsettled',
+			description: 'Reconcile all orders flagged as unsettled and emit a summary',
 			inputSchema: {
 				type: 'object',
 				properties: { since: { type: 'string', description: 'ISO 8601 timestamp' } },
@@ -37,36 +91,28 @@ export class Orders extends tables.Orders {
 		},
 	];
 
-	async reconcileUnsettled(args, context) {
-		// context: { user, profile, sessionId, signal, progress?, serverRequest? }
-		return { reconciled: 12 };
+	async reconcileUnsettled({ since }) {
+		// Reject anonymous or unauthorized callers — the MCP layer does not do this.
+		if (!context.user) {
+			throw new Error('Authentication required');
+		}
+
+		// First delegated operation: use the one-shot authorize flag via this.getContext().
+		const target = { since };
+		const unsettled = await Orders.get(target, this.getContext());
+
+		// Subsequent delegated operations: fresh RequestTarget with checkPermission = true.
+		const updateTarget = { id: unsettled.id };
+		updateTarget.checkPermission = true;
+		await Orders.update(updateTarget, this.getContext());
 	}
 }
 ```
 
-2. **Dispatch is live-class.** Calls construct an instance of the class currently in the Resource registry, so an exported subclass (and its access-control overrides) always wins after a reload/deploy.
-3. **Per-call context.** The second argument carries `user`, `profile`, `sessionId`, an `AbortSignal` (`signal`) wired to MCP cancellation, and — on streaming calls — `progress()` and `serverRequest()`. Guard optional members (`context.progress?.(…)`).
-4. **Results and errors.** Return values are wrapped into MCP tool results (objects become structured content). Thrown errors surface as `isError: true` tool results with the message only — stack traces stay in the server log.
-5. **Security: custom tools are exposed to ANY session, including anonymous ones.** Unlike verb tools (RBAC-filtered per user), a custom tool is listed to every session and its method executes even with no logged-in user (`context.user` may be empty). The method runs inside the normal `transactional()` envelope, so data access it performs still hits per-record `allow*` predicates — but the _tool itself_ has no gate. To restrict one:
+## Notes
 
-```javascript
-async reconcileUnsettled(args, context) {
-	if (!context.user?.username) {
-		throw new Error('authentication required');
-	}
-	// ...
-}
-```
-
-6. **Cost control for public tools.** A cost-bearing anonymous tool needs more than auth checks — see [Rate Limiting](rate-limiting.md) (per-client buckets survive session cycling) and [Durable Quotas](durable-quotas.md) (persisted per-identity limits).
-
-## Examples
-
-Warn-worthy anti-pattern — a public instance with an expensive tool and no gating:
-
-```javascript
-static mcpTools = [{ name: 'answer', method: 'llmAnswer', ... }];
-async llmAnswer(args) { return await callExpensiveModel(args.q); } // anonymous callers burn your budget
-```
-
-Fixed: check `context.user` (or accept anonymity deliberately) _and_ configure `rateLimit.perClientPerSecond` + a `quota` hook.
+- `mcpTools` is a **static** array — declare it on the class, not on instances.
+- The `allow*` gates that protect auto-generated verb tools do **not** run for custom tools. All authorization logic must live inside the method.
+- `context.user` is the canonical way to identify the caller; it may be empty for `anonymous` sessions, so always check before trusting it.
+- Never derive `checkPermission` from client-supplied tool arguments — always set it explicitly in your method code.
+- If your custom tool performs expensive or repeated operations, consider applying [rate limiting](rate-limiting.md) or [durable quotas](durable-quotas.md) inside the method to prevent abuse by unauthenticated callers.

@@ -6,9 +6,9 @@ metadata:
   sources:
     - reference/v5/resources/overview.md#Custom External Data Source
     - reference/v5/resources/overview.md#Exporting Resources as Endpoints
-    - reference/v5/components/javascript-environment.md#Module Loading
-  sourceCommit: f37a8c4021e20d5c74c1d339a6b6c8c196b5603e
-  inputHash: df69870433c0b3e5
+    - reference/v5/components/javascript-environment.md#Module Formats
+  sourceCommit: 9e6ecf87dd25bb488ad44dc2876ca6439ccd682e
+  inputHash: 86858206e33925f0
 ---
 
 # Custom Resources
@@ -17,11 +17,11 @@ Instructions for the agent to follow when defining custom REST endpoints with Ja
 
 ## When to Use
 
-Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when a specific URL shape is required.
+Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed resource or when a specific URL shape is required.
 
 ## How It Works
 
-1. **Import `Resource` from `harper`**: Always import from the `harper` package rather than relying on globals.
+1. **Import `Resource` from the `harper` package**: Always import explicitly rather than relying on globals.
 
    ```javascript
    import { tables, Resource } from 'harper';
@@ -39,7 +39,7 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-3. **Use `async` static methods for external calls**: Await fetch or other async operations inside `static` handlers.
+3. **Use `async` static methods to call external services**: Return or forward the response directly.
 
    ```javascript
    export class MyExternalData extends Resource {
@@ -57,7 +57,7 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-4. **Export the class to create an endpoint**: The export form controls the resulting URL. Choose the form that matches the URL shape you need.
+4. **Export the class to expose it as an endpoint**: The export form controls the resulting URL. Choose the form that matches the URL shape you need.
 
    | Export form                                 | URL             | Notes                                                           |
    | ------------------------------------------- | --------------- | --------------------------------------------------------------- |
@@ -68,12 +68,17 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    | `static path = '/widget/:id'` (class field) | `/widget/:id`   | Declare path on the class; overrides the export name.           |
    | `server.resources.set('my-path', Foo);`     | `/my-path/`     | Programmatic registration for dynamic paths.                    |
 
-   URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
+5. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the resource class.
 
-5. **Declare path parameters with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
+   ```javascript
+   server.resources.set('my-path', Foo);
+   ```
+
+6. **Declare dynamic path segments with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
 
    ```javascript
    export class Widget extends Resource {
+   	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
    	static path = '/widget/:id/action/:action';
    	static get(target) {
    		return { id: target.id, action: target.action };
@@ -81,22 +86,11 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-   A `static path` takes precedence over the export name. A leading `/` makes the path root-relative (top-level). A leading `./` or bare name resolves relative to the component directory.
-
-6. **Register programmatically when the path is dynamic**: Use `server.resources.set(` when the path cannot be known at export time.
-
-   ```javascript
-   server.resources.set('my-path', Foo);
-   ```
-
-7. **Optionally source a table from a custom resource**: Use the resource as a caching layer for a local table.
-   ```javascript
-   tables.MyCache.sourcedFrom(MyExternalData);
-   ```
+7. **Resolve path precedence correctly**: Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats a `:param`, which beats a `*` wildcard, compared left to right.
 
 ## Examples
 
-### External API wrapper with GET and PUT
+**Wrapping an external API and using it as a cache source:**
 
 ```javascript
 import { tables, Resource } from 'harper';
@@ -119,19 +113,9 @@ export class MyExternalData extends Resource {
 tables.MyCache.sourcedFrom(MyExternalData);
 ```
 
-### Path parameters with `static path`
+**Catch-all wildcard path:**
 
 ```javascript
-import { Resource } from 'harper';
-
-export class Widget extends Resource {
-	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
-	static path = '/widget/:id/action/:action';
-	static get(target) {
-		return { id: target.id, action: target.action };
-	}
-}
-
 export class Files extends Resource {
 	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
 	static path = '/files/*rest';
@@ -141,25 +125,24 @@ export class Files extends Resource {
 }
 ```
 
-### Programmatic registration
+**Root-relative fixed route:**
 
 ```javascript
-import { Resource } from 'harper';
-
-export class Foo extends Resource {
+export class AcmeChallenge extends Resource {
+	static path = '/.well-known/acme-challenge/:token';
 	static get(target) {
-		return { data: doSomething() };
+		return { token: target.token };
 	}
 }
-
-server.resources.set('my-path', Foo);
 ```
 
 ## Notes
 
-- A bare `*` wildcard (no name) binds under `target.wildcard`. A wildcard must be the final segment of the path.
-- Resolution order: exact/static paths always win over parameterized ones. Among parameterized routes, more specific paths win — a literal segment beats `:param`, which beats `*`, compared left to right.
-- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
-- If a resource `extends` an existing table, avoid conflicting exports between the schema and the JavaScript implementation.
+- URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
+- A leading `/` in `static path` makes the path root-relative (top-level), independent of the file's location.
+- A leading `./` or a bare name in `static path` resolves relative to the component directory.
+- A bare `*` (no name) binds under `target.wildcard`. A wildcard must be the final segment of the path.
+- `static path` takes precedence over the export name when both are present.
+- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as URI templates.
+- When a resource `extends` an existing table, avoid conflicting exports between the schema and the JavaScript implementation.
 - Link the `harper` package in your component directory to ensure correct typings: `npm link harper`. All installed components have `harper` automatically linked.
-- Harper runs as a single process — `tables`, `databases`, and other APIs are the same live, process-wide objects regardless of which component accesses them.

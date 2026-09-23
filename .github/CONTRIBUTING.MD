@@ -45,9 +45,11 @@ Every file and directory at a glance — nothing is skipped because "it's obviou
 │       ├── sync-report.mjs      # Baseline-freshness report + sync PR body composer
 │       ├── validate-generated.mjs  # Layers 2–4 validator: manifest lint,
 │       │                           # frontmatter reconciliation, body checks
+│       ├── lint-relationships.mjs  # Checks @relationship examples in skill Markdown
 │       ├── lib/
 │       │   ├── llm.mjs          # Anthropic API call + retry logic
 │       │   ├── manifest.mjs     # Manifest loading + normalisation helpers
+│       │   ├── relationship-lint.mjs  # Rules behind lint-relationships.mjs
 │       │   ├── render.mjs       # AGENTS.md + SKILL.md index assembly
 │       │   └── sources.mjs      # Source resolution, section slicing, hashing
 │       └── templates/
@@ -166,6 +168,8 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 9. **Validates** — runs `validate-generated.mjs` (manifest lint, frontmatter reconciliation, must-cover assertions, AGENTS.md round-trip). Failures open a GitHub issue pointing at the failing run.
 
 10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR.
+
+11. **The sync PR's `Validate` check** runs `npm run validate`, which includes `lint-relationships.mjs`. It fails on a `@relationship` example whose `from:`/`to:` names an attribute the example's type does not declare, whose field type Harper will not resolve, or whose cardinality prose (one-to-many / many-to-many) contradicts the attribute types. Such examples have so far come from the docs source, so fix them there and regenerate; a deliberate counter-example can be exempted with `<!-- lint-relationships: ignore -->` on the line before its fence.
 
 This flow is **offline-first**: no network calls to `docs.harperdb.io`. Everything reads from the local docs build.
 
@@ -298,7 +302,8 @@ When a docs structural change breaks automation (renamed file, renamed heading),
 - **Format**: `npm run format` — formats files in place using oxfmt.
 - **Format check**: `npm run format:check` — exits non-zero if any file would be reformatted. CI gate.
 - **Build**: `npm run build` — compiles `dist/`.
-- **Validate**: `npm run validate` — runs `format:check` + `build` + both validators. Run this before pushing.
+- **Validate**: `npm run validate` — runs `format:check` + `build` + tests + both validators + `lint:relationships`. Run this before pushing.
+- **Relationship examples**: `npm run lint:relationships` checks every skill; `node scripts/generation/lint-relationships.mjs <file.md>…` checks any Markdown, such as a docs source.
 - **Validate with docs**: add `&& node scripts/generation/validate-generated.mjs --docs-path ../documentation` for the full suite including source-exists and byte-identical checks.
 - **Freshness report**: `npm run sync:report -- --docs-path ../documentation` — shows which rules are stale vs. the current docs build. Add `--strict` to fail on staleness (use before opening a rule PR).
 

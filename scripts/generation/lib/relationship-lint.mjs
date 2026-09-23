@@ -93,7 +93,6 @@ function tokenize(code) {
 
 const isPunct = (token, value) => token?.kind === 'punct' && token.value === value;
 
-// Index just past the group opened at `i`, or -1 if it never closes.
 function skipGroup(tokens, i, open, close) {
 	let depth = 0;
 	for (; i < tokens.length; i++) {
@@ -103,7 +102,6 @@ function skipGroup(tokens, i, open, close) {
 	return -1;
 }
 
-// `T`, `T!`, `[T]`, `[T!]!`, `[[T]]`. Returns null on anything else.
 function parseTypeRef(tokens, i) {
 	let depth = 0;
 	while (isPunct(tokens[i], '[')) {
@@ -187,13 +185,20 @@ function parseTypeBody(tokens, i, type) {
 				j = parsed.next;
 			} else {
 				j = skipGroup(tokens, j, '(', ')');
-				if (j === -1) return tokens.length;
+				if (j === -1) {
+					type.unknown = true;
+					return tokens.length;
+				}
 			}
 		}
 		type.fields.set(fieldName, type.fields.has(fieldName) ? null : field);
 		i = j;
 	}
-	type.closeLine = tokens[i]?.line ?? tokens.at(-1)?.line ?? 0;
+	if (i >= tokens.length) {
+		type.unknown = true; // the fence ends inside the body
+		return i;
+	}
+	type.closeLine = tokens[i].line;
 	return i + 1;
 }
 
@@ -294,7 +299,6 @@ function resolveType(name, fence, fileTypes) {
 	};
 }
 
-// `{ missing: true }`, `{ list: boolean }`, or null when unknown.
 function attributeShape(resolved, attribute) {
 	if (!resolved) return null;
 	const fields = resolved.definitions.map((t) => t.fields.get(attribute));
@@ -343,8 +347,7 @@ function excerpt(text, index) {
 	return sentence.length > 140 ? `${sentence.slice(0, 137)}...` : sentence;
 }
 
-// Lint one Markdown document. Returns 1-based findings plus the number of
-// relationship directives examined, so a caller can tell "clean" from "empty".
+// `checked` lets a caller tell a clean document from one with no examples.
 export function lintMarkdown(markdown) {
 	const segments = splitFencedBlocks(markdown.replace(/\r\n?/g, '\n'), { nested: true });
 	const fences = [];

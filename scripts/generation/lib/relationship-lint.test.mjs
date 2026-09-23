@@ -335,3 +335,23 @@ test('non-schema and malformed fences are skipped without throwing', () => {
 	);
 	assert.deepEqual(lintMarkdown(markdown), { findings: [], checked: 0 });
 });
+
+test('an unbalanced or unclosed type body makes absence unknown', () => {
+	const unclosedDirective = md(
+		'```graphql',
+		'type Book @table {',
+		'\tauthor: Author @relationship(from: authorId)',
+		'\tauthorId: ID @indexed(',
+		'}',
+		'```',
+	);
+	const truncatedFence = md(
+		'```graphql',
+		'type Book @table {',
+		'\tauthor: Author @relationship(from: authorId)',
+		'\t# ...',
+		'```',
+	);
+	assert.deepEqual(lintMarkdown(unclosedDirective).findings, []);
+	assert.deepEqual(lintMarkdown(truncatedFence).findings, []);
+});

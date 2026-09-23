@@ -38,6 +38,8 @@ export async function resolveSources(docsBuildDir, sources) {
 // from the item's content column, so `nested` accepts any indentation.
 const TOP_LEVEL_INDENT = ' {0,3}';
 const NESTED_INDENT = '[ \\t]*';
+const TOP_LEVEL_OPEN_RE = new RegExp(`^${TOP_LEVEL_INDENT}(([\`~])\\2{2,})`);
+const NESTED_OPEN_RE = new RegExp(`^${NESTED_INDENT}(([\`~])\\2{2,})`);
 
 // Split Markdown into alternating prose and fenced-code segments, starting and
 // ending with a (possibly empty) prose segment. Each segment has the 0-based
@@ -55,7 +57,7 @@ const NESTED_INDENT = '[ \\t]*';
 // never leak fence contents into prose-level analysis.
 export function splitFencedBlocks(markdown, { nested = false } = {}) {
 	const indent = nested ? NESTED_INDENT : TOP_LEVEL_INDENT;
-	const openRe = new RegExp(`^${indent}(([\`~])\\2{2,})`);
+	const openRe = nested ? NESTED_OPEN_RE : TOP_LEVEL_OPEN_RE;
 	const segments = [];
 	let current = { fenced: false, startLine: 0, lines: [] };
 	let closeRe = null; // non-null while inside a fence

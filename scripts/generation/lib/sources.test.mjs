@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stripFencedBlocks } from './sources.mjs';
+import { splitFencedBlocks, stripFencedBlocks } from './sources.mjs';
 
 // Convenience: the scanner is line-based, so build inputs from lines.
 const md = (...lines) => lines.join('\n');
@@ -87,4 +87,25 @@ test('inline code outside a fence is preserved', () => {
 test('content with no fences is returned unchanged', () => {
 	const input = md('# Title', '', 'Some `code` and prose.', '');
 	assert.equal(stripFencedBlocks(input), input);
+});
+
+test('splitFencedBlocks alternates prose and fences with content start lines', () => {
+	const segments = splitFencedBlocks(md('intro', '```graphql', 'type A {}', '```', 'outro'));
+	assert.deepEqual(segments, [
+		{ fenced: false, startLine: 0, lines: ['intro'] },
+		{ fenced: true, info: 'graphql', startLine: 2, lines: ['type A {}'] },
+		{ fenced: false, startLine: 4, lines: ['outro'] },
+	]);
+});
+
+test('nested mode also finds fences indented inside list items', () => {
+	const input = md('- item', '     ```graphql', '     type A {}', '     ```');
+	assert.equal(splitFencedBlocks(input).length, 1);
+	const [, fence] = splitFencedBlocks(input, { nested: true });
+	assert.deepEqual(fence, {
+		fenced: true,
+		info: 'graphql',
+		startLine: 2,
+		lines: ['     type A {}'],
+	});
 });

@@ -33,12 +33,16 @@ export async function resolveSources(docsBuildDir, sources) {
 	return parts.join('\n\n');
 }
 
-// Opening fence: 3+ backticks or 3+ tildes, indented at most 3 spaces (more
-// than that is an indented code block, not a fence). Captured groups are the
-// indent, the delimiter character, and the full delimiter run.
-const FENCE_OPEN_RE = /^( {0,3})(([`~])\3{2,})/;
+// Fence indentation: at most 3 spaces at top level (more than that is an
+// indented code block, not a fence). Inside a list item CommonMark measures
+// from the item's content column, so `nested` accepts any indentation.
+const TOP_LEVEL_INDENT = ' {0,3}';
+const NESTED_INDENT = '[ \\t]*';
 
-// Remove fenced code blocks, returning the remaining Markdown.
+// Split Markdown into alternating prose and fenced-code segments, starting and
+// ending with a (possibly empty) prose segment. Each segment has the 0-based
+// line of its first content line; delimiter lines belong to neither side, and
+// a fence segment also carries the opener's info string.
 //
 // Handles both delimiter characters and delimiter runs longer than three, per
 // CommonMark: a fence closes only on the same character, with a run at least
@@ -49,23 +53,44 @@ const FENCE_OPEN_RE = /^( {0,3})(([`~])\3{2,})/;
 // An unterminated fence runs to the end of the document, which is also what
 // CommonMark specifies. Callers rely on that: it means a malformed body can
 // never leak fence contents into prose-level analysis.
-export function stripFencedBlocks(markdown) {
-	const out = [];
+export function splitFencedBlocks(markdown, { nested = false } = {}) {
+	const indent = nested ? NESTED_INDENT : TOP_LEVEL_INDENT;
+	const openRe = new RegExp(`^${indent}(([\`~])\\2{2,})`);
+	const segments = [];
+	let current = { fenced: false, startLine: 0, lines: [] };
 	let closeRe = null; // non-null while inside a fence
-	for (const line of markdown.split('\n')) {
+	const lines = markdown.split('\n');
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
 		if (closeRe === null) {
-			const open = FENCE_OPEN_RE.exec(line);
+			const open = openRe.exec(line);
 			if (open) {
-				const delim = open[2];
-				closeRe = new RegExp(`^ {0,3}${delim[0]}{${delim.length},}\\s*$`);
+				const delim = open[1];
+				closeRe = new RegExp(`^${indent}${delim[0]}{${delim.length},}\\s*$`);
+				segments.push(current);
+				const info = line.slice(open[0].length).trim();
+				current = { fenced: true, info, startLine: i + 1, lines: [] };
 				continue;
 			}
-			out.push(line);
+			current.lines.push(line);
 		} else if (closeRe.test(line)) {
 			closeRe = null;
+			segments.push(current);
+			current = { fenced: false, startLine: i + 1, lines: [] };
+		} else {
+			current.lines.push(line);
 		}
 	}
-	return out.join('\n');
+	segments.push(current);
+	return segments;
+}
+
+// Remove fenced code blocks, returning the remaining Markdown.
+export function stripFencedBlocks(markdown) {
+	return splitFencedBlocks(markdown)
+		.filter((segment) => !segment.fenced)
+		.flatMap((segment) => segment.lines)
+		.join('\n');
 }
 
 // Extract the Markdown subtree under the heading whose text matches `section`.

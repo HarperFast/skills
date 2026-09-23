@@ -31,9 +31,10 @@
 		"format": "oxfmt",
 		"format:check": "oxfmt --check",
 		"generate": "node scripts/generation/generate-rules.mjs",
+		"lint:relationships": "node scripts/generation/lint-relationships.mjs",
 		"sync:report": "node scripts/generation/sync-report.mjs",
 		"test": "node --test \"scripts/**/*.test.mjs\"",
-		"validate": "npm run format:check && npm run build && npm test && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs"
+		"validate": "npm run format:check && npm run build && npm test && node scripts/validate-skills.mjs && node scripts/generation/validate-generated.mjs && npm run lint:relationships"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sdk": "^0.98.0",

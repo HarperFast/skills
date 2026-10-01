@@ -4,7 +4,8 @@ description: Guidelines for running Harper on a developer machine, covering isol
   dev instances, parallel instances across git worktrees, loopback address
   allocation, and per-instance data roots. Triggers on tasks involving local
   Harper dev servers, running several Harper instances at once, git worktrees,
-  port conflicts (EADDRINUSE), or dev-mode reload loops.
+  port conflicts (EADDRINUSE), dev-mode reload loops, or running a Harper dev
+  server under an AI-agent sandbox.
 license: Apache-2.0
 metadata:
   author: harper
@@ -23,6 +24,7 @@ Reference these guidelines when:
 - Diagnosing `EADDRINUSE` on Harper's default ports, or a dev server that reloads in a loop
 - Setting up a project's `npm run dev` so that it is safe to run in parallel
 - Pointing tooling (agents, browsers, test scripts) at the right dev instance for the current worktree
+- Letting a sandboxed AI agent (e.g. Claude Code with the sandbox enabled) start and reach a dev instance
 
 ## How It Works
 

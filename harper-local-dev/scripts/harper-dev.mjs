@@ -8,13 +8,13 @@
 //
 // Environment:
 //   HARPER_BIN                       Harper executable (default: `harper` on PATH)
-//   HARPER_DEV_HOME                  parent directory of the per-checkout data roots (default: ~/.harper-dev)
+//   HARPER_DEV_HOME                  where data roots and address claims live (default: ~/.harper-dev)
 //   HARPER_DEV_LOOPBACK_START/COUNT  loopback addresses to use (default: 127.0.0.2 through 127.0.0.33)
 //   HDB_ADMIN_USERNAME/PASSWORD      admin user created with a new data root (default: admin / random)
 //
 // Background: https://github.com/HarperFast/skills/blob/main/harper-local-dev/rules/running-dev-instances-in-worktrees.md
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -35,19 +35,44 @@ const DEBUGGER_PORT = 9229;
 const URL_ENV_VARS = ['HARPER_DEV_URL'];
 const LOOPBACK_START = Number(process.env.HARPER_DEV_LOOPBACK_START ?? 2);
 const LOOPBACK_COUNT = Number(process.env.HARPER_DEV_LOOPBACK_COUNT ?? 32);
-const CLAIM_DIR = path.join(os.tmpdir(), 'harper-dev-loopback');
 const INSTANCE_FILE = '.harper-instance';
+const harperBin = process.env.HARPER_BIN ?? 'harper';
 
 const appDir = fs.realpathSync(process.cwd());
 const id = createHash('sha256').update(appDir).digest('hex').slice(0, 12);
 const devHome = path.resolve(process.env.HARPER_DEV_HOME ?? path.join(os.homedir(), '.harper-dev'));
-// Kept short: the operations API's Unix socket lives in the data root, and macOS limits socket paths to 103 bytes.
-const rootPath = path.join(devHome, `${path.basename(appDir).slice(0, 24)}-${id}`);
+const { project, checkout } = checkoutNames();
+// Data roots are grouped by project so an agent sandbox can allow writes to one project's directory only.
+const projectDir = path.join(devHome, project);
+const rootPath = path.join(projectDir, `${checkout}-${id}`);
+// Address claims are machine-wide and must not depend on $TMPDIR, which agent sandboxes redirect.
+const claimDir = path.join(devHome, '.loopback');
 const instanceFile = path.join(appDir, INSTANCE_FILE);
 
 function fail(message) {
 	console.error(`harper-dev: ${message}`);
 	process.exit(1);
+}
+
+// The project is the repository the checkout belongs to, shared by all of its worktrees; the checkout is the
+// worktree's own directory. Outside git, both are the app directory's name. Names are kept short because the
+// operations API's Unix socket lives in the data root, and macOS limits socket paths to 103 bytes.
+function checkoutNames() {
+	let top = appDir;
+	let common = appDir;
+	try {
+		const args = ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'];
+		const output = execFileSync('git', args, { cwd: appDir, encoding: 'utf8', stdio: 'pipe' });
+		[top, common] = output.trim().split('\n');
+		// <repo>/.git, or <repo>/.bare or <repo>.git for a bare repository with worktrees
+		if (path.basename(common).startsWith('.')) common = path.dirname(common);
+	} catch {}
+	const clean = (name, length) =>
+		name
+			.replace(/\.git$/, '')
+			.replace(/[^\w.-]+/g, '-')
+			.slice(0, length) || 'app';
+	return { project: clean(path.basename(common), 20), checkout: clean(path.basename(top), 16) };
 }
 
 function isAlive(pid) {
@@ -84,7 +109,8 @@ function tryClaim(claimFile) {
 	return false;
 }
 
-// Resolves to 'free', 'EADDRINUSE' (something already listens there), or 'EADDRNOTAVAIL' (address not configured).
+// Resolves to 'free' or the error code: EADDRINUSE (something already listens there), EADDRNOTAVAIL (address not
+// configured), or EPERM/EACCES (binding is blocked, typically by an agent sandbox).
 function probe(host, port) {
 	return new Promise((resolve) => {
 		const server = net.createServer();
@@ -94,19 +120,24 @@ function probe(host, port) {
 }
 
 async function allocateAddress() {
-	fs.mkdirSync(CLAIM_DIR, { recursive: true });
 	// Start from a slot derived from the checkout path, so a worktree usually gets the same address every time.
 	const preferred = parseInt(id.slice(0, 8), 16) % LOOPBACK_COUNT;
 	let unavailable = 0;
 	for (let i = 0; i < LOOPBACK_COUNT; i++) {
 		const host = `127.0.0.${LOOPBACK_START + ((preferred + i) % LOOPBACK_COUNT)}`;
-		const claimFile = path.join(CLAIM_DIR, host);
+		const claimFile = path.join(claimDir, host);
 		if (!tryClaim(claimFile)) continue;
 		const results = await Promise.all(
 			[...Object.values(PORTS), DEBUGGER_PORT].map((port) => probe(host, port)),
 		);
 		if (results.every((result) => result === 'free')) return { host, claimFile };
 		fs.rmSync(claimFile, { force: true });
+		if (results.some((result) => result === 'EPERM' || result === 'EACCES')) {
+			fail(
+				`not permitted to listen on ${host}. In an agent sandbox, allow binding local ports ` +
+					'(Claude Code on macOS: sandbox.network.allowLocalBinding).',
+			);
+		}
 		if (results.includes('EADDRNOTAVAIL')) unavailable++;
 	}
 	const last = LOOPBACK_START + LOOPBACK_COUNT - 1;
@@ -137,6 +168,45 @@ function unmaskDotEnv() {
 	}
 }
 
+// Installs a new data root with `harper install` under a throwaway HOME. When ~/.harperdb has no boot file, an
+// install writes one pointing at its data root; that would repoint the machine's bare `harper` commands at this
+// instance, and agent sandboxes usually forbid the write.
+function install() {
+	const installHome = path.join(projectDir, `.install-${id}`);
+	fs.mkdirSync(installHome, { recursive: true });
+	const result = spawnSync(harperBin, ['install'], {
+		stdio: 'inherit',
+		env: {
+			...process.env,
+			HOME: installHome,
+			ROOTPATH: rootPath,
+			DEFAULTS_MODE: process.env.DEFAULTS_MODE ?? 'dev',
+			HDB_ADMIN_USERNAME: adminUsername,
+			HDB_ADMIN_PASSWORD: adminPassword,
+		},
+	});
+	fs.rmSync(installHome, { recursive: true, force: true });
+	if (result.status !== 0 || !fs.existsSync(path.join(rootPath, 'harper-config.yaml'))) {
+		fs.rmSync(rootPath, { recursive: true, force: true });
+		fail(
+			result.error?.code === 'ENOENT'
+				? 'could not find the `harper` executable; install Harper (npm install -g harper) or set HARPER_BIN.'
+				: 'installing a new data root failed; see the output above.',
+		);
+	}
+}
+
+// Harper's operations API listens on a Unix socket in the data root and fails to start if it may not bind one, which
+// agent sandboxes usually forbid. Probe for that, and turn the socket off when it would fail.
+function canBindUnixSocket() {
+	const socketPath = path.join(projectDir, `.socket-check-${process.pid}`);
+	return new Promise((resolve) => {
+		const server = net.createServer();
+		server.once('error', (error) => resolve(error.code !== 'EPERM' && error.code !== 'EACCES'));
+		server.listen(socketPath, () => server.close(() => resolve(true)));
+	}).finally(() => fs.rmSync(socketPath, { force: true }));
+}
+
 const relative = path.relative(appDir, rootPath);
 if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
 	fail(
@@ -157,37 +227,23 @@ if (harperPid && isAlive(harperPid)) {
 	);
 }
 
-unmaskDotEnv();
-const { host, claimFile } = await allocateAddress();
-const url = `http://${host}:${PORTS.HTTP_PORT}`;
-const operationsUrl = `http://${host}:${PORTS.OPERATIONSAPI_NETWORK_PORT}`;
-const env = { ...process.env };
-for (const name of URL_ENV_VARS) env[name] = url;
-
-const firstRun = !fs.existsSync(path.join(rootPath, 'harper-config.yaml'));
-let generatedPassword;
-if (firstRun) {
-	// `harper dev` installs a new data root on first start when these are set; no prompts.
-	env.DEFAULTS_MODE ??= 'dev';
-	env.HDB_ADMIN_USERNAME ??= 'admin';
-	if (!env.HDB_ADMIN_PASSWORD)
-		env.HDB_ADMIN_PASSWORD = generatedPassword = randomBytes(12).toString('base64url');
+for (const dir of [projectDir, claimDir]) {
+	try {
+		fs.mkdirSync(dir, { recursive: true });
+		// Write a file rather than trusting access(): sandboxes deny writes that permission bits allow.
+		const probeFile = path.join(dir, `.write-check-${process.pid}`);
+		fs.writeFileSync(probeFile, '');
+		fs.rmSync(probeFile);
+	} catch {
+		fail(
+			`cannot write to ${dir}. In an agent sandbox, allow writes to ${devHome} ` +
+				`(or to just ${projectDir} and ${claimDir}).`,
+		);
+	}
 }
 
-const args = [
-	'dev',
-	'.',
-	`--ROOTPATH=${rootPath}`,
-	...Object.entries(PORTS).map(([key, port]) => `--${key}=${host}:${port}`),
-	`--THREADS_DEBUG_HOST=${host}`,
-	...process.argv.slice(2),
-];
-
-fs.writeFileSync(
-	instanceFile,
-	JSON.stringify({ url, operationsUrl, host, rootPath, pid: process.pid }, null, '\t') + '\n',
-);
-
+unmaskDotEnv();
+const { host, claimFile } = await allocateAddress();
 let cleanedUp = false;
 function cleanUp() {
 	if (cleanedUp) return;
@@ -198,16 +254,49 @@ function cleanUp() {
 	} catch {}
 	if (readPid(claimFile) === process.pid) fs.rmSync(claimFile, { force: true });
 }
+
 process.on('exit', cleanUp);
+
+const firstRun = !fs.existsSync(path.join(rootPath, 'harper-config.yaml'));
+const adminUsername = process.env.HDB_ADMIN_USERNAME || 'admin';
+const adminPassword = process.env.HDB_ADMIN_PASSWORD || randomBytes(12).toString('base64url');
+if (firstRun) {
+	console.log(`Installing a new Harper data root for ${appDir}`);
+	install();
+}
+
+const url = `http://${host}:${PORTS.HTTP_PORT}`;
+const operationsUrl = `http://${host}:${PORTS.OPERATIONSAPI_NETWORK_PORT}`;
+const unixSocket = (await canBindUnixSocket()) && path.join(rootPath, 'operations-server');
+const env = { ...process.env };
+for (const name of URL_ENV_VARS) env[name] = url;
+
+const args = [
+	'dev',
+	'.',
+	`--ROOTPATH=${rootPath}`,
+	...Object.entries(PORTS).map(([key, port]) => `--${key}=${host}:${port}`),
+	`--OPERATIONSAPI_NETWORK_DOMAINSOCKET=${unixSocket}`,
+	`--THREADS_DEBUG_HOST=${host}`,
+	...process.argv.slice(2),
+];
+
+fs.writeFileSync(
+	instanceFile,
+	JSON.stringify({ url, operationsUrl, host, rootPath, pid: process.pid }, null, '\t') + '\n',
+);
 
 console.log(`Harper dev instance for ${appDir}`);
 console.log(`  URL:        ${url}`);
-console.log(`  Operations: ${operationsUrl}`);
-console.log(`  Data root:  ${rootPath}${firstRun ? ' (new; installing)' : ''}`);
-if (generatedPassword)
-	console.log(`  Admin:      ${env.HDB_ADMIN_USERNAME} / ${generatedPassword}`);
+console.log(
+	`  Operations: ${operationsUrl}${unixSocket ? '' : ' (Unix socket off: not permitted here)'}`,
+);
+console.log(`  Data root:  ${rootPath}`);
+if (firstRun && !process.env.HDB_ADMIN_PASSWORD) {
+	console.log(`  Admin:      ${adminUsername} / ${adminPassword}`);
+}
 
-const child = spawn(process.env.HARPER_BIN ?? 'harper', args, { stdio: 'inherit', env });
+const child = spawn(harperBin, args, { stdio: 'inherit', env });
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 	process.on(signal, () => child.kill(signal));
 }

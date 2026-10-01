@@ -31,6 +31,16 @@ export const SKILLS = [
 		agentsLead:
 			"Guidelines for exposing a Harper instance as a Model Context Protocol (MCP) server and for building the tools, prompts, and resources AI clients consume. Harper implements MCP Streamable HTTP (spec rev 2025-06-18) with two independent profiles: `application` (your app's surface) and `operations` (Harper administration).",
 	},
+	{
+		dir: 'harper-local-dev',
+		manifestFile: 'rules.manifest.yaml',
+		rulesDir: 'rules',
+		skillFile: 'SKILL.md',
+		agentsFile: 'AGENTS.md',
+		agentsTitle: 'Harper Local Development',
+		agentsLead:
+			'Guidelines for running and managing Harper on a developer machine: isolated dev instances, parallel instances across git worktrees, and the local tooling around them.',
+	},
 ];
 
 // Display labels for categories, used when assembling AGENTS.md. The manifest
@@ -45,6 +55,8 @@ export const CATEGORY_LABELS = {
 	tools: 'Tools & Prompts',
 	resources: 'Resources',
 	security: 'Operations & Security',
+	// harper-local-dev categories
+	instances: 'Dev Instances',
 };
 
 export const VALID_MODES = new Set(['generate', 'direct', 'synthesized']);

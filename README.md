@@ -46,6 +46,13 @@ Comprehensive guidelines for building, extending, and deploying Harper applicati
 - Custom resources and table extensions.
 - Advanced features like Vector Indexing and Caching.
 
+### [Harper Local Development](harper-local-dev/SKILL.md)
+
+Running Harper on a developer machine. Covers:
+
+- Running several Harper dev instances side by side, one per git worktree or agent session.
+- Per-instance loopback addresses and data roots, with a ready-to-copy `npm run dev` wrapper.
+
 ### [Harper MCP](harper-mcp/SKILL.md)
 
 Comprehensive guide to Harper's Model Context Protocol (MCP) interface. Covers:

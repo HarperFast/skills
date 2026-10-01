@@ -16,6 +16,7 @@
 	"files": [
 		"dist",
 		"harper-best-practices",
+		"harper-local-dev",
 		"harper-mcp"
 	],
 	"type": "module",

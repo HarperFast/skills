@@ -29,6 +29,8 @@ const CATEGORY_IMPACT = {
 	tools: 'HIGH',
 	resources: 'MEDIUM',
 	security: 'HIGH',
+	// harper-local-dev categories
+	instances: 'HIGH',
 };
 
 // URL-path prefix convention for each category.
@@ -42,6 +44,8 @@ const CATEGORY_PREFIX = {
 	tools: 'tools-',
 	resources: 'resources-',
 	security: 'ops-',
+	// harper-local-dev categories
+	instances: 'dev-',
 };
 
 // Produce the "Rule Categories by Priority" table + "Quick Reference" grouped

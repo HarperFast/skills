@@ -1,0 +1,20 @@
+# Rules manifest for the harper-local-dev skill.
+#
+# Declarative source of truth for rule taxonomy, sources, and generation mode.
+# See docs/plans-archive/docs-driven-skills.md for the schema.
+#
+# Every rule here is agent-oriented synthesis about the developer environment
+# (worktrees, loopback pools, wrapper scripts) with no single docs source, so
+# all are `mode: synthesized`.
+
+rules:
+  # ===========================================================================
+  # Dev Instances (priority 1 — HIGH)
+  # ===========================================================================
+
+  - rule: running-dev-instances-in-worktrees
+    description: Run multiple Harper dev instances in parallel from git worktrees with isolated data roots and loopback addresses.
+    category: instances
+    priority: 1
+    order: 1
+    mode: synthesized

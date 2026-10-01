@@ -5,6 +5,7 @@
 // Copy into a Harper app (e.g. scripts/harper-dev.mjs) and point the dev script at it:
 //   "dev": "node scripts/harper-dev.mjs"
 // Extra arguments are passed through to Harper:  npm run dev -- --LOGGING_LEVEL=debug
+// Print this checkout's running instance's URL, or fail if there is none:  node scripts/harper-dev.mjs url
 //
 // Environment:
 //   HARPER_BIN                       Harper executable (default: `harper` on PATH)
@@ -45,6 +46,8 @@ const { project, checkout } = checkoutNames();
 // Data roots are grouped by project so an agent sandbox can allow writes to one project's directory only.
 const projectDir = path.join(devHome, project);
 const rootPath = path.join(projectDir, `${checkout}-${id}`);
+// Held while the wrapper runs, so two starts from one checkout can't race each other through install or startup.
+const lockFile = `${rootPath}.lock`;
 // Address claims are machine-wide and must not depend on $TMPDIR, which agent sandboxes redirect.
 const claimDir = path.join(devHome, '.loopback');
 const instanceFile = path.join(appDir, INSTANCE_FILE);
@@ -92,21 +95,34 @@ function readPid(file) {
 	}
 }
 
-// Atomically claim an address for this process. A claim left by a process that has died is taken over.
-function tryClaim(claimFile) {
+// Atomically create a lock file holding this process's PID. A lock left by a process that has died is taken over.
+function tryLock(file) {
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
-			fs.writeFileSync(claimFile, String(process.pid), { flag: 'wx' });
+			fs.writeFileSync(file, String(process.pid), { flag: 'wx' });
 			return true;
 		} catch (error) {
 			if (error.code !== 'EEXIST') throw error;
-			const owner = readPid(claimFile);
-			// An empty file is a claim being written right now.
+			const owner = readPid(file);
+			// An empty file is a lock being written right now.
 			if (!owner || isAlive(owner)) return false;
-			fs.rmSync(claimFile, { force: true });
+			fs.rmSync(file, { force: true });
 		}
 	}
 	return false;
+}
+
+// The instance recorded in .harper-instance, if it is still running. The file outlives a wrapper that crashed, and
+// its address may since have gone to another checkout, so the recorded wrapper must be alive and still hold both
+// this checkout's lock and the address claim.
+function liveInstance() {
+	try {
+		const instance = JSON.parse(fs.readFileSync(instanceFile, 'utf8'));
+		const holds = (file) => readPid(file) === instance.pid;
+		if (isAlive(instance.pid) && holds(lockFile) && holds(path.join(claimDir, instance.host))) {
+			return instance;
+		}
+	} catch {}
 }
 
 // Resolves to 'free' or the error code: EADDRINUSE (something already listens there), EADDRNOTAVAIL (address not
@@ -126,7 +142,7 @@ async function allocateAddress() {
 	for (let i = 0; i < LOOPBACK_COUNT; i++) {
 		const host = `127.0.0.${LOOPBACK_START + ((preferred + i) % LOOPBACK_COUNT)}`;
 		const claimFile = path.join(claimDir, host);
-		if (!tryClaim(claimFile)) continue;
+		if (!tryLock(claimFile)) continue;
 		const results = await Promise.all(
 			[...Object.values(PORTS), DEBUGGER_PORT].map((port) => probe(host, port)),
 		);
@@ -207,23 +223,18 @@ function canBindUnixSocket() {
 	}).finally(() => fs.rmSync(socketPath, { force: true }));
 }
 
+if (process.argv[2] === 'url') {
+	const instance = liveInstance();
+	if (!instance)
+		fail('no Harper dev instance is running for this checkout; start one with `npm run dev`.');
+	console.log(instance.url);
+	process.exit(0);
+}
+
 const relative = path.relative(appDir, rootPath);
 if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
 	fail(
 		`data root ${rootPath} is inside the app directory; set HARPER_DEV_HOME to a directory outside it.`,
-	);
-}
-
-let running;
-try {
-	running = JSON.parse(fs.readFileSync(instanceFile, 'utf8'));
-} catch {}
-if (running && isAlive(running.pid))
-	fail(`Harper is already running for this checkout at ${running.url} (pid ${running.pid}).`);
-const harperPid = readPid(path.join(rootPath, 'hdb.pid'));
-if (harperPid && isAlive(harperPid)) {
-	fail(
-		`a Harper process from an earlier run is still using ${rootPath}; stop it with \`kill ${harperPid}\`.`,
 	);
 }
 
@@ -242,9 +253,8 @@ for (const dir of [projectDir, claimDir]) {
 	}
 }
 
-unmaskDotEnv();
-const { host, claimFile } = await allocateAddress();
 let cleanedUp = false;
+let claimFile;
 function cleanUp() {
 	if (cleanedUp) return;
 	cleanedUp = true;
@@ -252,10 +262,31 @@ function cleanUp() {
 		if (JSON.parse(fs.readFileSync(instanceFile, 'utf8')).pid === process.pid)
 			fs.rmSync(instanceFile);
 	} catch {}
-	if (readPid(claimFile) === process.pid) fs.rmSync(claimFile, { force: true });
+	for (const file of [claimFile, lockFile]) {
+		if (file && readPid(file) === process.pid) fs.rmSync(file, { force: true });
+	}
 }
 
+if (!tryLock(lockFile)) {
+	const running = liveInstance();
+	const owner = readPid(lockFile);
+	fail(
+		`Harper is already running for this checkout${running ? ` at ${running.url}` : ''}` +
+			`${owner ? ` (pid ${owner})` : ''}.`,
+	);
+}
 process.on('exit', cleanUp);
+
+const harperPid = readPid(path.join(rootPath, 'hdb.pid'));
+if (harperPid && isAlive(harperPid)) {
+	fail(
+		`a Harper process from an earlier run is still using ${rootPath}; stop it with \`kill ${harperPid}\`.`,
+	);
+}
+
+unmaskDotEnv();
+let host;
+({ host, claimFile } = await allocateAddress());
 
 const firstRun = !fs.existsSync(path.join(rootPath, 'harper-config.yaml'));
 const adminUsername = process.env.HDB_ADMIN_USERNAME || 'admin';

@@ -34,12 +34,13 @@ A Harper process claims two things that a second instance started from another w
 `scripts/harper-dev.mjs` is a dependency-free wrapper around `harper dev .`. On every start it:
 
 1. Derives the data root from the checkout: `~/.harper-dev/<project>/<checkout>-<hash>/`. `<project>` is the repository's directory name, so every worktree of one repository shares a project directory. `<checkout>` is the worktree's directory name, and `<hash>` is the first 12 hex characters of the SHA-256 of the checkout's real path. The same checkout always gets the same root, and another worktree gets another.
-2. Deletes inherited environment variables that are set to `''` but defined in `.env`. Harper's `loadEnv` never overrides a variable that is already set, even to an empty string, so the `.env` value would be silently lost.
-3. Claims a loopback address from `127.0.0.2` to `127.0.0.33`. Claims are lock files in `~/.harper-dev/.loopback/` holding the wrapper's PID, and claims whose owner has died are taken over. It starts from a slot derived from the path, so a worktree usually keeps its URL, and skips any address where one of Harper's ports is already in use.
-4. Installs a new data root with `harper install` the first time, without prompting. It uses `DEFAULTS_MODE=dev`, `HDB_ADMIN_USERNAME` (default `admin`) and `HDB_ADMIN_PASSWORD` (default random, printed once). The install runs with a throwaway `HOME`. When `~/.harperdb` has no boot file, Harper's install writes one pointing at the new root, which would repoint bare `harper` commands at this instance.
-5. Turns off the operations API's Unix socket if binding one in the data root isn't permitted (as in an agent sandbox), since Harper fails to start otherwise.
-6. Writes `.harper-instance` (URL, host, data root, wrapper PID) into the checkout for tooling.
-7. Runs Harper with every listener bound to the claimed address. A `host:port` value binds only that address; a bare port binds all interfaces. Passing the data root as the `--ROOTPATH` flag, unlike the `ROOTPATH` env var, also overrides a global install's boot file.
+2. Takes a lock for the checkout, `<data root>.lock`, and holds it until it exits. A second start from the same checkout stops with `already running` instead of racing the first through install or startup.
+3. Deletes inherited environment variables that are set to `''` but defined in `.env`. Harper's `loadEnv` never overrides a variable that is already set, even to an empty string, so the `.env` value would be silently lost.
+4. Claims a loopback address from `127.0.0.2` to `127.0.0.33`. Claims are lock files in `~/.harper-dev/.loopback/` holding the wrapper's PID, and claims whose owner has died are taken over. It starts from a slot derived from the path, so a worktree usually keeps its URL, and skips any address where one of Harper's ports is already in use.
+5. Installs a new data root with `harper install` the first time, without prompting. It uses `DEFAULTS_MODE=dev`, `HDB_ADMIN_USERNAME` (default `admin`) and `HDB_ADMIN_PASSWORD` (default random, printed once). The install runs with a throwaway `HOME`. When `~/.harperdb` has no boot file, Harper's install writes one pointing at the new root, which would repoint bare `harper` commands at this instance.
+6. Turns off the operations API's Unix socket if binding one in the data root isn't permitted (as in an agent sandbox), since Harper fails to start otherwise.
+7. Writes `.harper-instance` (URL, host, data root, wrapper PID) into the checkout for tooling.
+8. Runs Harper with every listener bound to the claimed address. A `host:port` value binds only that address; a bare port binds all interfaces. Passing the data root as the `--ROOTPATH` flag, unlike the `ROOTPATH` env var, also overrides a global install's boot file.
 
    ```bash
    harper dev . --ROOTPATH=<data root> \
@@ -49,7 +50,7 @@ A Harper process claims two things that a second instance started from another w
      --OPERATIONSAPI_NETWORK_DOMAINSOCKET=<data root>/operations-server
    ```
 
-8. Forwards Ctrl-C, `SIGTERM` and `SIGHUP` to Harper, then removes `.harper-instance` and its address claim when Harper exits.
+9. Forwards Ctrl-C, `SIGTERM` and `SIGHUP` to Harper, then removes `.harper-instance`, its address claim and its lock when Harper exits.
 
 It refuses to start when this checkout already has a live instance, or when an orphaned Harper (left by a `kill -9` of the wrapper) still holds the data root.
 
@@ -108,7 +109,15 @@ Don't symlink `node_modules` between worktrees: branches' dependencies drift apa
 
 #### Finding the Instance from Tools
 
-`.harper-instance` exists only while the instance is running:
+Ask the wrapper for the URL. It fails when this checkout has no running instance:
+
+```bash
+HARPER_URL=$(node scripts/harper-dev.mjs url) || exit 1
+```
+
+Don't fall back to `http://localhost:9926` when that fails. It reaches a different Harper, or none, and a QA or seeding tool would then work against the wrong database.
+
+The wrapper records the running instance in `.harper-instance`:
 
 ```json
 {
@@ -120,11 +129,9 @@ Don't symlink `node_modules` between worktrees: branches' dependencies drift apa
 }
 ```
 
-```bash
-HARPER_URL=$(node -p "JSON.parse(require('fs').readFileSync('.harper-instance', 'utf8')).url" 2>/dev/null || echo http://localhost:9926)
-```
+Don't trust the file on its own. It outlives a wrapper that crashed, and by then its address may belong to another worktree. `url` only answers when the recorded wrapper is alive and still holds this checkout's lock and the address claim.
 
-Read it from the worktree you are working in. Subagents and spawned tools may start in the main checkout, so give them the worktree path explicitly.
+Run `url` from the worktree you are working in. Subagents and spawned tools may start in the main checkout, so give them the worktree path explicitly.
 
 With dev defaults the debugger listens on `<host>:9229`. In `chrome://inspect`, under Configure, add `127.0.0.7:9229`.
 
@@ -182,7 +189,7 @@ Data roots outlive their worktrees, and moving or renaming a checkout starts a n
 | `not permitted to listen on 127.0.0.N`                      | A sandbox blocks binding ports. Allow it; see "Running Under an Agent Sandbox".                                                                                                       |
 | `cannot write to ~/.harper-dev/...`                         | A sandbox blocks writes to the data roots. Allow them; see "Running Under an Agent Sandbox".                                                                                          |
 | `403` from the instance, inside a sandbox                   | The sandbox's HTTP proxy refuses loopback addresses. Use `curl --noproxy '*'`.                                                                                                        |
-| `Harper is already running for this checkout`               | Use the URL it prints, or stop that instance first.                                                                                                                                   |
+| `Harper is already running for this checkout`               | Another start from this checkout is running or starting. Use the URL it prints, or stop it first.                                                                                     |
 | `a Harper process from an earlier run is still using ...`   | The wrapper was killed without stopping Harper. Run the `kill` command it prints.                                                                                                     |
 | `Can not load module at ... outside of allowed path ...`    | `node_modules`, or a package in it, is a symlink pointing outside the app. Run a real `npm install` in the worktree.                                                                  |
 | A value from `.env` is ignored                              | The variable is already set in the environment, and non-empty values from the shell win. Unset it, or use `loadEnv`'s `override: true`.                                               |

@@ -118,3 +118,11 @@ test('a missing report path loads as empty, and absent lists default to empty', 
 		await fs.rm(dir, { recursive: true, force: true });
 	}
 });
+
+test('a marker left dangling by a hand edit is never paired across the body', () => {
+	const dangling = `Intro.\n${HELD_BACK_BEGIN}\nKeep me.\n`;
+	const once = spliceHeldBack(dangling, held);
+	assert.equal(once, `${dangling.trimEnd()}\n\n${heldBackBlock(held)}\n`);
+	// The next splice replaces the appended pair and leaves "Keep me." alone.
+	assert.equal(spliceHeldBack(once, empty), `${dangling.trimEnd()}\n\n${heldBackBlock(empty)}\n`);
+});

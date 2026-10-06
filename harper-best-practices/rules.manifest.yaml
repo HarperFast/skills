@@ -204,11 +204,8 @@ rules:
       #   @updatedTime (1×) → the three exceptions PUT always applies
       - 'Location'
       - '@updatedTime'
-      # The three facts regeneration dropped most often across the 27 failed
-      # syncs of 2026-09-14..10-06 (#118): `Sec-WebSocket-Protocol: mqtt` in
-      # 11, the other two in 7. Each is a one-line Notes bullet — the kind of
-      # detail "keep it tight" compresses first — and each is the only
-      # occurrence in the sources.
+      # One-line Notes facts that regeneration kept compressing away (#118);
+      # each occurs once in the sources.
       - 'Sec-WebSocket-Protocol: mqtt'
       - '@hidden'
       - 'static hidden = true'
@@ -228,19 +225,15 @@ rules:
     must_cover:
       - '=gt='
       - '=lt='
-      # This rule failed all 27 syncs of 2026-09-14..10-06 (#118), losing
-      # 9 facts a run on average. The bare `select(`/`sort(`/`limit(` anchors
-      # were satisfied by any one example, so the function signatures under
-      # them went: `sort(property)` was dropped in 22 runs. Each anchor below
-      # is the signature or example the source gives, verbatim, and each
-      # contains the bare anchor it replaces.
+      # The signatures, verbatim, in place of the bare `select(`/`sort(`/
+      # `limit(`: any one example satisfied those, and the signatures under
+      # them kept being dropped (#118). Each contains the anchor it replaces.
       - 'select()'
       - 'sort(property)'
       - 'sort(+property,-property,...)'
       - 'limit(end)'
-      # The type-conversion table, one anchor per row: each row was dropped in
-      # 15–22 of those runs, and a row is the only statement of its rule
-      # (`null`, untyped number/boolean coercion, the explicit prefixes).
+      # One anchor per type-conversion row: each row is the only statement of
+      # its rule (`null`, untyped coercion, the explicit prefixes).
       - 'name==null'
       - 'name==123'
       - 'name==true'
@@ -718,12 +711,10 @@ rules:
       # `## Response Objects` had no anchor and was dropped in full. Every
       # occurrence of `headers` in the whole-file source is in that section.
       - 'headers'
-      # The `moduleLoader` trade-offs. This rule failed all 27 syncs of
-      # 2026-09-14..10-06 (#118): `instanceof` and `logger` were dropped in
-      # every one, `import()` in 19. They are why the default is what it is —
-      # a separate context breaks `instanceof` across the boundary, and
-      # `native` loads with a plain `import()` and loses the app-scoped
-      # `logger` — and the `moduleLoader` anchor alone did not hold them.
+      # The `moduleLoader` trade-offs, which the `moduleLoader` anchor alone
+      # did not hold (#118): a separate context breaks `instanceof` across the
+      # boundary, and `native` is a plain `import()` without the app-scoped
+      # `logger`.
       - 'instanceof'
       - 'import()'
       - 'logger'

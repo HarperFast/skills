@@ -266,7 +266,7 @@ async function main() {
 						process.exit(1);
 					}
 					console.warn(
-						`⚠ ${entry.rule}: held back, committed body kept — ` +
+						`⚠ ${entry.rule}: held back, existing body kept — ` +
 							`after ${outcome.repairs} repair(s), ${reason}`,
 					);
 					report.heldBack.push({
@@ -407,7 +407,7 @@ async function main() {
 	);
 	if (report.heldBack.length > 0) {
 		console.warn(
-			`Held back (committed bodies kept; retried next run): ` +
+			`Held back (existing bodies kept; retried next run): ` +
 				report.heldBack.map((h) => h.rule).join(', '),
 		);
 	}

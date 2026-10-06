@@ -52,9 +52,8 @@ jobs:
 
       - name: Resolve docs ref
         id: docsref
-        # Through env, not interpolated into the script: the ref comes from a
-        # dispatch payload or a workflow input, and `${{ }}` inside `run:` is
-        # pasted into the shell source before it runs.
+        # Through env: `${{ }}` inside `run:` is pasted into the shell source,
+        # and the ref comes from a dispatch payload or a workflow input.
         env:
           REF: ${{ github.event.client_payload.sha || github.event.inputs.docs_ref || 'main' }}
         run: |
@@ -166,14 +165,16 @@ jobs:
         run: npm run sync:report -- --docs-path ../documentation --out ../sync-provenance.json
 
       - name: Generate rules
+        id: generate
         working-directory: skills
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        # A rule whose regeneration keeps dropping facts is repaired, and if
-        # that fails, held back: its committed body is kept and the run goes on
-        # (see generate-rules.mjs). The report names held-back and repaired
-        # rules for the PR body and the failure issue.
-        run: npm run generate -- --docs-path ../documentation --report ../generation-report.json
+        # The report names held-back and repaired rules for the PR body and the
+        # failure issue; the log is quoted in the failure issue when a rule
+        # stops the run.
+        run: |
+          set -o pipefail
+          npm run generate -- --docs-path ../documentation --report ../generation-report.json 2>&1 | tee ../generate.log
 
       - name: Validate
         id: validate
@@ -302,6 +303,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           DOCS_REF: ${{ steps.docsref.outputs.ref }}
+          GENERATE_OUTCOME: ${{ steps.generate.outcome }}
           VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
         run: |
           set -euo pipefail
@@ -321,6 +323,18 @@ jobs:
             npm run --silent sync:report -- --format held-back \
               --generation-report ../generation-report.json >> "$DETAILS" || true
           fi
+          if [ "$GENERATE_OUTCOME" = "failure" ] && [ -s ../generate.log ]; then
+            {
+              echo
+              echo '<details><summary>Generation output (last 40 lines)</summary>'
+              echo
+              echo '```'
+              tail -n 40 ../generate.log
+              echo '```'
+              echo
+              echo '</details>'
+            } >> "$DETAILS"
+          fi
           if [ "$VALIDATE_OUTCOME" = "failure" ] && [ -s ../validate.log ]; then
             {
               echo
@@ -334,12 +348,10 @@ jobs:
             } >> "$DETAILS"
           fi
 
-          # REST, not `gh issue list`: it pages through every open issue, where
-          # the list command stops at 30 and could miss the one to reuse.
-          # Issues only (the endpoint also returns PRs). A failed lookup is not
-          # an empty one, but it still opens a new issue, loudly: a duplicate
-          # is one click to close, and skipping the report would leave this
-          # failure with no trace at all.
+          # REST pages through every open issue (`gh issue list` stops at 30);
+          # the endpoint also returns PRs. A failed lookup still opens a new
+          # issue, with a warning: a duplicate is one click to close, while
+          # skipping the report would leave this failure with no trace.
           if MATCHES=$(gh api --paginate "/repos/${{ github.repository }}/issues?state=open&per_page=100" \
             --jq ".[] | select(.pull_request == null and .title == \"${TITLE}\") | .number"); then
             EXISTING=$(printf '%s\n' "$MATCHES" | head -1)

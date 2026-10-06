@@ -98,15 +98,18 @@ export function heldBackBlock(report) {
 	return [HELD_BACK_BEGIN, ...(section ? [section] : []), HELD_BACK_END].join('\n');
 }
 
+// A begin marker, then an end marker, with no other marker between them. A
+// marker left dangling by a hand edit never pairs with one further on, so it
+// cannot make a splice swallow the text between them.
+const HELD_BACK_PAIR = new RegExp(
+	`${HELD_BACK_BEGIN}(?:(?!${HELD_BACK_BEGIN}|${HELD_BACK_END})[\\s\\S])*${HELD_BACK_END}`,
+);
+
 // `body` with its held-back section replaced by the report's. A body without
-// markers (written before they existed) gets the section appended, and only
-// when there is something to say.
+// a marker pair (written before they existed, or hand-edited) gets the
+// section appended, and only when there is something to say.
 export function spliceHeldBack(body, report) {
-	const start = body.indexOf(HELD_BACK_BEGIN);
-	const end = body.indexOf(HELD_BACK_END, start);
-	if (start !== -1 && end !== -1) {
-		return body.slice(0, start) + heldBackBlock(report) + body.slice(end + HELD_BACK_END.length);
-	}
+	if (HELD_BACK_PAIR.test(body)) return body.replace(HELD_BACK_PAIR, () => heldBackBlock(report));
 	if (!report.heldBack.length) return body;
 	return `${body.trimEnd()}\n\n${heldBackBlock(report)}\n`;
 }

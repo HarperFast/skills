@@ -12,10 +12,9 @@ import {
 	failureDetailsMarkdown,
 	heldBackMarkdown,
 	loadGenerationReport,
-	mergeRepaired,
-	readSyncState,
+	parseRepairTrailers,
 	repairedMarkdown,
-	syncStateComment,
+	repairTrailers,
 } from './generation-report.mjs';
 
 const empty = { regenerated: [], repaired: [], heldBack: [] };
@@ -114,36 +113,21 @@ const repaired = (rule, restored = ['f()']) => ({
 	fixed: [],
 });
 
-test('sync state survives a round trip through the PR body, whatever the facts contain', () => {
-	const state = { repaired: [repaired('a', ['x --> y', '`--`'])] };
-	const body = `Intro.\n\n${syncStateComment(state)}\n`;
-	assert.doesNotMatch(syncStateComment(state).slice(4, -3), /-->/);
-	assert.deepEqual(readSyncState(body), state);
-});
-
-test('a body without sync state, or with a damaged one, starts from nothing', () => {
-	assert.deepEqual(readSyncState(null), { repaired: [] });
-	assert.deepEqual(readSyncState('No state here.'), { repaired: [] });
-	assert.deepEqual(readSyncState('<!-- sync-state:v1 bm90IGpzb24= -->'), { repaired: [] });
-	const partial = syncStateComment({ repaired: [{ rule: 'no skill' }, repaired('a')] });
-	assert.deepEqual(readSyncState(partial), { repaired: [repaired('a')] });
-});
-
-test('repairs carry forward until the rule is regenerated again or leaves the PR', () => {
-	const changed = ['a', 'b', 'c'].map((rule) => ({ skill: 's', rule }));
-	const previous = [repaired('a'), repaired('b'), repaired('gone')];
-	const generation = {
-		...empty,
-		regenerated: [
-			{ skill: 's', rule: 'b' },
-			{ skill: 's', rule: 'c' },
-		],
-		repaired: [repaired('c', ['g()'])],
-	};
-	// `a` carries forward; `b` was regenerated cleanly this run, so its old
-	// repair no longer describes the PR; `c` is this run's; `gone` left the PR.
-	assert.deepEqual(
-		mergeRepaired(previous, generation, changed).map((entry) => entry.rule),
-		['a', 'c'],
+test('repair trailers round-trip through a commit message, whatever the facts contain', () => {
+	const entries = [repaired('a', ['x --> y', 'a\\tb']), repaired('b')];
+	const message = ['docs: regenerate', '', ...repairTrailers({ ...empty, repaired: entries })].join(
+		'\n',
 	);
+	assert.deepEqual(parseRepairTrailers(message), entries);
+	assert.deepEqual(repairTrailers(empty), []);
+});
+
+test('a damaged or foreign trailer is skipped, not trusted', () => {
+	const message = [
+		'Sync-Repaired: not json',
+		'Sync-Repaired: {"skill":"s","rule":"r","repairs":1,"restored":[1],"fixed":[]}',
+		`Sync-Repaired: ${JSON.stringify(repaired('ok'))}`,
+		'Co-Authored-By: someone',
+	].join('\n');
+	assert.deepEqual(parseRepairTrailers(message), [repaired('ok')]);
 });

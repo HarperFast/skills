@@ -29,10 +29,15 @@
 //                         not from one run, so it covers every run on a rolling
 //                         sync branch. Needs git history in both checkouts (the
 //                         workflow checks out both at fetch-depth: 0).
+//                         Repairs come from the branch's commit trailers (see
+//                         commit-trailers), so they cover every run too.
 //                         --generation-report <file> (the generator's --report)
-//                         adds the rules this run held back, and repairs;
-//                         --previous-body <file> (the open PR's current body)
-//                         carries earlier runs' repairs forward.
+//                         adds the rules this run held back.
+//
+//   --format commit-trailers
+//                         Print the trailers for this run's sync commit: one per
+//                         rule the generation report (--generation-report)
+//                         says was repaired, or nothing.
 //
 //   --format failure-details
 //                         Print what a generation report (--generation-report
@@ -48,12 +53,12 @@
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --strict
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --out ../provenance.json
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body \
-//     [--base origin/main] [--generation-report ../generation-report.json] [--previous-body ../pr-body.md]
+//     [--base origin/main] [--generation-report ../generation-report.json]
+//   node scripts/generation/sync-report.mjs --format commit-trailers --generation-report ../generation-report.json
 //   node scripts/generation/sync-report.mjs --format failure-details --generation-report ../generation-report.json
 //
 // Exit codes (report modes): 1 only when --strict and there is at least one
-// stale rule or resolution error; 0 otherwise. pr-body and failure-details
-// always exit 0.
+// stale rule or resolution error; 0 otherwise. The other formats always exit 0.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -68,10 +73,9 @@ import {
 	failureDetailsMarkdown,
 	heldBackMarkdown,
 	loadGenerationReport,
-	mergeRepaired,
-	readSyncState,
+	parseRepairTrailers,
 	repairedMarkdown,
-	syncStateComment,
+	repairTrailers,
 } from './lib/generation-report.mjs';
 
 const PLAN_PATH = 'docs/plans/docs-driven-skills.md';
@@ -84,7 +88,6 @@ function parseArgs(argv) {
 		out: null,
 		base: 'origin/main',
 		generationReport: null,
-		previousBody: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -94,10 +97,9 @@ function parseArgs(argv) {
 		else if (a === '--out') args.out = argv[++i];
 		else if (a === '--base') args.base = argv[++i];
 		else if (a === '--generation-report') args.generationReport = argv[++i];
-		else if (a === '--previous-body') args.previousBody = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
-	const formats = ['text', 'json', 'pr-body', 'failure-details'];
+	const formats = ['text', 'json', 'pr-body', 'failure-details', 'commit-trailers'];
 	if (!formats.includes(args.format)) {
 		throw new Error(`--format must be one of ${formats.join(' / ')} (got ${args.format})`);
 	}
@@ -183,32 +185,82 @@ function git(args) {
 	return execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-// Every rule file the checked-out branch changes relative to `base`, with the
-// docs commit it was last synced from on `base`: null when the rule has no
-// recorded baseline there, and `onBase` false when the branch adds the rule.
+const rulesDirs = () => SKILLS.map((skill) => path.posix.join(skill.dir, skill.rulesDir));
+
+// `skill/rule` for a rule file path, so rules match across skills.
+function ruleKeyOf(relPath) {
+	const skill = SKILLS.find((candidate) =>
+		relPath.startsWith(path.posix.join(candidate.dir, candidate.rulesDir) + '/'),
+	);
+	return `${skill.dir}/${path.posix.basename(relPath, '.md')}`;
+}
+
+// Every rule file the checked-out branch changes relative to `base`. `status`
+// is git's A/M/D; `recordedCommit` is the docs commit the rule was last synced
+// from on `base`, null when it has no recorded baseline there.
 function changedRules(base) {
 	const changed = [];
-	for (const skill of SKILLS) {
-		const rulesDir = path.posix.join(skill.dir, skill.rulesDir);
-		const paths = git(['diff', '--name-only', '--diff-filter=d', `${base}...HEAD`, '--', rulesDir])
-			.split('\n')
-			.filter((relPath) => relPath.endsWith('.md'));
-		for (const relPath of paths) {
-			let raw = null;
-			try {
-				raw = git(['show', `${base}:${relPath}`]);
-			} catch {
-				// Not on the base: a rule this branch adds.
-			}
-			changed.push({
-				skill: skill.dir,
-				rule: path.posix.basename(relPath, '.md'),
-				onBase: raw !== null,
-				recordedCommit: raw === null ? null : (matter(raw).data?.metadata?.sourceCommit ?? null),
-			});
+	const lines = git([
+		'diff',
+		'--name-status',
+		'--no-renames',
+		`${base}...HEAD`,
+		'--',
+		...rulesDirs(),
+	])
+		.split('\n')
+		.filter(Boolean);
+	for (const line of lines) {
+		const [status, relPath] = line.split('\t');
+		if (!relPath.endsWith('.md')) continue;
+		let recordedCommit = null;
+		if (status !== 'A') {
+			recordedCommit =
+				matter(git(['show', `${base}:${relPath}`])).data?.metadata?.sourceCommit ?? null;
 		}
+		const [skill, rule] = ruleKeyOf(relPath).split('/');
+		changed.push({ skill, rule, status, recordedCommit });
 	}
 	return changed;
+}
+
+// The repairs recorded on the branch for rules it still changes. The latest
+// commit to touch a rule decides: a later regeneration or hand edit replaces
+// an earlier repair record, and a commit records its own repairs after that.
+function repairsOnBranch(base, changed) {
+	const repaired = new Map();
+	const commits = git([
+		'rev-list',
+		'--reverse',
+		'--no-merges',
+		`${base}..HEAD`,
+		'--',
+		...rulesDirs(),
+	])
+		.split('\n')
+		.filter(Boolean);
+	for (const sha of commits) {
+		const touched = git([
+			'diff-tree',
+			'--no-commit-id',
+			'--name-only',
+			'-r',
+			sha,
+			'--',
+			...rulesDirs(),
+		])
+			.split('\n')
+			.filter(Boolean);
+		for (const relPath of touched) repaired.delete(ruleKeyOf(relPath));
+		for (const entry of parseRepairTrailers(git(['show', '-s', '--format=%B', sha]))) {
+			repaired.set(`${entry.skill}/${entry.rule}`, entry);
+		}
+	}
+	const stillChanged = new Set(changed.map((entry) => `${entry.skill}/${entry.rule}`));
+	return [...repaired.entries()]
+		.filter(([key]) => stillChanged.has(key))
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([, entry]) => entry);
 }
 
 function gitDocs(docsRepoPath, args) {
@@ -230,11 +282,11 @@ function oldestCommit(docsRepoPath, commits) {
 	return oldest?.sha ?? null;
 }
 
-function composePrBody({ docsRepoPath, base, generation, previousBody }) {
+function composePrBody({ docsRepoPath, base, generation }) {
 	const headSha = gitDocs(docsRepoPath, ['rev-parse', 'HEAD']);
 	const headShort = short(headSha);
 	const changed = changedRules(base);
-	const repairedRules = mergeRepaired(readSyncState(previousBody).repaired, generation, changed);
+	const repairedRules = repairsOnBranch(base, changed);
 
 	const lines = [
 		`Automated regeneration of docs-driven skill rules, now synced to ` +
@@ -255,11 +307,14 @@ function composePrBody({ docsRepoPath, base, generation, previousBody }) {
 			'',
 		);
 		for (const r of changed) {
-			const from = r.recordedCommit
-				? `last synced from docs@${short(r.recordedCommit)}`
-				: r.onBase
-					? 'no recorded docs baseline'
-					: 'new in this PR';
+			const from =
+				r.status === 'A'
+					? 'new in this PR'
+					: r.status === 'D'
+						? 'deleted in this PR'
+						: r.recordedCommit
+							? `last synced from docs@${short(r.recordedCommit)}`
+							: 'no recorded docs baseline';
 			lines.push(`- \`${r.rule}\` — ${from}`);
 		}
 		lines.push('');
@@ -302,8 +357,6 @@ function composePrBody({ docsRepoPath, base, generation, previousBody }) {
 			`reassembles AGENTS.md. See ${PLAN_PATH}.`,
 		'',
 		'🤖 Generated with [Claude Code](https://claude.com/claude-code)',
-		'',
-		syncStateComment({ repaired: repairedRules }),
 	);
 	return lines.join('\n');
 }
@@ -315,19 +368,20 @@ async function main() {
 
 	if (args.format === 'pr-body') {
 		const generation = await loadGenerationReport(args.generationReport);
-		const previousBody = args.previousBody ? await fs.readFile(args.previousBody, 'utf-8') : null;
-		process.stdout.write(
-			composePrBody({ docsRepoPath, base: args.base, generation, previousBody }) + '\n',
-		);
+		process.stdout.write(composePrBody({ docsRepoPath, base: args.base, generation }) + '\n');
 		return;
 	}
 
-	if (args.format === 'failure-details') {
+	if (args.format === 'failure-details' || args.format === 'commit-trailers') {
 		if (!args.generationReport) {
-			throw new Error('--format failure-details requires --generation-report <file>');
+			throw new Error(`--format ${args.format} requires --generation-report <file>`);
 		}
-		const details = failureDetailsMarkdown(await loadGenerationReport(args.generationReport));
-		if (details) process.stdout.write(details + '\n');
+		const generation = await loadGenerationReport(args.generationReport);
+		const text =
+			args.format === 'failure-details'
+				? failureDetailsMarkdown(generation)
+				: repairTrailers(generation).join('\n');
+		if (text) process.stdout.write(text + '\n');
 		return;
 	}
 

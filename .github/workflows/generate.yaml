@@ -196,22 +196,12 @@ jobs:
           BRANCH="auto/docs-sync"
           HELD_BACK=$(jq '.heldBack | length' ../generation-report.json)
 
-          # The PR body is rebuilt from scratch on every run: the rules the
-          # branch changes against main, plus this run's report. The open PR's
-          # current body carries earlier runs' repairs forward.
-          if ! OPEN_PR=$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty'); then
-            echo "::error::Could not determine whether an open sync PR owns $BRANCH."
-            exit 1
-          fi
-          PREVIOUS_BODY=()
-          if [ -n "$OPEN_PR" ]; then
-            gh pr view "$OPEN_PR" --json body --jq .body > ../pr-body-current.md
-            PREVIOUS_BODY=(--previous-body ../pr-body-current.md)
-          fi
+          # The PR body is rebuilt from scratch on every run, from the branch
+          # (every rule it changes against main, and the repairs its commits
+          # record) plus this run's held-back rules.
           compose_body() {
             npm run --silent sync:report -- --docs-path ../documentation --format pr-body \
-              --base origin/main --generation-report ../generation-report.json \
-              "${PREVIOUS_BODY[@]}" > ../pr-body-next.md
+              --base origin/main --generation-report ../generation-report.json > ../pr-body-next.md
           }
 
           # The generator writes rule bodies, AGENTS.md and SKILL.md under these.
@@ -219,7 +209,12 @@ jobs:
             # Nothing new to commit, but the open PR's body can still be stale:
             # rules held back now, or an earlier run that pushed and then
             # failed to update the body.
+            if ! OPEN_PR=$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty'); then
+              echo "::error::Could not determine whether an open sync PR owns $BRANCH."
+              exit 1
+            fi
             if [ -n "$OPEN_PR" ]; then
+              gh pr view "$OPEN_PR" --json body --jq .body > ../pr-body-current.md
               compose_body
               if cmp -s ../pr-body-current.md ../pr-body-next.md; then
                 echo "No new changes; sync PR #${OPEN_PR} is current."
@@ -265,7 +260,15 @@ jobs:
           # The branch is already checked out (see "Check out the rolling sync
           # branch"), so this commit lands on top of its existing history.
           git add -- "${SKILL_DIRS[@]}"
-          git commit -m "docs: regenerate rules from documentation@${SHORT}"
+          # Repairs ride on the commit as trailers, so the PR body can list
+          # them even if this run fails after pushing.
+          {
+            echo "docs: regenerate rules from documentation@${SHORT}"
+            TRAILERS=$(npm run --silent sync:report -- --format commit-trailers \
+              --generation-report ../generation-report.json)
+            if [ -n "$TRAILERS" ]; then printf '\n%s\n' "$TRAILERS"; fi
+          } > ../commit-message.txt
+          git commit -F ../commit-message.txt
           # This commit is a descendant of origin/$BRANCH (or of main on a fresh
           # branch), so the push normally fast-forwards. --force-with-lease
           # still covers the fresh-branch case while refusing to clobber a push

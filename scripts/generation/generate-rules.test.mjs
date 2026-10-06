@@ -216,3 +216,23 @@ test('a rule is not held back on a file the validator would reject', async () =>
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test('a report that cannot be written fails a run that otherwise succeeded', async () => {
+	const root = scaffold();
+	const api = await fakeApi({ kept: [body('Kept', FULL)], fixed: [body('Fixed', FULL)] });
+	try {
+		const { status, output } = await run(
+			GENERATE,
+			['--docs-path', path.join(root, 'docs'), '--report', path.join(root, 'missing/report.json')],
+			{
+				cwd: root,
+				env: { ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: api.url, DOCS_SHA: 'new' },
+			},
+		);
+		assert.notEqual(status, 0, output);
+		assert.match(output, /ENOENT/);
+	} finally {
+		api.server.close();
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});

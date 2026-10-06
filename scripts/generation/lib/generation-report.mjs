@@ -3,7 +3,6 @@
 // that list is what a reviewer pins with `must_cover`, waives with
 // `allow_dropped`, or takes as evidence the rule needs splitting.
 
-import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 
 export async function loadGenerationReport(file) {
@@ -14,9 +13,6 @@ export async function loadGenerationReport(file) {
 function emptyReport() {
 	return { regenerated: [], repaired: [], heldBack: [] };
 }
-
-// Keyed by skill as well, in case two skills ever share a slug.
-export const ruleKey = (entry) => `${entry.skill}/${entry.rule}`;
 
 // An inline code span for arbitrary text. must_cover anchors may contain
 // backticks (e.g. '`Accept`'), so the delimiter must be a longer backtick run
@@ -94,40 +90,37 @@ export function repairedMarkdown(report) {
 	return lines.join('\n');
 }
 
-// The sync PR body is recomposed on every run, and a run only knows what it
-// repaired itself. Earlier runs' repairs ride along in a hidden comment in the
-// body and are merged forward. Base64, so no fact can end the comment early.
-const SYNC_STATE = /<!-- sync-state:v1 ([A-Za-z0-9+/=]*) -->/;
+// Each sync commit records the rules its run repaired as trailers, so the
+// record travels with the push and the PR body can be rebuilt from the branch
+// alone. The value is the report entry as JSON.
+const REPAIRED_TRAILER = 'Sync-Repaired: ';
 
-const isRepairedEntry = (entry) =>
-	typeof entry?.skill === 'string' &&
-	typeof entry.rule === 'string' &&
-	Number.isInteger(entry.repairs) &&
-	Array.isArray(entry.restored) &&
-	Array.isArray(entry.fixed);
+const isStringList = (value) =>
+	Array.isArray(value) && value.every((item) => typeof item === 'string');
 
-export function readSyncState(body) {
-	const match = body?.match(SYNC_STATE);
-	if (!match) return { repaired: [] };
-	try {
-		const state = JSON.parse(Buffer.from(match[1], 'base64').toString('utf-8'));
-		return { repaired: (state.repaired ?? []).filter(isRepairedEntry) };
-	} catch {
-		return { repaired: [] }; // hand-edited or truncated: start over
+export function repairTrailers(report) {
+	return report.repaired.map((entry) => REPAIRED_TRAILER + JSON.stringify(entry));
+}
+
+export function parseRepairTrailers(message) {
+	const entries = [];
+	for (const line of message.split('\n')) {
+		if (!line.startsWith(REPAIRED_TRAILER)) continue;
+		let entry;
+		try {
+			entry = JSON.parse(line.slice(REPAIRED_TRAILER.length));
+		} catch {
+			continue;
+		}
+		if (
+			typeof entry?.skill === 'string' &&
+			typeof entry.rule === 'string' &&
+			Number.isInteger(entry.repairs) &&
+			isStringList(entry.restored) &&
+			isStringList(entry.fixed)
+		) {
+			entries.push(entry);
+		}
 	}
-}
-
-export function syncStateComment(state) {
-	return `<!-- sync-state:v1 ${Buffer.from(JSON.stringify(state)).toString('base64')} -->`;
-}
-
-// The repairs to list for a PR that changes `changed` rules: earlier runs'
-// repairs, minus rules this run regenerated (its own outcome replaces theirs),
-// plus this run's, limited to rules the PR still changes.
-export function mergeRepaired(previous, generation, changed) {
-	const regenerated = new Set(generation.regenerated.map(ruleKey));
-	const stillChanged = new Set(changed.map(ruleKey));
-	return [...previous.filter((entry) => !regenerated.has(ruleKey(entry))), ...generation.repaired]
-		.filter((entry) => stillChanged.has(ruleKey(entry)))
-		.sort((a, b) => ruleKey(a).localeCompare(ruleKey(b)));
+	return entries;
 }

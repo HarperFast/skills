@@ -1,7 +1,7 @@
 // End-to-end tests for `sync-report.mjs --format pr-body` on a rolling sync
-// branch: a scratch skills repository whose branch carries two runs of
-// changes, and a scratch docs repository whose commits the rules were synced
-// from. The body must describe the whole branch, not only the latest run.
+// branch: a scratch skills repository whose branch carries several runs, and
+// a scratch docs repository whose commits the rules were synced from. The
+// body must describe the whole branch, not only the latest run.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,12 +10,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { readSyncState, syncStateComment } from './lib/generation-report.mjs';
+import { repairTrailers } from './lib/generation-report.mjs';
 import { SKILLS } from './lib/manifest.mjs';
 import { buildFrontmatter, composeRuleFile } from './lib/render.mjs';
 
 const SYNC_REPORT = path.resolve(import.meta.dirname, 'sync-report.mjs');
-const RULES_DIR = 'harper-best-practices/rules';
+const SKILL = 'harper-best-practices';
+const RULES_DIR = `${SKILL}/rules`;
 
 function git(cwd, ...args) {
 	return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
@@ -42,9 +43,18 @@ function writeRule(root, rule, sourceCommit, text) {
 	);
 }
 
-// Docs with three commits; skills whose main synced rules `a` and `c` from the
-// first docs commit and `b` from the second; then a sync branch on which run 1
-// regenerated `a` and run 2 regenerated `b`.
+const repaired = (rule, restored) => ({ skill: SKILL, rule, repairs: 1, restored, fixed: [] });
+
+// A sync commit as the workflow writes it, with one trailer per repair.
+function syncCommit(skills, repairs) {
+	const message = ['docs: regenerate rules', ''];
+	message.push(...repairTrailers({ repaired: repairs }));
+	git(skills, 'commit', '-qa', '-m', message.join('\n'));
+}
+
+// Docs with three commits; skills whose main synced rules `a`, `c` and `d`
+// from the first docs commit and `b` from the second; then a sync branch on
+// which run 1 regenerated `a` with a repair and run 2 regenerated `b` with one.
 function scaffold() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-report-'));
 	const docs = path.join(root, 'docs');
@@ -65,63 +75,47 @@ function scaffold() {
 	writeRule(skills, 'a', docsCommits[0], 'A as on main.');
 	writeRule(skills, 'b', docsCommits[1], 'B as on main.');
 	writeRule(skills, 'c', docsCommits[0], 'C as on main.');
+	writeRule(skills, 'd', docsCommits[0], 'D as on main.');
 	git(skills, 'add', '-A');
 	git(skills, 'commit', '-qm', 'main');
 
 	git(skills, 'checkout', '-qb', 'auto/docs-sync');
 	writeRule(skills, 'a', docsCommits[2], 'A regenerated in run 1.');
-	git(skills, 'commit', '-qam', 'run 1');
+	syncCommit(skills, [repaired('a', ['a()'])]);
 	writeRule(skills, 'b', docsCommits[2], 'B regenerated in run 2.');
-	git(skills, 'commit', '-qam', 'run 2');
+	syncCommit(skills, [repaired('b', ['b()'])]);
 	return { root, docs, skills, docsCommits };
 }
 
-const repaired = (rule, restored) => ({
-	skill: 'harper-best-practices',
-	rule,
-	repairs: 1,
-	restored,
-	fixed: [],
-});
-
-// Run 2's report: it regenerated `b` with a repair, and held `c` back.
-const run2 = {
-	regenerated: [{ skill: 'harper-best-practices', rule: 'b' }],
-	repaired: [repaired('b', ['b()'])],
+// The latest run's report: it held `c` back.
+const latestRun = {
+	regenerated: [],
+	repaired: [],
 	heldBack: [
-		{
-			skill: 'harper-best-practices',
-			rule: 'c',
-			repairs: 2,
-			dropped: ['c()'],
-			missingAnchors: [],
-			invalid: [],
-		},
+		{ skill: SKILL, rule: 'c', repairs: 2, dropped: ['c()'], missingAnchors: [], invalid: [] },
 	],
 };
 
-function prBody({ skills, docs, root }, previousBody) {
+function prBody({ skills, docs, root }) {
 	const reportPath = path.join(root, 'report.json');
-	fs.writeFileSync(reportPath, JSON.stringify(run2));
+	fs.writeFileSync(reportPath, JSON.stringify(latestRun));
 	const args = ['--docs-path', docs, '--format', 'pr-body', '--base', 'main'];
 	args.push('--generation-report', reportPath);
-	if (previousBody !== undefined) {
-		const previousPath = path.join(root, 'previous.md');
-		fs.writeFileSync(previousPath, previousBody);
-		args.push('--previous-body', previousPath);
-	}
 	return execFileSync(process.execPath, [SYNC_REPORT, ...args], { cwd: skills, encoding: 'utf-8' });
 }
+
+const changedSection = (body) => body.split('### Why these rules changed')[1].split('###')[0];
 
 test('the body lists every rule the branch changes, not only the latest run', () => {
 	const repo = scaffold();
 	try {
 		const [one, two, three] = repo.docsCommits.map((sha) => sha.slice(0, 7));
 		const body = prBody(repo);
+		assert.match(body, /relative to `main`/);
 		assert.match(body, new RegExp(`^- \`a\` — last synced from docs@${one}$`, 'm'));
 		assert.match(body, new RegExp(`^- \`b\` — last synced from docs@${two}$`, 'm'));
 		// `c` is unchanged on the branch: held back, not changed.
-		assert.doesNotMatch(body, /^- `c` — last synced/m);
+		assert.doesNotMatch(changedSection(body), /`c`/);
 		assert.match(
 			body,
 			/^- `c` \(harper-best-practices\) — after 2 repairs, still dropped `c\(\)`$/m,
@@ -137,27 +131,35 @@ test('the body lists every rule the branch changes, not only the latest run', ()
 	}
 });
 
-test('repairs from earlier runs carry forward through the previous body', () => {
+test('repairs come from every run’s commit, until a later change to the rule', () => {
 	const repo = scaffold();
 	try {
-		const withoutPrevious = prBody(repo);
-		assert.deepEqual(
-			readSyncState(withoutPrevious).repaired.map((entry) => entry.rule),
-			['b'],
-		);
-
-		// Run 1 repaired `a`, and the open PR's body still says so.
-		const previous = `Old body.\n\n${syncStateComment({ repaired: [repaired('a', ['a()'])] })}\n`;
-		const body = prBody(repo, previous);
+		let body = prBody(repo);
 		assert.match(body, /^- `a` — 1 repair: restored `a\(\)`$/m);
 		assert.match(body, /^- `b` — 1 repair: restored `b\(\)`$/m);
-		assert.deepEqual(
-			readSyncState(body).repaired.map((entry) => entry.rule),
-			['a', 'b'],
-		);
-		// Recomposing from its own output changes nothing, so a run with
-		// nothing new leaves the PR body alone.
-		assert.equal(prBody(repo, body), body);
+
+		// Run 3 regenerates `a` cleanly, so its run-1 repair no longer
+		// describes what the PR carries.
+		writeRule(repo.skills, 'a', repo.docsCommits[2], 'A regenerated again in run 3.');
+		syncCommit(repo.skills, []);
+		body = prBody(repo);
+		assert.doesNotMatch(body, /^- `a` — 1 repair/m);
+		assert.match(body, /^- `b` — 1 repair: restored `b\(\)`$/m);
+	} finally {
+		fs.rmSync(repo.root, { recursive: true, force: true });
+	}
+});
+
+test('added and deleted rule files are named for what they are', () => {
+	const repo = scaffold();
+	try {
+		fs.rmSync(path.join(repo.skills, RULES_DIR, 'd.md'));
+		writeRule(repo.skills, 'e', repo.docsCommits[2], 'E is new.');
+		git(repo.skills, 'add', '-A');
+		git(repo.skills, 'commit', '-qm', 'review fix');
+		const changed = changedSection(prBody(repo));
+		assert.match(changed, /^- `d` — deleted in this PR$/m);
+		assert.match(changed, /^- `e` — new in this PR$/m);
 	} finally {
 		fs.rmSync(repo.root, { recursive: true, force: true });
 	}

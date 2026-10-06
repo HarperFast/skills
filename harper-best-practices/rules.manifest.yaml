@@ -204,7 +204,7 @@ rules:
       #   @updatedTime (1×) → the three exceptions PUT always applies
       - 'Location'
       - '@updatedTime'
-      # One-line Notes facts that regeneration kept compressing away (#118);
+      # One-line Notes facts that regeneration kept compressing away;
       # each occurs once in the sources.
       - 'Sec-WebSocket-Protocol: mqtt'
       - '@hidden'
@@ -227,7 +227,7 @@ rules:
       - '=lt='
       # The signatures, verbatim, in place of the bare `select(`/`sort(`/
       # `limit(`: any one example satisfied those, and the signatures under
-      # them kept being dropped (#118). Each contains the anchor it replaces.
+      # them kept being dropped. Each contains the anchor it replaces.
       - 'select()'
       - 'sort(property)'
       - 'sort(+property,-property,...)'
@@ -712,7 +712,7 @@ rules:
       # occurrence of `headers` in the whole-file source is in that section.
       - 'headers'
       # The `moduleLoader` trade-offs, which the `moduleLoader` anchor alone
-      # did not hold (#118): a separate context breaks `instanceof` across the
+      # did not hold: a separate context breaks `instanceof` across the
       # boundary, and `native` is a plain `import()` without the app-scoped
       # `logger`.
       - 'instanceof'

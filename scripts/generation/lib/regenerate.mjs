@@ -1,17 +1,7 @@
-// Regenerate one `mode: generate` rule body, repairing what the model gets
-// wrong, and decide whether the result may replace the committed body.
-//
-// The model compresses each regeneration differently, so a one-shot rewrite
-// routinely loses facts that the committed body carries and the docs still
-// state, and the validator refuses such a body. Each attempt is therefore
-// checked here with the same rules the validators gate on (checkBody). A
-// failing attempt goes back to the model with exactly what is wrong; after
-// `maxRepairs` repairs the rule is reported as not ok, and the caller keeps the
-// committed body (holds the rule back) so one bad rule cannot fail the whole
-// sync.
-//
-// Pure orchestration: the model sits behind `conversation` (see
-// lib/llm.mjs `ruleConversation`), so this is testable without the network.
+// Regenerate one `mode: generate` rule body, sending what the validators
+// would reject back to the model, and report whether the result may replace
+// the committed body. Testable without the network: the model sits behind
+// `conversation` (lib/llm.mjs `ruleConversation`).
 
 import { structuralProblems } from './body-checks.mjs';
 import { anchorsBeyondFacts, droppedFacts, missingAnchors } from './retention.mjs';

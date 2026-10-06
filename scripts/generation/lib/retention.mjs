@@ -53,8 +53,6 @@ const verifiedHeads = new Set();
 
 export function bodyAtHead(relPath) {
 	const spec = `HEAD:${relPath}`;
-	// Git's own stderr says what went wrong; the spawn error's message (e.g.
-	// ENOENT when git is missing) is the fallback.
 	const fail = (err) =>
 		new Error(
 			`Cannot read the committed baseline ${spec}: ${err.stderr?.toString().trim() || err.message}`,

@@ -3,6 +3,7 @@
 // that list is what a reviewer pins with `must_cover`, waives with
 // `allow_dropped`, or takes as evidence the rule needs splitting.
 
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 
 export async function loadGenerationReport(file) {
@@ -93,31 +94,40 @@ export function repairedMarkdown(report) {
 	return lines.join('\n');
 }
 
-// Markers around the held-back section in the sync PR body, so a run with
-// nothing new to commit can still refresh that section in the open PR
-// (spliceHeldBack) without recomposing the provenance around it.
-export const HELD_BACK_BEGIN = '<!-- held-back:begin -->';
-export const HELD_BACK_END = '<!-- held-back:end -->';
+// The sync PR body is recomposed on every run, and a run only knows what it
+// repaired itself. Earlier runs' repairs ride along in a hidden comment in the
+// body and are merged forward. Base64, so no fact can end the comment early.
+const SYNC_STATE = /<!-- sync-state:v1 ([A-Za-z0-9+/=]*) -->/;
 
-// The held-back section between its markers. The markers are emitted even
-// when nothing is held back, so a later splice always has a place to land.
-export function heldBackBlock(report) {
-	const section = heldBackMarkdown(report);
-	return [HELD_BACK_BEGIN, ...(section ? [section] : []), HELD_BACK_END].join('\n');
+const isRepairedEntry = (entry) =>
+	typeof entry?.skill === 'string' &&
+	typeof entry.rule === 'string' &&
+	Number.isInteger(entry.repairs) &&
+	Array.isArray(entry.restored) &&
+	Array.isArray(entry.fixed);
+
+export function readSyncState(body) {
+	const match = body?.match(SYNC_STATE);
+	if (!match) return { repaired: [] };
+	try {
+		const state = JSON.parse(Buffer.from(match[1], 'base64').toString('utf-8'));
+		return { repaired: (state.repaired ?? []).filter(isRepairedEntry) };
+	} catch {
+		return { repaired: [] }; // hand-edited or truncated: start over
+	}
 }
 
-// A begin marker, then an end marker, with no other marker between them. A
-// marker left dangling by a hand edit never pairs with one further on, so it
-// cannot make a splice swallow the text between them.
-const HELD_BACK_PAIR = new RegExp(
-	`${HELD_BACK_BEGIN}(?:(?!${HELD_BACK_BEGIN}|${HELD_BACK_END})[\\s\\S])*${HELD_BACK_END}`,
-);
+export function syncStateComment(state) {
+	return `<!-- sync-state:v1 ${Buffer.from(JSON.stringify(state)).toString('base64')} -->`;
+}
 
-// `body` with its held-back section replaced by the report's. A body without
-// a marker pair (written before they existed, or hand-edited) gets the
-// section appended, and only when there is something to say.
-export function spliceHeldBack(body, report) {
-	if (HELD_BACK_PAIR.test(body)) return body.replace(HELD_BACK_PAIR, () => heldBackBlock(report));
-	if (!report.heldBack.length) return body;
-	return `${body.trimEnd()}\n\n${heldBackBlock(report)}\n`;
+// The repairs to list for a PR that changes `changed` rules: earlier runs'
+// repairs, minus rules this run regenerated (its own outcome replaces theirs),
+// plus this run's, limited to rules the PR still changes.
+export function mergeRepaired(previous, generation, changed) {
+	const regenerated = new Set(generation.regenerated.map(ruleKey));
+	const stillChanged = new Set(changed.map(ruleKey));
+	return [...previous.filter((entry) => !regenerated.has(ruleKey(entry))), ...generation.repaired]
+		.filter((entry) => stillChanged.has(ruleKey(entry)))
+		.sort((a, b) => ruleKey(a).localeCompare(ruleKey(b)));
 }

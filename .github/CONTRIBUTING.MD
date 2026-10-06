@@ -149,9 +149,7 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 1. **Checks out `HarperFast/documentation`** at the triggering SHA and runs `npm ci && npm run build` in it. This produces per-route flat-markdown files under `documentation/build/` via the `@signalwire/docusaurus-plugin-llms-txt` Docusaurus plugin.
 
-2. **Captures pre-sync provenance** — `sync-report.mjs` snapshots each rule's recorded baseline and which rules are stale, before generation overwrites the frontmatter. The sync PR body is composed from this snapshot.
-
-3. **Reads `rules.manifest.yaml`** and iterates over every non-synthesized rule.
+2. **Reads `rules.manifest.yaml`** and iterates over every non-synthesized rule.
 
 3. **Resolves sources** — for each `sources[].path`, reads the corresponding file from `documentation/build/`. If `sources[].section` is set, slices out that heading's content subtree. Concatenates sources in manifest order.
 
@@ -169,7 +167,7 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 9. **Validates** — runs `validate-generated.mjs` (manifest lint, frontmatter reconciliation, must-cover assertions, fact retention, AGENTS.md round-trip).
 
-10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR. The PR body names each held-back rule with what it kept getting wrong, and each rule a repair pass had to fix. When nothing else changed, the run refreshes the held-back list in the open sync PR's body; with no open PR to name them, it fails instead.
+10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR. The PR body is rebuilt on every run by `sync-report.mjs --format pr-body`. It lists every rule the branch changes relative to `main`, the docs commit each was last synced from there, and the docs commit range since the oldest of those baselines, so it covers every run on the rolling branch, not only the latest. It also names each rule this run held back, with what it kept getting wrong, and each repair made on the PR so far. Repairs from earlier runs are carried forward in a hidden comment in the body. When nothing else changed, the run still refreshes an open sync PR's body; with no open PR to name held-back rules, it fails instead.
 
     A failure in any step adds a comment to the one open `Auto-sync generation failure` issue (or opens it), quoting the held-back rules and the validation output.
 
@@ -277,7 +275,7 @@ To avoid this:
 
   It compares every rule's recorded hash against the current docs build and exits non-zero (under `--strict`) if any rule is stale. A clean run means your baselines match the docs you built against. Drop `--strict` for an informational report.
 
-The auto-sync workflow runs the same report before regenerating and uses it to explain each sync PR — listing which rules changed, the docs commit each was last synced from, and the full docs commit range since that baseline.
+The auto-sync workflow explains each sync PR from the same recorded baselines, read from `main`: every rule the PR changes, the docs commit each was last synced from, and the full docs commit range since the oldest of those baselines.
 
 ---
 

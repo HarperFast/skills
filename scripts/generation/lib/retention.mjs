@@ -39,27 +39,38 @@ export function inlineCodeSpans(md) {
 
 // The rule body as committed at HEAD, or null when HEAD has no such file (a
 // new rule): absence of a baseline is not a retention violation. Any other
-// failure to read it throws. Treating an unreadable baseline as absent would
-// switch retention off silently, and the generator and validator would then
-// both accept a lossy body.
+// failure to read it throws — no repository, no git, or no HEAD commit yet.
+// Treating an unreadable baseline as absent would switch retention off
+// silently, and the generator and validator would then both accept a lossy
+// body.
 //
 // HEAD rather than the working tree, in both the generator and the validator,
 // so a local re-run cannot launder a fact an earlier uncommitted run dropped.
 export function bodyAtHead(relPath) {
 	const spec = `HEAD:${relPath}`;
+	const fail = (err) => new Error(`Cannot read the committed baseline ${spec}: ${err.message}`);
 	try {
-		// With --quiet, exit 1 means only "no such object". Anything else — no
-		// repository, no HEAD, no git — is rethrown.
-		execFileSync('git', ['rev-parse', '--verify', '--quiet', spec], { stdio: 'ignore' });
+		// `HEAD:<path>` alone exits 1 for an unborn HEAD as well as a missing
+		// path, so the commit is verified first.
+		git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+	} catch (err) {
+		throw fail(err);
+	}
+	try {
+		git(['rev-parse', '--verify', '--quiet', spec]);
 	} catch (err) {
 		if (err.status === 1) return null;
-		throw new Error(`Cannot read the committed baseline ${spec}: ${err.message}`);
+		throw fail(err);
 	}
-	const raw = execFileSync('git', ['show', spec], {
-		encoding: 'utf-8',
-		stdio: ['ignore', 'pipe', 'pipe'],
-	});
-	return matter(raw).content.trim();
+	try {
+		return matter(git(['show', spec])).content.trim();
+	} catch (err) {
+		throw fail(err);
+	}
+}
+
+function git(args) {
+	return execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // Facts present in BOTH the previously committed body AND the current docs
@@ -88,7 +99,13 @@ export function droppedFacts({ previousBody, body, source, allowDropped = [] }) 
 	return dropped.sort();
 }
 
-// `must_cover` strings the body does not contain, in manifest order.
 export function missingAnchors(body, mustCover = []) {
 	return mustCover.filter((must) => !body.includes(must));
+}
+
+// The anchors that are not just a dropped fact again, for listing both without
+// repeats. An anchor may carry its code-span backticks (`` `Accept` ``) where
+// the fact is the bare token.
+export function anchorsBeyondFacts(anchors, facts) {
+	return anchors.filter((anchor) => !facts.includes(anchor.replace(/^`+|`+$/g, '')));
 }

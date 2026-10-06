@@ -34,7 +34,6 @@ import matter from 'gray-matter';
 
 import {
 	loadManifest,
-	normalizeSource,
 	SKILLS,
 	VALID_CATEGORIES,
 	VALID_MODES,
@@ -45,6 +44,7 @@ import {
 	assembleAgentsMd,
 	assembleSkillIndex,
 	bodyOf,
+	frontmatterProblems,
 	SKILL_INDEX_BEGIN,
 	SKILL_INDEX_END,
 } from './lib/render.mjs';
@@ -213,36 +213,9 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 		const body = parsed.content.trim();
 
 		// --- Layer 3: reconciliation ---
-		if (fm.name !== slug) errors.push(`${where}: frontmatter "name" must equal "${slug}"`);
-		if (fm.description !== entry.description) {
-			errors.push(`${where}: frontmatter "description" diverges from manifest`);
-		}
+		for (const problem of frontmatterProblems(entry, fm)) errors.push(`${where}: ${problem}`);
 		const meta = fm.metadata;
-		if (!isPlainObject(meta)) {
-			errors.push(`${where}: frontmatter must have a "metadata" object`);
-			continue;
-		}
-		if (meta.mode !== entry.mode) {
-			errors.push(
-				`${where}: metadata.mode (${JSON.stringify(meta.mode)}) != manifest mode (${JSON.stringify(entry.mode)})`,
-			);
-		}
-
-		if (entry.mode === 'generate' || entry.mode === 'direct') {
-			if (!isNonEmptyString(meta.sourceCommit))
-				errors.push(`${where}: metadata.sourceCommit required`);
-			if (!isNonEmptyString(meta.inputHash)) errors.push(`${where}: metadata.inputHash required`);
-			const manifestNorm = entry.sources.map(normalizeSource);
-			const fmNorm = Array.isArray(meta.sources) ? meta.sources : [];
-			if (manifestNorm.length !== fmNorm.length || !manifestNorm.every((s, i) => s === fmNorm[i])) {
-				errors.push(`${where}: metadata.sources does not match manifest sources (regenerate)`);
-			}
-		} else {
-			for (const f of ['sources', 'sourceCommit', 'inputHash']) {
-				if (meta[f] !== undefined)
-					errors.push(`${where}: metadata.${f} must be omitted for synthesized`);
-			}
-		}
+		if (!isPlainObject(meta)) continue;
 
 		// --- Layer 4: per-mode body checks ---
 		if (entry.mode === 'generate' || entry.mode === 'direct') {

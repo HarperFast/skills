@@ -169,9 +169,6 @@ jobs:
         working-directory: skills
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        # The report names held-back and repaired rules for the PR body and the
-        # failure issue; the log is quoted in the failure issue when a rule
-        # stops the run.
         run: |
           set -o pipefail
           npm run generate -- --docs-path ../documentation --report ../generation-report.json 2>&1 | tee ../generate.log
@@ -179,8 +176,6 @@ jobs:
       - name: Validate
         id: validate
         working-directory: skills
-        # The log is quoted in the failure issue, so the reason is readable
-        # there without opening the run.
         run: |
           set -o pipefail
           {
@@ -316,11 +311,10 @@ jobs:
           # issue instead of opening one per deploy.
           TITLE="Auto-sync generation failure"
 
-          # What went wrong, quoted so the issue is readable without the run.
           DETAILS=../failure-details.md
           : > "$DETAILS"
           if [ -s ../generation-report.json ]; then
-            npm run --silent sync:report -- --format held-back \
+            npm run --silent sync:report -- --format failure-details \
               --generation-report ../generation-report.json >> "$DETAILS" || true
           fi
           if [ "$GENERATE_OUTCOME" = "failure" ] && [ -s ../generate.log ]; then

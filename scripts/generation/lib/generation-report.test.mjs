@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import {
 	code,
+	failureDetailsMarkdown,
 	HELD_BACK_BEGIN,
 	HELD_BACK_END,
 	heldBackBlock,
@@ -41,14 +42,7 @@ test('held-back rules are named with what they still lacked', () => {
 				repairs: 2,
 				dropped: ['name==null', 'sort(property)'],
 				missingAnchors: ['`Accept`'],
-			},
-			{
-				skill: 'harper-best-practices',
-				rule: 'v5-upgrade',
-				repairs: 1,
-				dropped: [],
-				missingAnchors: [],
-				error: 'overloaded',
+				invalid: [],
 			},
 		],
 	});
@@ -57,9 +51,24 @@ test('held-back rules are named with what they still lacked', () => {
 		md,
 		/- `querying-rest-apis` \(harper-best-practices\) — after 2 repairs, still dropped `name==null`, `sort\(property\)`; still missing `must_cover` `` `Accept` ``$/m,
 	);
+});
+
+test('failure details name the rule the run stopped on, then what was held back', () => {
+	const stopped = {
+		...empty,
+		heldBack: [
+			{ skill: 's', rule: 'a', repairs: 2, dropped: ['f()'], missingAnchors: [], invalid: [] },
+		],
+		stoppedOn: { skill: 's', rule: 'b', reason: 'b: model call failed: 401' },
+	};
 	assert.match(
-		md,
-		/- `v5-upgrade` \(harper-best-practices\) — after 1 repair, model call failed: overloaded$/m,
+		failureDetailsMarkdown(stopped),
+		/^\*\*Generation stopped on `b` \(s\):\*\* `b: model call failed: 401`\n\n### Held back/,
+	);
+	assert.equal(failureDetailsMarkdown(empty), '');
+	assert.match(
+		failureDetailsMarkdown({ ...empty, stoppedOn: { reason: 'x' } }),
+		/^\*\*Generation stopped:\*\* `x`$/,
 	);
 });
 
@@ -88,7 +97,9 @@ test('held-back structural problems are named', () => {
 
 const held = {
 	...empty,
-	heldBack: [{ skill: 's', rule: 'r', repairs: 2, dropped: ['f()'], missingAnchors: [] }],
+	heldBack: [
+		{ skill: 's', rule: 'r', repairs: 2, dropped: ['f()'], missingAnchors: [], invalid: [] },
+	],
 };
 
 test('the held-back block keeps its markers even when empty', () => {

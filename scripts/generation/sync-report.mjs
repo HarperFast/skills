@@ -34,9 +34,11 @@
 //                         held back or repaired, and leaves held-back rules out
 //                         of the changed list.
 //
-//   --format held-back   Print only the held-back section of a generation
-//                         report (--generation-report <file>), or nothing. The
-//                         workflow adds it to the auto-sync failure issue.
+//   --format failure-details
+//                         Print what a generation report (--generation-report
+//                         <file>) says about a failed run: the rule it stopped
+//                         on and the rules held back, or nothing. The workflow
+//                         adds it to the auto-sync failure issue.
 //
 //   --format splice-held-back
 //                         Print the PR body in --pr-body-file with its held-back
@@ -53,12 +55,12 @@
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --out ../provenance.json
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body --from ../provenance.json \
 //     [--generation-report ../generation-report.json]
-//   node scripts/generation/sync-report.mjs --format held-back --generation-report ../generation-report.json
+//   node scripts/generation/sync-report.mjs --format failure-details --generation-report ../generation-report.json
 //   node scripts/generation/sync-report.mjs --format splice-held-back --pr-body-file ../pr-body.md \
 //     --generation-report ../generation-report.json
 //
 // Exit codes (report modes): 1 only when --strict and there is at least one
-// stale rule or resolution error; 0 otherwise. pr-body, held-back and
+// stale rule or resolution error; 0 otherwise. pr-body, failure-details and
 // splice-held-back always exit 0.
 
 import fs from 'node:fs/promises';
@@ -71,8 +73,8 @@ import matter from 'gray-matter';
 import { loadManifest, SKILLS } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
 import {
+	failureDetailsMarkdown,
 	heldBackBlock,
-	heldBackMarkdown,
 	loadGenerationReport,
 	repairedMarkdown,
 	ruleKey,
@@ -102,7 +104,7 @@ function parseArgs(argv) {
 		else if (a === '--pr-body-file') args.prBodyFile = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
-	const formats = ['text', 'json', 'pr-body', 'held-back', 'splice-held-back'];
+	const formats = ['text', 'json', 'pr-body', 'failure-details', 'splice-held-back'];
 	if (!formats.includes(args.format)) {
 		throw new Error(`--format must be one of ${formats.join(' / ')} (got ${args.format})`);
 	}
@@ -288,14 +290,14 @@ async function main() {
 		return;
 	}
 
-	if (args.format === 'held-back' || args.format === 'splice-held-back') {
+	if (args.format === 'failure-details' || args.format === 'splice-held-back') {
 		if (!args.generationReport) {
 			throw new Error(`--format ${args.format} requires --generation-report <file>`);
 		}
 		const generation = await loadGenerationReport(args.generationReport);
-		if (args.format === 'held-back') {
-			const section = heldBackMarkdown(generation);
-			if (section) process.stdout.write(section + '\n');
+		if (args.format === 'failure-details') {
+			const details = failureDetailsMarkdown(generation);
+			if (details) process.stdout.write(details + '\n');
 			return;
 		}
 		if (!args.prBodyFile)

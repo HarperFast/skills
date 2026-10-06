@@ -110,6 +110,48 @@ export function buildFrontmatter(entry, { sourceCommit, inputHash } = {}) {
 	return { name: entry.rule, description: entry.description, metadata };
 }
 
+// Where a rule file's frontmatter disagrees with its manifest entry, one
+// message per problem, or [] when it reconciles. validate-generated gates on
+// it; the generator checks it before keeping a file it could not regenerate.
+export function frontmatterProblems(entry, fm) {
+	const problems = [];
+	if (fm.name !== entry.rule) problems.push(`frontmatter "name" must equal "${entry.rule}"`);
+	if (fm.description !== entry.description) {
+		problems.push('frontmatter "description" diverges from manifest');
+	}
+	const meta = fm.metadata;
+	if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) {
+		problems.push('frontmatter must have a "metadata" object');
+		return problems;
+	}
+	if (meta.mode !== entry.mode) {
+		problems.push(
+			`metadata.mode (${JSON.stringify(meta.mode)}) != manifest mode (${JSON.stringify(entry.mode)})`,
+		);
+	}
+	if (entry.mode === 'generate' || entry.mode === 'direct') {
+		for (const field of ['sourceCommit', 'inputHash']) {
+			if (typeof meta[field] !== 'string' || meta[field].length === 0) {
+				problems.push(`metadata.${field} required`);
+			}
+		}
+		const manifestSources = entry.sources.map(normalizeSource);
+		const recordedSources = Array.isArray(meta.sources) ? meta.sources : [];
+		if (
+			manifestSources.length !== recordedSources.length ||
+			!manifestSources.every((source, i) => source === recordedSources[i])
+		) {
+			problems.push('metadata.sources does not match manifest sources (regenerate)');
+		}
+	} else {
+		for (const field of ['sources', 'sourceCommit', 'inputHash']) {
+			if (meta[field] !== undefined)
+				problems.push(`metadata.${field} must be omitted for synthesized`);
+		}
+	}
+	return problems;
+}
+
 // Compose a complete rule file (frontmatter + body). The body is expected to
 // start with its H1. Output is later run through oxfmt by the generator.
 export function composeRuleFile(frontmatter, body) {

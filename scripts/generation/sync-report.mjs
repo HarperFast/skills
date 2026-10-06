@@ -215,8 +215,12 @@ function changedRules(base) {
 		if (!relPath.endsWith('.md')) continue;
 		let recordedCommit = null;
 		if (status !== 'A') {
-			recordedCommit =
-				matter(git(['show', `${base}:${relPath}`])).data?.metadata?.sourceCommit ?? null;
+			try {
+				recordedCommit =
+					matter(git(['show', `${base}:${relPath}`])).data?.metadata?.sourceCommit ?? null;
+			} catch {
+				// --base is not where the branch diverged; no baseline to show.
+			}
 		}
 		const [skill, rule] = ruleKeyOf(relPath).split('/');
 		changed.push({ skill, rule, status, recordedCommit });

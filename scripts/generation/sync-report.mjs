@@ -29,6 +29,14 @@
 //                         reviewer sees *why* each rule regenerated, not just the
 //                         head SHA. Needs git history in the docs checkout
 //                         (the workflow checks out documentation at fetch-depth: 0).
+//                         With --generation-report <file> (the generator's
+//                         --report output), it also names the rules that were
+//                         held back or repaired, and leaves held-back rules out
+//                         of the changed list.
+//
+//   --format held-back   Print only the held-back section of a generation
+//                         report (--generation-report <file>), or nothing. The
+//                         workflow adds it to the auto-sync failure issue.
 //
 // Offline-first: hashing reads only the local docs build; pr-body reads only the
 // local docs git history. No network calls.
@@ -37,10 +45,13 @@
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --strict
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --out ../provenance.json
-//   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body --from ../provenance.json
+//   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body --from ../provenance.json \
+//     [--generation-report ../generation-report.json]
+//   node scripts/generation/sync-report.mjs --format held-back --generation-report ../generation-report.json
 //
 // Exit codes (report modes): 1 only when --strict and there is at least one
-// stale rule or resolution error; 0 otherwise. pr-body always exits 0.
+// stale rule or resolution error; 0 otherwise. pr-body and held-back always
+// exit 0.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -51,6 +62,12 @@ import matter from 'gray-matter';
 
 import { loadManifest, SKILLS } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
+import {
+	heldBackMarkdown,
+	loadGenerationReport,
+	repairedMarkdown,
+	ruleKey,
+} from './lib/generation-report.mjs';
 
 const PLAN_PATH = 'docs/plans/docs-driven-skills.md';
 
@@ -61,6 +78,7 @@ function parseArgs(argv) {
 		strict: false,
 		out: null,
 		from: null,
+		generationReport: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -69,10 +87,13 @@ function parseArgs(argv) {
 		else if (a === '--strict') args.strict = true;
 		else if (a === '--out') args.out = argv[++i];
 		else if (a === '--from') args.from = argv[++i];
+		else if (a === '--generation-report') args.generationReport = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
-	if (!['text', 'json', 'pr-body'].includes(args.format)) {
-		throw new Error(`--format must be one of text / json / pr-body (got ${args.format})`);
+	if (!['text', 'json', 'pr-body', 'held-back'].includes(args.format)) {
+		throw new Error(
+			`--format must be one of text / json / pr-body / held-back (got ${args.format})`,
+		);
 	}
 	return args;
 }
@@ -171,10 +192,13 @@ function oldestCommit(docsRepoPath, commits) {
 	return oldest?.sha ?? null;
 }
 
-function composePrBody(docsRepoPath, snapshot) {
+function composePrBody(docsRepoPath, snapshot, generation) {
 	const headSha = gitDocs(docsRepoPath, ['rev-parse', 'HEAD']);
 	const headShort = short(headSha);
-	const changed = snapshot.filter((r) => r.stale);
+	// A held-back rule was stale but kept its committed body, so it did not
+	// change. It gets its own section below instead.
+	const heldBack = new Set(generation.heldBack.map(ruleKey));
+	const changed = snapshot.filter((r) => r.stale && !heldBack.has(ruleKey(r)));
 
 	const lines = [
 		`Automated regeneration of docs-driven skill rules, now synced to ` +
@@ -225,6 +249,10 @@ function composePrBody(docsRepoPath, snapshot) {
 		}
 	}
 
+	for (const section of [heldBackMarkdown(generation), repairedMarkdown(generation)]) {
+		if (section) lines.push(section, '');
+	}
+
 	lines.push(
 		`Produced by \`.github/workflows/generate.yaml\`. Review the diff as you ` +
 			`would any rule change — the generator reads the docs build output and ` +
@@ -244,7 +272,17 @@ async function main() {
 	if (args.format === 'pr-body') {
 		if (!args.from) throw new Error('--format pr-body requires --from <snapshot.json>');
 		const snapshot = JSON.parse(await fs.readFile(args.from, 'utf-8'));
-		process.stdout.write(composePrBody(docsRepoPath, snapshot) + '\n');
+		const generation = await loadGenerationReport(args.generationReport);
+		process.stdout.write(composePrBody(docsRepoPath, snapshot, generation) + '\n');
+		return;
+	}
+
+	if (args.format === 'held-back') {
+		if (!args.generationReport) {
+			throw new Error('--format held-back requires --generation-report <file>');
+		}
+		const section = heldBackMarkdown(await loadGenerationReport(args.generationReport));
+		if (section) process.stdout.write(section + '\n');
 		return;
 	}
 

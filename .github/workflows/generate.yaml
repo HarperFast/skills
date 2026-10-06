@@ -165,71 +165,25 @@ jobs:
         working-directory: skills
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm run generate -- --docs-path ../documentation
+        # A rule whose regeneration keeps dropping facts is repaired, and if
+        # that fails, held back: its committed body is kept and the run goes on
+        # (see generate-rules.mjs). The report names held-back and repaired
+        # rules for the PR body and the failure issue.
+        run: npm run generate -- --docs-path ../documentation --report ../generation-report.json
 
       - name: Validate
+        id: validate
         working-directory: skills
+        # The log is quoted in the failure issue, so the reason is readable
+        # there without opening the run.
         run: |
-          npm run format:check
-          npm run build
-          node scripts/validate-skills.mjs
-          node scripts/generation/validate-generated.mjs --docs-path ../documentation
-
-      - name: Report generation failure
-        if: failure()
-        working-directory: skills
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
-        run: |
-          set -euo pipefail
-          # Resolve the actual docs commit SHA (falls back to the ref if the
-          # documentation checkout failed before we could read HEAD).
-          DOCS_SHA=$(git -C ../documentation rev-parse HEAD 2>/dev/null || echo "${{ steps.docsref.outputs.ref }}")
-          SHORT="${DOCS_SHA:0:7}"
-          TITLE="Auto-sync generation failure (${SHORT})"
-
-          # Idempotent by docs SHA: if an open issue for this SHA already
-          # exists, add a comment rather than opening a duplicate.
-          EXISTING=$(gh issue list --state open --json number,title \
-            --jq ".[] | select(.title == \"${TITLE}\") | .number" 2>/dev/null | head -1 || echo "")
-
-          if [ -n "$EXISTING" ]; then
-            echo "Existing failure issue #${EXISTING} — appending comment."
-            # REST, not `gh issue comment`: that uses the GraphQL addComment
-            # mutation, which this App token cannot call ("Resource not
-            # accessible by integration"), even though it can create issues
-            # over REST. That failure used to abort this step under `set -e`,
-            # so a repeat failure for an already-reported docs SHA produced no
-            # comment AND no visible reason — the 2026-09-07 run left no trace
-            # at all. Non-fatal either way: reporting must never mask the
-            # generation failure it exists to report.
-            gh api -X POST "/repos/${{ github.repository }}/issues/${EXISTING}/comments" \
-              -f body="Generation failed again for \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ). Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." \
-              || echo "Could not append a comment to #${EXISTING} (non-fatal)."
-          else
-            NEW_ISSUE_URL=$(gh issue create \
-              --title "${TITLE}" \
-              --body "Auto-sync generation failed for docs SHA \`${DOCS_SHA}\`.
-
-          Opened automatically by \`.github/workflows/generate.yaml\`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the full error.
-
-          **Common causes and fixes (Story 4 in docs/plans-archive/docs-driven-skills.md):**
-          - Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`.
-          - Section heading renamed or removed — update \`sources[].section\`.
-          - Must-cover assertion no longer in source — update \`must_cover\` or the section changed.
-          - Regeneration dropped a fact its sources still document — the model restructured a
-            rule and lost content. Re-run generation, or if the removal is correct, record it
-            under \`rules[<slug>].allow_dropped\` in the manifest.
-
-          After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR.")
-            echo "Opened failure issue ${NEW_ISSUE_URL}"
-            # Set the org-level "Bug" issue type (replaces the retired `bug` label).
-            NEW_ISSUE_NUM=$(printf '%s' "$NEW_ISSUE_URL" | grep -oE '[0-9]+$')
-            if [ -n "$NEW_ISSUE_NUM" ]; then
-              gh api -X PATCH "/repos/${{ github.repository }}/issues/${NEW_ISSUE_NUM}" \
-                -f type="Bug" || echo "Could not set issue type (non-fatal)."
-            fi
-          fi
+          set -o pipefail
+          {
+            npm run format:check
+            npm run build
+            node scripts/validate-skills.mjs
+            node scripts/generation/validate-generated.mjs --docs-path ../documentation
+          } 2>&1 | tee ../validate.log
 
       - name: Open or update sync PR
         working-directory: skills
@@ -247,8 +201,17 @@ jobs:
           # reported "no changes".
           mapfile -t SKILL_DIRS < <(node scripts/generation/skill-dirs.mjs)
 
+          HELD_BACK=$(jq '.heldBack | length' ../generation-report.json)
+
           # The generator writes rule bodies, AGENTS.md and SKILL.md under these.
           if git diff --quiet -- "${SKILL_DIRS[@]}"; then
+            if [ "$HELD_BACK" -gt 0 ]; then
+              # Nothing reached a PR, so nothing names the held-back rules:
+              # fail, so the failure issue records them. Every sync retries
+              # them until they regenerate faithfully or the manifest changes.
+              echo "::error::Nothing to sync, but ${HELD_BACK} rule(s) were held back because regeneration kept dropping facts: $(jq -r '[.heldBack[].rule] | join(", ")' ../generation-report.json)."
+              exit 1
+            fi
             echo "No changes — skills are already in sync with docs."
             exit 0
           fi
@@ -292,7 +255,8 @@ jobs:
           BODY="$(npm run --silent sync:report -- \
             --docs-path ../documentation \
             --format pr-body \
-            --from ../sync-provenance.json)"
+            --from ../sync-provenance.json \
+            --generation-report ../generation-report.json)"
 
           STATE=$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo "")
           if [ "$STATE" = "OPEN" ]; then
@@ -304,4 +268,96 @@ jobs:
             gh pr create --base main --head "$BRANCH" \
               --title "docs: regenerate rules from documentation@${SHORT}" \
               --body "$BODY"
+          fi
+
+      # Last, so it reports a failure in any step above, including the PR step.
+      - name: Report failure
+        if: failure()
+        working-directory: skills
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Resolve the actual docs commit SHA (falls back to the ref if the
+          # documentation checkout failed before we could read HEAD).
+          DOCS_SHA=$(git -C ../documentation rev-parse HEAD 2>/dev/null || echo "${{ steps.docsref.outputs.ref }}")
+
+          # One open issue for every failure, whatever the docs SHA, so a
+          # failure that repeats across docs deploys collects comments on one
+          # issue instead of opening one per deploy.
+          TITLE="Auto-sync generation failure"
+
+          # What went wrong, quoted so the issue is readable without the run.
+          DETAILS=../failure-details.md
+          : > "$DETAILS"
+          if [ -s ../generation-report.json ]; then
+            npm run --silent sync:report -- --format held-back \
+              --generation-report ../generation-report.json >> "$DETAILS" || true
+          fi
+          if [ "${{ steps.validate.outcome }}" = "failure" ] && [ -s ../validate.log ]; then
+            {
+              echo
+              echo '<details><summary>Validation output (last 60 lines)</summary>'
+              echo
+              echo '```'
+              tail -n 60 ../validate.log
+              echo '```'
+              echo
+              echo '</details>'
+            } >> "$DETAILS"
+          fi
+
+          # REST, not `gh issue list`: it pages through every open issue, where
+          # the list command stops at 30 and could miss the one to reuse.
+          # Issues only (the endpoint also returns PRs). A failed lookup falls
+          # through to opening a new issue: a duplicate beats a silent failure.
+          EXISTING=$(gh api --paginate "/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+            --jq ".[] | select(.pull_request == null and .title == \"${TITLE}\") | .number" \
+            2>/dev/null | head -1 || true)
+
+          if [ -n "$EXISTING" ]; then
+            echo "Existing failure issue #${EXISTING} — appending comment."
+            {
+              echo "Failed again for docs \`${DOCS_SHA}\` at $(date -u +%Y-%m-%dT%H:%M:%SZ) — [workflow run](${RUN_URL})."
+              echo
+              cat "$DETAILS"
+            } > ../failure-comment.md
+            # REST, not `gh issue comment`: that uses the GraphQL addComment
+            # mutation, which this App token cannot call ("Resource not
+            # accessible by integration"), even though it can create issues
+            # over REST. That failure used to abort this step under `set -e`,
+            # so a repeat failure for an already-reported docs SHA produced no
+            # comment AND no visible reason — the 2026-09-07 run left no trace
+            # at all. Non-fatal either way: reporting must never mask the
+            # generation failure it exists to report.
+            gh api -X POST "/repos/${{ github.repository }}/issues/${EXISTING}/comments" \
+              -F body=@../failure-comment.md \
+              || echo "Could not append a comment to #${EXISTING} (non-fatal)."
+          else
+            {
+              echo "Auto-sync failed for docs SHA \`${DOCS_SHA}\` — [workflow run](${RUN_URL})."
+              echo
+              echo "Opened automatically by \`.github/workflows/generate.yaml\`. Later failures are added to this issue as comments; close it once a sync succeeds."
+              echo
+              cat "$DETAILS"
+              echo
+              echo "**Common causes and fixes (Story 4 in docs/plans-archive/docs-driven-skills.md):**"
+              echo "- Source file renamed or moved — update \`sources[].path\` in \`rules.manifest.yaml\`."
+              echo "- Section heading renamed or removed — update \`sources[].section\`."
+              echo "- Rules held back with nothing else to sync — regeneration kept dropping facts the committed"
+              echo "  rule carries and the docs still state, even after repair passes. Pin the facts it loses"
+              echo "  with \`must_cover\`, split the rule if its sources are more than the model reliably keeps,"
+              echo "  or, if a removal is correct, record it under \`rules[<slug>].allow_dropped\`."
+              echo
+              echo "After fixing, regenerate locally (\`npm run generate -- --docs-path <docs>\`) and open a fix PR."
+            } > ../failure-issue.md
+            NEW_ISSUE_URL=$(gh issue create --title "${TITLE}" --body-file ../failure-issue.md)
+            echo "Opened failure issue ${NEW_ISSUE_URL}"
+            # Set the org-level "Bug" issue type (replaces the retired `bug` label).
+            NEW_ISSUE_NUM=$(printf '%s' "$NEW_ISSUE_URL" | grep -oE '[0-9]+$')
+            if [ -n "$NEW_ISSUE_NUM" ]; then
+              gh api -X PATCH "/repos/${{ github.repository }}/issues/${NEW_ISSUE_NUM}" \
+                -f type="Bug" || echo "Could not set issue type (non-fatal)."
+            fi
           fi

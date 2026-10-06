@@ -145,22 +145,25 @@ function describeProblems({ dropped, missingAnchors, invalid, frontmatter = [] }
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const report = { regenerated: [], repaired: [], heldBack: [] };
+	let failure = null;
 	try {
 		await run(args, report);
 	} catch (err) {
 		if (err instanceof StopRun) report.stoppedOn = { ...err.rule, reason: err.message };
-		throw err;
-	} finally {
-		// Also when the run stops: the failure issue reads what was held back.
-		// A failed write must not replace the error that stopped the run.
-		if (args.report) {
-			try {
-				await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
-			} catch (err) {
-				console.error(`Could not write the report to ${args.report}: ${err.message}`);
-			}
+		failure = err;
+	}
+	// Written when the run stops too: the failure issue reads what was held
+	// back. A failed write fails a run that otherwise succeeded, but must not
+	// replace the error that stopped one.
+	if (args.report) {
+		try {
+			await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+		} catch (err) {
+			if (!failure) throw err;
+			console.error(`Could not write the report to ${args.report}: ${err.message}`);
 		}
 	}
+	if (failure) throw failure;
 }
 
 async function run(args, report) {

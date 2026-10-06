@@ -159,15 +159,19 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 5. **Produces the body** — `mode: generate` calls Claude under the rule template; `mode: direct` copies the resolved content verbatim.
 
+   A generated body must keep every inline-code fact that the committed body carries and the docs still state (the fact-retention check), and must contain every `must_cover` string. A body that misses any goes back to Claude with the list to restore, up to `GENERATE_MAX_REPAIRS` times (default 2). A rule that still misses some is **held back**: its committed body is kept, its stale input hash retries it on the next sync, and the rest of the run carries on — one lossy rule no longer blocks every other docs change.
+
 6. **Writes the rule file** with updated frontmatter (`sourceCommit`, `inputHash`, `sources` snapshot).
 
 7. **Reassembles `AGENTS.md`** from the formatted rule bodies.
 
 8. **Splices the generated index** into `SKILL.md` between the sentinel comments.
 
-9. **Validates** — runs `validate-generated.mjs` (manifest lint, frontmatter reconciliation, must-cover assertions, AGENTS.md round-trip). Failures open a GitHub issue pointing at the failing run.
+9. **Validates** — runs `validate-generated.mjs` (manifest lint, frontmatter reconciliation, must-cover assertions, fact retention, AGENTS.md round-trip).
 
-10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR.
+10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR. The PR body names each held-back rule with the facts it kept dropping, and each rule a repair pass had to fix. If rules were held back and nothing else changed, there is no PR to name them, so the run fails instead.
+
+    A failure in any step adds a comment to the one open `Auto-sync generation failure` issue (or opens it), quoting the held-back rules and the validation output.
 
 11. **The sync PR's `Validate` check** runs `npm run validate`, which includes `lint-relationships.mjs`. It fails on a `@relationship` example whose `from:`/`to:` names an attribute the example's type does not declare, whose field type Harper will not resolve, or whose cardinality prose (one-to-many / many-to-many) contradicts the attribute types. Such examples have so far come from the docs source, so fix them there and regenerate; a deliberate counter-example can be exempted with `<!-- lint-relationships: ignore -->` on the line before its fence.
 
@@ -250,6 +254,8 @@ Check what changed in the docs at the linked commit SHA. Common cases:
 
 - **Wrong content**: a source section may have changed. Update `sources[].section` or `sources[].path` in the manifest and regenerate.
 - **Missing key term**: add it to `must_cover` if it should always be present, then regenerate.
+- **A rule is listed under "Held back"**: its docs change is not in the PR, but the rest of the PR can still merge — fix the rule in its own PR. Pin the facts it keeps dropping with `must_cover` — a pinned fact is in the model's first prompt, not just its repair. If it drops a different handful every run, its sources are probably more than the model reliably keeps: split the rule. If a listed fact should go, record it under `allow_dropped`.
+- **A rule is listed under "Repaired"**: the first draft dropped those facts and a repair pass put them back. Check that each landed in a sensible place.
 - **Good content, but needs stable wording**: switch the rule to `mode: synthesized` and hand-author the body. The generator will never touch it again.
 
 Close the auto-PR without merging, fix the manifest on a new branch, and open a corrective PR against `main`. The next auto-sync will be a no-op once your fix merges.
@@ -289,7 +295,8 @@ The auto-sync workflow runs the same report before regenerating and uses it to e
 | Reassemble AGENTS.md and SKILL.md index | Automated (every generation run) |
 | Open sync PRs (with per-rule change provenance) | Automated (`generate.yaml` + `sync-report.mjs`) |
 | Keep recorded baselines current with docs main | Human (build docs at HEAD; `npm run sync:report --strict`) |
-| Open failure issues when generation breaks | Automated (`generate.yaml`) |
+| Repair or hold back a lossy regeneration | Automated (`generate-rules.mjs`) |
+| Report failures to the one open failure issue | Automated (`generate.yaml`) |
 | Review and merge sync PRs | Human |
 | Publish new npm versions | Automated (semantic-release on merge to main) |
 

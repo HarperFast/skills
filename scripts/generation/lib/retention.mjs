@@ -1,0 +1,87 @@
+// Fact retention: the one definition of "a fact this rule must keep".
+//
+// validate-generated.mjs gates on it, and generate-rules.mjs runs the same
+// check on each regenerated body so it can repair or hold back a lossy one
+// before the gate sees it. The two must agree exactly: if the generator
+// accepted a body the validator then rejected, one lossy rule would block the
+// whole sync again — which is the failure this module exists to prevent (#118).
+
+import { execFileSync } from 'node:child_process';
+import matter from 'gray-matter';
+
+import { stripFencedBlocks } from './sources.mjs';
+
+// Minimum length of a code span to treat as a retainable fact. Below this the
+// tokens are things like `id`, `or`, `{}` — too generic to carry meaning and
+// too noisy to gate on. `409` (3 chars) is the shortest real one observed.
+const MIN_FACT_CHARS = 3;
+
+// Inline code spans, which is where this corpus keeps its facts: identifiers,
+// config keys, status codes, header names, enum values, error strings. Prose
+// is deliberately excluded — rewording prose is expected and legitimate;
+// dropping `Sec-WebSocket-Protocol: mqtt` is not.
+//
+// Fenced blocks are excluded too: a body may legitimately move an example into
+// a cross-linked rule, and fence contents would otherwise pin whole snippets
+// in place. Stripping them needs the fence-aware scanner rather than a
+// ```-only regex — a backtick expression inside a ~~~ fence would otherwise
+// register as a fact, so deleting that example later would falsely block
+// generation for as long as the token survived anywhere in the docs source.
+export function inlineCodeSpans(md) {
+	const withoutFences = stripFencedBlocks(md);
+	const spans = new Set();
+	for (const m of withoutFences.matchAll(/`([^`\n]+)`/g)) {
+		const token = m[1].trim();
+		if (token.length >= MIN_FACT_CHARS) spans.add(token);
+	}
+	return spans;
+}
+
+// The rule body as committed at HEAD, or null when it cannot be read (a new
+// rule, a shallow checkout, or a non-git tree). Callers skip on null rather
+// than failing: absence of a baseline is not a retention violation.
+//
+// HEAD rather than the working tree, in both the generator and the validator,
+// so a local re-run cannot launder a fact an earlier uncommitted run dropped.
+export function bodyAtHead(relPath) {
+	try {
+		const raw = execFileSync('git', ['show', `HEAD:${relPath}`], {
+			encoding: 'utf-8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+		});
+		return matter(raw).content.trim();
+	} catch {
+		return null;
+	}
+}
+
+// Facts present in BOTH the previously committed body AND the current docs
+// source that are missing from the new body, sorted. Empty when there is no
+// previous body.
+//
+// Requiring presence in the current source is what makes this safe to gate on:
+// a fact deleted upstream is correctly dropped and never reported. Only facts
+// the docs still assert, and that this rule used to carry, are enforced.
+//
+// This is the retention check `must_cover` cannot be: must_cover requires a
+// human to have predicted each fact in advance, and a substring assertion
+// passes as long as the word appears somewhere — it cannot tell "the term is
+// still here" from "the fact is still intact". This check is derived from the
+// diff instead, so it covers facts nobody thought to anchor.
+export function droppedFacts({ previousBody, body, source, allowDropped = [] }) {
+	if (previousBody == null) return [];
+	const waived = new Set(allowDropped);
+	const dropped = [];
+	for (const fact of inlineCodeSpans(previousBody)) {
+		if (waived.has(fact)) continue;
+		if (!source.includes(fact)) continue; // no longer documented upstream
+		if (body.includes(fact)) continue; // still covered
+		dropped.push(fact);
+	}
+	return dropped.sort();
+}
+
+// `must_cover` strings the body does not contain, in manifest order.
+export function missingAnchors(body, mustCover = []) {
+	return mustCover.filter((must) => !body.includes(must));
+}

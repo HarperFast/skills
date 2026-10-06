@@ -12,6 +12,7 @@
 //
 // Usage:
 //   node scripts/generation/generate-rules.mjs [--docs-path <dir>] [--rule <slug>] [--force]
+//                                              [--report <file>]
 //   npm run generate -- --docs-path ../documentation
 //
 // Flags:
@@ -21,12 +22,25 @@
 //                      AGENTS.md and the SKILL.md index are still reassembled from
 //                      the on-disk rule bodies, so the result is committable.
 //   --force            Regenerate even if the input hash is unchanged.
+//   --report <file>    Write a JSON report of this run: rules regenerated,
+//                      rules repaired (and what was restored), and rules held
+//                      back (and what they still lacked). The auto-sync
+//                      workflow renders it into the sync PR body.
+//
+// A `mode: generate` body must keep every fact its committed version carries
+// that the docs still state, plus every `must_cover` string — the checks
+// validate-generated.mjs gates on (lib/retention.mjs). A body that misses any
+// goes back to the model with the list, up to GENERATE_MAX_REPAIRS times. A
+// rule that still fails is held back: its committed file is left untouched
+// (so its stale inputHash retries it next run) and the run carries on, so one
+// lossy rule cannot block every other docs change (#118).
 //
 // Environment:
-//   ANTHROPIC_API_KEY  Required for any rule in `mode: generate`.
-//   GENERATE_MODEL     Override the model (default claude-sonnet-4-6).
-//   DOCS_PATH          Default for --docs-path.
-//   DOCS_SHA           Docs commit SHA to record (default: git HEAD of the checkout).
+//   ANTHROPIC_API_KEY     Required for any rule in `mode: generate`.
+//   GENERATE_MODEL        Override the model (default claude-sonnet-4-6).
+//   GENERATE_MAX_REPAIRS  Repair attempts per rule before holding it back (default 2).
+//   DOCS_PATH             Default for --docs-path.
+//   DOCS_SHA              Docs commit SHA to record (default: git HEAD of the checkout).
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -36,7 +50,9 @@ import matter from 'gray-matter';
 
 import { loadManifest, SKILLS, sortedRules } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
-import { generateRuleBody, generationModel } from './lib/llm.mjs';
+import { generationModel, ruleConversation } from './lib/llm.mjs';
+import { DEFAULT_MAX_REPAIRS, regenerateFaithfully } from './lib/regenerate.mjs';
+import { bodyAtHead } from './lib/retention.mjs';
 import {
 	assembleAgentsMd,
 	assembleSkillIndex,
@@ -48,15 +64,31 @@ import {
 } from './lib/render.mjs';
 
 function parseArgs(argv) {
-	const args = { docsPath: process.env.DOCS_PATH || '../documentation', rule: null, force: false };
+	const args = {
+		docsPath: process.env.DOCS_PATH || '../documentation',
+		rule: null,
+		force: false,
+		report: null,
+	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === '--docs-path') args.docsPath = argv[++i];
 		else if (a === '--rule') args.rule = argv[++i];
 		else if (a === '--force') args.force = true;
+		else if (a === '--report') args.report = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
 	return args;
+}
+
+function maxRepairs() {
+	const raw = process.env.GENERATE_MAX_REPAIRS;
+	if (raw === undefined || raw === '') return DEFAULT_MAX_REPAIRS;
+	const n = Number(raw);
+	if (!Number.isInteger(n) || n < 0) {
+		throw new Error(`GENERATE_MAX_REPAIRS must be a non-negative integer (got ${raw})`);
+	}
+	return n;
 }
 
 function resolveDocsSha(docsRepoPath) {
@@ -70,10 +102,10 @@ function resolveDocsSha(docsRepoPath) {
 	}
 }
 
-// Read the existing rule file's frontmatter metadata, or null if the file
-// doesn't exist yet. Attempt the read and handle ENOENT rather than checking
-// for existence first — a separate check would race with the read.
-async function readExistingMeta(filePath) {
+// Read the existing rule file as { meta, body }, or null if the file doesn't
+// exist yet. Attempt the read and handle ENOENT rather than checking for
+// existence first — a separate check would race with the read.
+async function readExisting(filePath) {
 	let raw;
 	try {
 		raw = await fs.readFile(filePath, 'utf-8');
@@ -81,7 +113,16 @@ async function readExistingMeta(filePath) {
 		if (err.code === 'ENOENT') return null;
 		throw err;
 	}
-	return matter(raw).data?.metadata ?? null;
+	return { meta: matter(raw).data?.metadata ?? null, body: bodyOf(raw) };
+}
+
+// Join a list of facts/anchors for a console line, capped so one badly
+// regenerated rule cannot bury the log. The --report JSON carries every entry.
+function listForLog(items, max = 12) {
+	const shown = items.slice(0, max).map((i) => JSON.stringify(i));
+	return items.length > max
+		? `${shown.join(', ')} (+${items.length - max} more)`
+		: shown.join(', ');
 }
 
 async function main() {
@@ -90,6 +131,7 @@ async function main() {
 	const docsBuildDir = path.join(docsRepoPath, 'build');
 
 	const docsSha = resolveDocsSha(docsRepoPath);
+	const repairLimit = maxRepairs();
 	console.log(`Docs build: ${docsBuildDir}`);
 	console.log(`Docs SHA:   ${docsSha}`);
 
@@ -101,6 +143,8 @@ async function main() {
 	// skill — it belongs after the loop over SKILLS.
 	let ruleMatched = false;
 	let totalUsage = { input: 0, output: 0, cacheRead: 0 };
+	// What --report records. Only rules this run attempted appear.
+	const report = { docsSha, regenerated: [], repaired: [], heldBack: [] };
 
 	for (const skill of SKILLS) {
 		const manifest = await loadManifest(skill);
@@ -137,7 +181,8 @@ async function main() {
 			const inputHash = computeInputHash(sourceContent);
 
 			// Skip if unchanged.
-			const existingMeta = await readExistingMeta(filePath);
+			const existing = await readExisting(filePath);
+			const existingMeta = existing?.meta;
 			const unchanged =
 				existingMeta && existingMeta.mode === entry.mode && existingMeta.inputHash === inputHash;
 
@@ -150,16 +195,11 @@ async function main() {
 			// without a manual --force.
 			let anchorsUnsatisfied = false;
 			if (unchanged && entry.mode === 'generate' && entry.must_cover?.length) {
-				try {
-					const existingBody = bodyOf(await fs.readFile(filePath, 'utf-8'));
-					anchorsUnsatisfied = entry.must_cover.some((m) => !existingBody.includes(m));
-					if (anchorsUnsatisfied) {
-						console.log(
-							`  ${entry.rule}: source unchanged but must_cover unsatisfied — regenerating`,
-						);
-					}
-				} catch {
-					anchorsUnsatisfied = true; // unreadable body: regenerate rather than skip
+				anchorsUnsatisfied = entry.must_cover.some((m) => !existing.body.includes(m));
+				if (anchorsUnsatisfied) {
+					console.log(
+						`  ${entry.rule}: source unchanged but must_cover unsatisfied — regenerating`,
+					);
 				}
 			}
 
@@ -173,17 +213,68 @@ async function main() {
 			if (entry.mode === 'direct') {
 				body = sourceContent;
 			} else if (entry.mode === 'generate') {
-				const result = await generateRuleBody({
-					rule: entry.rule,
-					description: entry.description,
-					sourceContent,
+				const outcome = await regenerateFaithfully({
+					conversation: ruleConversation({
+						rule: entry.rule,
+						description: entry.description,
+						sourceContent,
+						mustCover: entry.must_cover,
+						crossLinks: entry.cross_links,
+					}),
+					// The same baseline validate-generated compares against.
+					previousBody: bodyAtHead(path.posix.join(skill.dir, skill.rulesDir, `${entry.rule}.md`)),
+					source: sourceContent,
 					mustCover: entry.must_cover,
-					crossLinks: entry.cross_links,
+					allowDropped: entry.allow_dropped,
+					maxRepairs: repairLimit,
 				});
-				body = result.body;
-				totalUsage.input += result.usage.input_tokens ?? 0;
-				totalUsage.output += result.usage.output_tokens ?? 0;
-				totalUsage.cacheRead += result.usage.cache_read_input_tokens ?? 0;
+				totalUsage.input += outcome.usage.input_tokens;
+				totalUsage.output += outcome.usage.output_tokens;
+				totalUsage.cacheRead += outcome.usage.cache_read_input_tokens;
+
+				if (!outcome.ok) {
+					const reason = outcome.error
+						? `model call failed: ${outcome.error}`
+						: [
+								outcome.dropped.length && `dropped ${listForLog(outcome.dropped)}`,
+								outcome.missingAnchors.length &&
+									`missing must_cover ${listForLog(outcome.missingAnchors)}`,
+							]
+								.filter(Boolean)
+								.join('; ');
+					// Holding back means keeping the committed file. A rule with no
+					// file yet has nothing to keep, so it fails here, as before.
+					if (!existing) {
+						console.error(`✗ ${entry.rule}: ${reason}`);
+						process.exit(1);
+					}
+					console.warn(
+						`⚠ ${entry.rule}: held back, committed body kept — ` +
+							`after ${outcome.repairs} repair(s), ${reason}`,
+					);
+					report.heldBack.push({
+						skill: skill.dir,
+						rule: entry.rule,
+						repairs: outcome.repairs,
+						dropped: outcome.dropped,
+						missingAnchors: outcome.missingAnchors,
+						...(outcome.error && { error: outcome.error }),
+					});
+					continue;
+				}
+				body = outcome.body;
+				if (outcome.repairs > 0) {
+					console.log(
+						`  ${entry.rule}: restored after ${outcome.repairs} repair(s): ` +
+							listForLog(outcome.restored),
+					);
+					report.repaired.push({
+						skill: skill.dir,
+						rule: entry.rule,
+						repairs: outcome.repairs,
+						restored: outcome.restored,
+					});
+				}
 			} else {
 				console.error(`✗ ${entry.rule}: unknown mode "${entry.mode}"`);
 				process.exit(1);
@@ -192,6 +283,7 @@ async function main() {
 			const frontmatter = buildFrontmatter(entry, { sourceCommit: docsSha, inputHash });
 			await fs.writeFile(filePath, composeRuleFile(frontmatter, body), 'utf-8');
 			console.log(`✓ ${entry.rule} (${entry.mode})`);
+			report.regenerated.push({ skill: skill.dir, rule: entry.rule });
 			changed++;
 		}
 
@@ -282,9 +374,20 @@ async function main() {
 		}
 	}
 
+	if (args.report) {
+		await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+	}
+
 	console.log(
-		`\nGeneration complete: ${changed} regenerated, ${skipped} unchanged, ${synthesized} synthesized (skipped).`,
+		`\nGeneration complete: ${changed} regenerated, ${report.heldBack.length} held back, ` +
+			`${skipped} unchanged, ${synthesized} synthesized (skipped).`,
 	);
+	if (report.heldBack.length > 0) {
+		console.warn(
+			`Held back (committed bodies kept; retried next run): ` +
+				report.heldBack.map((h) => h.rule).join(', '),
+		);
+	}
 	if (totalUsage.input || totalUsage.output) {
 		console.log(
 			`Model: ${generationModel()}  |  tokens in: ${totalUsage.input} ` +

@@ -5,6 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { bodyAtHead, droppedFacts, inlineCodeSpans, missingAnchors } from './retention.mjs';
 
@@ -69,4 +72,16 @@ test('the HEAD baseline is the committed body without frontmatter, or null', () 
 	const body = bodyAtHead('harper-best-practices/rules/querying-rest-apis.md');
 	assert.match(body, /^# /);
 	assert.equal(bodyAtHead('harper-best-practices/rules/no-such-rule.md'), null);
+});
+
+test('an unreadable baseline is an error, not a missing one', () => {
+	const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
+	const cwd = process.cwd();
+	try {
+		process.chdir(outside);
+		assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/);
+	} finally {
+		process.chdir(cwd);
+		fs.rmSync(outside, { recursive: true, force: true });
+	}
 });

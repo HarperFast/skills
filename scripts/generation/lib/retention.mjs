@@ -37,22 +37,29 @@ export function inlineCodeSpans(md) {
 	return spans;
 }
 
-// The rule body as committed at HEAD, or null when it cannot be read (a new
-// rule, a shallow checkout, or a non-git tree). Callers skip on null rather
-// than failing: absence of a baseline is not a retention violation.
+// The rule body as committed at HEAD, or null when HEAD has no such file (a
+// new rule): absence of a baseline is not a retention violation. Any other
+// failure to read it throws. Treating an unreadable baseline as absent would
+// switch retention off silently, and the generator and validator would then
+// both accept a lossy body.
 //
 // HEAD rather than the working tree, in both the generator and the validator,
 // so a local re-run cannot launder a fact an earlier uncommitted run dropped.
 export function bodyAtHead(relPath) {
+	const spec = `HEAD:${relPath}`;
 	try {
-		const raw = execFileSync('git', ['show', `HEAD:${relPath}`], {
-			encoding: 'utf-8',
-			stdio: ['ignore', 'pipe', 'ignore'],
-		});
-		return matter(raw).content.trim();
-	} catch {
-		return null;
+		// With --quiet, exit 1 means only "no such object". Anything else — no
+		// repository, no HEAD, no git — is rethrown.
+		execFileSync('git', ['rev-parse', '--verify', '--quiet', spec], { stdio: 'ignore' });
+	} catch (err) {
+		if (err.status === 1) return null;
+		throw new Error(`Cannot read the committed baseline ${spec}: ${err.message}`);
 	}
+	const raw = execFileSync('git', ['show', spec], {
+		encoding: 'utf-8',
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	return matter(raw).content.trim();
 }
 
 // Facts present in BOTH the previously committed body AND the current docs

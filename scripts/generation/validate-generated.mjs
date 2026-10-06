@@ -40,12 +40,7 @@ import {
 	VALID_MODES,
 	VALID_SOURCE_ROLES,
 } from './lib/manifest.mjs';
-import {
-	computeInputHash,
-	resolveSources,
-	sourceFilePath,
-	stripFencedBlocks,
-} from './lib/sources.mjs';
+import { computeInputHash, resolveSources, sourceFilePath } from './lib/sources.mjs';
 import {
 	assembleAgentsMd,
 	assembleSkillIndex,
@@ -54,8 +49,7 @@ import {
 	SKILL_INDEX_END,
 } from './lib/render.mjs';
 import { bodyAtHead, droppedFacts, missingAnchors } from './lib/retention.mjs';
-
-const MIN_GENERATED_BODY_CHARS = 200;
+import { hasLeakedMdx, MIN_GENERATED_BODY_CHARS } from './lib/body-checks.mjs';
 
 function parseArgs(argv) {
 	const args = { docsPath: process.env.DOCS_PATH || null };
@@ -73,14 +67,6 @@ function isPositiveInteger(v) {
 }
 function isNonEmptyString(v) {
 	return typeof v === 'string' && v.length > 0;
-}
-
-// Remove fenced and inline code so leaked-MDX heuristics don't false-positive
-// on legitimate `import`/JSX-like syntax inside code examples. Fences are
-// stripped by the shared scanner so tilde fences and long delimiter runs are
-// handled the same way sliceSection handles them.
-function stripCode(md) {
-	return stripFencedBlocks(md).replace(/`[^`]*`/g, '');
 }
 
 // ===========================================================================
@@ -260,11 +246,7 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 
 		// --- Layer 4: per-mode body checks ---
 		if (entry.mode === 'generate' || entry.mode === 'direct') {
-			// No leaked MDX: JSX components or MDX `import` statements that appear
-			// outside fenced/inline code. Code examples legitimately contain
-			// `import ... from` and `<Generic>` type params, so strip code first.
-			const prose = stripCode(body);
-			if (/^import\s.+\sfrom\s/m.test(prose) || /<[A-Z][A-Za-z0-9]*[\s/>]/.test(prose)) {
+			if (hasLeakedMdx(body)) {
 				errors.push(
 					`${where}: body contains leaked MDX (JSX component or import outside a code block)`,
 				);

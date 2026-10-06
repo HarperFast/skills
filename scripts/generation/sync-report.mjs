@@ -16,23 +16,23 @@
 //
 // Two jobs, selected by --format:
 //
-//   --format text|json   Freshness report. Used locally (with --strict, as an
-//                         author-time guard before opening a manual rule PR)
-//                         and in CI (non-strict, to capture provenance before
-//                         regeneration runs). Pass --out <file> to also write
-//                         the JSON snapshot for a later pr-body pass to consume.
+//   --format text|json   Freshness report. Used locally, with --strict, as an
+//                         author-time guard before opening a manual rule PR.
+//                         Pass --out <file> to also write the JSON.
 //
-//   --format pr-body     Compose the sync PR body from a pre-regeneration JSON
-//                         snapshot (--from <file>). Lists the rules that changed,
-//                         the docs commit each was last synced from, and the full
-//                         docs commit range since the oldest such baseline — so a
-//                         reviewer sees *why* each rule regenerated, not just the
-//                         head SHA. Needs git history in the docs checkout
-//                         (the workflow checks out documentation at fetch-depth: 0).
-//                         With --generation-report <file> (the generator's
-//                         --report output), it also names the rules that were
-//                         held back or repaired, and leaves held-back rules out
-//                         of the changed list.
+//   --format pr-body     Compose the sync PR body for the checked-out branch:
+//                         every rule file it changes relative to --base (default
+//                         origin/main), the docs commit each was last synced from
+//                         on that base, and the docs commit range since the
+//                         oldest such baseline — so a reviewer sees *why* each
+//                         rule changed, not just the head SHA. Derived from git,
+//                         not from one run, so it covers every run on a rolling
+//                         sync branch. Needs git history in both checkouts (the
+//                         workflow checks out both at fetch-depth: 0).
+//                         --generation-report <file> (the generator's --report)
+//                         adds the rules this run held back, and repairs;
+//                         --previous-body <file> (the open PR's current body)
+//                         carries earlier runs' repairs forward.
 //
 //   --format failure-details
 //                         Print what a generation report (--generation-report
@@ -40,28 +40,20 @@
 //                         on and the rules held back, or nothing. The workflow
 //                         adds it to the auto-sync failure issue.
 //
-//   --format splice-held-back
-//                         Print the PR body in --pr-body-file with its held-back
-//                         section replaced by --generation-report's. The workflow
-//                         uses it when a run has nothing new to commit but an
-//                         open sync PR should still name the held-back rules.
-//
-// Offline-first: hashing reads only the local docs build; pr-body reads only the
-// local docs git history. No network calls.
+// Offline-first: hashing reads only the local docs build; pr-body reads only
+// local git history. No network calls.
 //
 // Usage:
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --strict
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --out ../provenance.json
-//   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body --from ../provenance.json \
-//     [--generation-report ../generation-report.json]
+//   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body \
+//     [--base origin/main] [--generation-report ../generation-report.json] [--previous-body ../pr-body.md]
 //   node scripts/generation/sync-report.mjs --format failure-details --generation-report ../generation-report.json
-//   node scripts/generation/sync-report.mjs --format splice-held-back --pr-body-file ../pr-body.md \
-//     --generation-report ../generation-report.json
 //
 // Exit codes (report modes): 1 only when --strict and there is at least one
-// stale rule or resolution error; 0 otherwise. pr-body, failure-details and
-// splice-held-back always exit 0.
+// stale rule or resolution error; 0 otherwise. pr-body and failure-details
+// always exit 0.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -74,11 +66,12 @@ import { loadManifest, SKILLS } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
 import {
 	failureDetailsMarkdown,
-	heldBackBlock,
+	heldBackMarkdown,
 	loadGenerationReport,
+	mergeRepaired,
+	readSyncState,
 	repairedMarkdown,
-	ruleKey,
-	spliceHeldBack,
+	syncStateComment,
 } from './lib/generation-report.mjs';
 
 const PLAN_PATH = 'docs/plans/docs-driven-skills.md';
@@ -89,9 +82,9 @@ function parseArgs(argv) {
 		format: 'text',
 		strict: false,
 		out: null,
-		from: null,
+		base: 'origin/main',
 		generationReport: null,
-		prBodyFile: null,
+		previousBody: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -99,12 +92,12 @@ function parseArgs(argv) {
 		else if (a === '--format') args.format = argv[++i];
 		else if (a === '--strict') args.strict = true;
 		else if (a === '--out') args.out = argv[++i];
-		else if (a === '--from') args.from = argv[++i];
+		else if (a === '--base') args.base = argv[++i];
 		else if (a === '--generation-report') args.generationReport = argv[++i];
-		else if (a === '--pr-body-file') args.prBodyFile = argv[++i];
+		else if (a === '--previous-body') args.previousBody = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
-	const formats = ['text', 'json', 'pr-body', 'failure-details', 'splice-held-back'];
+	const formats = ['text', 'json', 'pr-body', 'failure-details'];
 	if (!formats.includes(args.format)) {
 		throw new Error(`--format must be one of ${formats.join(' / ')} (got ${args.format})`);
 	}
@@ -183,8 +176,40 @@ function printText(results) {
 }
 
 // ---------------------------------------------------------------------------
-// pr-body: compose the sync PR description from a pre-regen snapshot.
+// pr-body: compose the sync PR description from the branch and docs history.
 // ---------------------------------------------------------------------------
+
+function git(args) {
+	return execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// Every rule file the checked-out branch changes relative to `base`, with the
+// docs commit it was last synced from on `base`: null when the rule has no
+// recorded baseline there, and `onBase` false when the branch adds the rule.
+function changedRules(base) {
+	const changed = [];
+	for (const skill of SKILLS) {
+		const rulesDir = path.posix.join(skill.dir, skill.rulesDir);
+		const paths = git(['diff', '--name-only', '--diff-filter=d', `${base}...HEAD`, '--', rulesDir])
+			.split('\n')
+			.filter((relPath) => relPath.endsWith('.md'));
+		for (const relPath of paths) {
+			let raw = null;
+			try {
+				raw = git(['show', `${base}:${relPath}`]);
+			} catch {
+				// Not on the base: a rule this branch adds.
+			}
+			changed.push({
+				skill: skill.dir,
+				rule: path.posix.basename(relPath, '.md'),
+				onBase: raw !== null,
+				recordedCommit: raw === null ? null : (matter(raw).data?.metadata?.sourceCommit ?? null),
+			});
+		}
+	}
+	return changed;
+}
 
 function gitDocs(docsRepoPath, args) {
 	return execFileSync('git', ['-C', docsRepoPath, ...args], { encoding: 'utf-8' }).trim();
@@ -205,13 +230,11 @@ function oldestCommit(docsRepoPath, commits) {
 	return oldest?.sha ?? null;
 }
 
-function composePrBody(docsRepoPath, snapshot, generation) {
+function composePrBody({ docsRepoPath, base, generation, previousBody }) {
 	const headSha = gitDocs(docsRepoPath, ['rev-parse', 'HEAD']);
 	const headShort = short(headSha);
-	// A held-back rule was stale but kept its committed body, so it did not
-	// change. It gets its own section below instead.
-	const heldBack = new Set(generation.heldBack.map(ruleKey));
-	const changed = snapshot.filter((r) => r.stale && !heldBack.has(ruleKey(r)));
+	const changed = changedRules(base);
+	const repairedRules = mergeRepaired(readSyncState(previousBody).repaired, generation, changed);
 
 	const lines = [
 		`Automated regeneration of docs-driven skill rules, now synced to ` +
@@ -225,14 +248,19 @@ function composePrBody(docsRepoPath, snapshot, generation) {
 	} else {
 		lines.push('### Why these rules changed', '');
 		lines.push(
-			'Each rule regenerated because its source content differs from the docs ' +
-				'commit it was last synced from. The trigger commit is **not** ' +
+			`This PR changes each rule below relative to \`${base.replace(/^origin\//, '')}\`, where it was last ` +
+				'synced from the docs commit shown. The trigger commit is **not** ' +
 				'necessarily what changed a given rule — drift accumulates across every ' +
 				'docs commit since the rule’s recorded baseline (below).',
 			'',
 		);
 		for (const r of changed) {
-			lines.push(`- \`${r.rule}\` — last synced from docs@${short(r.recordedCommit)}`);
+			const from = r.recordedCommit
+				? `last synced from docs@${short(r.recordedCommit)}`
+				: r.onBase
+					? 'no recorded docs baseline'
+					: 'new in this PR';
+			lines.push(`- \`${r.rule}\` — ${from}`);
 		}
 		lines.push('');
 
@@ -262,8 +290,9 @@ function composePrBody(docsRepoPath, snapshot, generation) {
 		}
 	}
 
-	lines.push(heldBackBlock(generation), '');
-	const repaired = repairedMarkdown(generation);
+	const heldBack = heldBackMarkdown(generation);
+	if (heldBack) lines.push(heldBack, '');
+	const repaired = repairedMarkdown({ repaired: repairedRules });
 	if (repaired) lines.push(repaired, '');
 
 	lines.push(
@@ -273,6 +302,8 @@ function composePrBody(docsRepoPath, snapshot, generation) {
 			`reassembles AGENTS.md. See ${PLAN_PATH}.`,
 		'',
 		'🤖 Generated with [Claude Code](https://claude.com/claude-code)',
+		'',
+		syncStateComment({ repaired: repairedRules }),
 	);
 	return lines.join('\n');
 }
@@ -283,26 +314,20 @@ async function main() {
 	const docsBuildDir = path.join(docsRepoPath, 'build');
 
 	if (args.format === 'pr-body') {
-		if (!args.from) throw new Error('--format pr-body requires --from <snapshot.json>');
-		const snapshot = JSON.parse(await fs.readFile(args.from, 'utf-8'));
 		const generation = await loadGenerationReport(args.generationReport);
-		process.stdout.write(composePrBody(docsRepoPath, snapshot, generation) + '\n');
+		const previousBody = args.previousBody ? await fs.readFile(args.previousBody, 'utf-8') : null;
+		process.stdout.write(
+			composePrBody({ docsRepoPath, base: args.base, generation, previousBody }) + '\n',
+		);
 		return;
 	}
 
-	if (args.format === 'failure-details' || args.format === 'splice-held-back') {
+	if (args.format === 'failure-details') {
 		if (!args.generationReport) {
-			throw new Error(`--format ${args.format} requires --generation-report <file>`);
+			throw new Error('--format failure-details requires --generation-report <file>');
 		}
-		const generation = await loadGenerationReport(args.generationReport);
-		if (args.format === 'failure-details') {
-			const details = failureDetailsMarkdown(generation);
-			if (details) process.stdout.write(details + '\n');
-			return;
-		}
-		if (!args.prBodyFile)
-			throw new Error('--format splice-held-back requires --pr-body-file <file>');
-		process.stdout.write(spliceHeldBack(await fs.readFile(args.prBodyFile, 'utf-8'), generation));
+		const details = failureDetailsMarkdown(await loadGenerationReport(args.generationReport));
+		if (details) process.stdout.write(details + '\n');
 		return;
 	}
 

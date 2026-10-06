@@ -10,13 +10,12 @@ import path from 'node:path';
 import {
 	code,
 	failureDetailsMarkdown,
-	HELD_BACK_BEGIN,
-	HELD_BACK_END,
-	heldBackBlock,
 	heldBackMarkdown,
 	loadGenerationReport,
+	mergeRepaired,
+	readSyncState,
 	repairedMarkdown,
-	spliceHeldBack,
+	syncStateComment,
 } from './generation-report.mjs';
 
 const empty = { regenerated: [], repaired: [], heldBack: [] };
@@ -95,29 +94,6 @@ test('held-back structural problems are named', () => {
 	assert.match(md, /- `r` \(s\) — after 2 repairs, body still x$/m);
 });
 
-const held = {
-	...empty,
-	heldBack: [
-		{ skill: 's', rule: 'r', repairs: 2, dropped: ['f()'], missingAnchors: [], invalid: [] },
-	],
-};
-
-test('the held-back block keeps its markers even when empty', () => {
-	assert.equal(heldBackBlock(empty), `${HELD_BACK_BEGIN}\n${HELD_BACK_END}`);
-	assert.ok(heldBackBlock(held).includes('still dropped `f()`'));
-});
-
-test('splicing replaces only the marked section of an existing PR body', () => {
-	const body = `Intro.\n\n${heldBackBlock(held)}\n\nFooter.\n`;
-	assert.equal(spliceHeldBack(body, empty), `Intro.\n\n${heldBackBlock(empty)}\n\nFooter.\n`);
-	assert.equal(spliceHeldBack(body, held), body);
-});
-
-test('a body without markers gets the section appended, and only when needed', () => {
-	assert.equal(spliceHeldBack('Old body.\n', empty), 'Old body.\n');
-	assert.equal(spliceHeldBack('Old body.\n', held), `Old body.\n\n${heldBackBlock(held)}\n`);
-});
-
 test('a missing report path loads as empty, and absent lists default to empty', async () => {
 	assert.deepEqual(await loadGenerationReport(null), empty);
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'generation-report-'));
@@ -130,10 +106,44 @@ test('a missing report path loads as empty, and absent lists default to empty', 
 	}
 });
 
-test('a marker left dangling by a hand edit is never paired across the body', () => {
-	const dangling = `Intro.\n${HELD_BACK_BEGIN}\nKeep me.\n`;
-	const once = spliceHeldBack(dangling, held);
-	assert.equal(once, `${dangling.trimEnd()}\n\n${heldBackBlock(held)}\n`);
-	// The next splice replaces the appended pair and leaves "Keep me." alone.
-	assert.equal(spliceHeldBack(once, empty), `${dangling.trimEnd()}\n\n${heldBackBlock(empty)}\n`);
+const repaired = (rule, restored = ['f()']) => ({
+	skill: 's',
+	rule,
+	repairs: 1,
+	restored,
+	fixed: [],
+});
+
+test('sync state survives a round trip through the PR body, whatever the facts contain', () => {
+	const state = { repaired: [repaired('a', ['x --> y', '`--`'])] };
+	const body = `Intro.\n\n${syncStateComment(state)}\n`;
+	assert.doesNotMatch(syncStateComment(state).slice(4, -3), /-->/);
+	assert.deepEqual(readSyncState(body), state);
+});
+
+test('a body without sync state, or with a damaged one, starts from nothing', () => {
+	assert.deepEqual(readSyncState(null), { repaired: [] });
+	assert.deepEqual(readSyncState('No state here.'), { repaired: [] });
+	assert.deepEqual(readSyncState('<!-- sync-state:v1 bm90IGpzb24= -->'), { repaired: [] });
+	const partial = syncStateComment({ repaired: [{ rule: 'no skill' }, repaired('a')] });
+	assert.deepEqual(readSyncState(partial), { repaired: [repaired('a')] });
+});
+
+test('repairs carry forward until the rule is regenerated again or leaves the PR', () => {
+	const changed = ['a', 'b', 'c'].map((rule) => ({ skill: 's', rule }));
+	const previous = [repaired('a'), repaired('b'), repaired('gone')];
+	const generation = {
+		...empty,
+		regenerated: [
+			{ skill: 's', rule: 'b' },
+			{ skill: 's', rule: 'c' },
+		],
+		repaired: [repaired('c', ['g()'])],
+	};
+	// `a` carries forward; `b` was regenerated cleanly this run, so its old
+	// repair no longer describes the PR; `c` is this run's; `gone` left the PR.
+	assert.deepEqual(
+		mergeRepaired(previous, generation, changed).map((entry) => entry.rule),
+		['a', 'c'],
+	);
 });

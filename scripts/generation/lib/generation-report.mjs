@@ -7,7 +7,6 @@
 
 import fs from 'node:fs/promises';
 
-// Read a report file, or return an empty report when no path is given.
 export async function loadGenerationReport(file) {
 	if (!file) return emptyReport();
 	return { ...emptyReport(), ...JSON.parse(await fs.readFile(file, 'utf-8')) };
@@ -17,9 +16,8 @@ function emptyReport() {
 	return { regenerated: [], repaired: [], heldBack: [] };
 }
 
-// `skill/rule` key, so rules are matched across the report and the
-// provenance snapshot even if two skills ever share a slug.
-export const ruleKey = (r) => `${r.skill}/${r.rule}`;
+// Keyed by skill as well, in case two skills ever share a slug.
+export const ruleKey = (entry) => `${entry.skill}/${entry.rule}`;
 
 // An inline code span for arbitrary text. must_cover anchors may contain
 // backticks (e.g. '`Accept`'), so the delimiter must be a longer backtick run
@@ -31,9 +29,8 @@ export function code(text) {
 	return `${fence}${pad}${text}${pad}${fence}`;
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-// The "Held back" section, or '' when nothing was held back.
 export function heldBackMarkdown(report) {
 	if (!report.heldBack.length) return '';
 	const lines = [
@@ -47,23 +44,36 @@ export function heldBackMarkdown(report) {
 			'`allow_dropped` in the manifest.',
 		'',
 	];
-	for (const h of report.heldBack) {
-		const what = h.error
-			? `model call failed: ${h.error}`
-			: [
-					h.dropped.length && `still dropped ${h.dropped.map(code).join(', ')}`,
-					h.missingAnchors.length &&
-						`still missing \`must_cover\` ${h.missingAnchors.map(code).join(', ')}`,
-					...(h.invalid ?? []).map((problem) => `body still ${problem}`),
-				]
-					.filter(Boolean)
-					.join('; ');
-		lines.push(`- ${code(h.rule)} (${h.skill}) — after ${plural(h.repairs, 'repair')}, ${what}`);
+	for (const held of report.heldBack) {
+		const what = [
+			held.dropped.length && `still dropped ${held.dropped.map(code).join(', ')}`,
+			held.missingAnchors.length &&
+				`still missing \`must_cover\` ${held.missingAnchors.map(code).join(', ')}`,
+			...held.invalid.map((problem) => `body still ${problem}`),
+		]
+			.filter(Boolean)
+			.join('; ');
+		lines.push(
+			`- ${code(held.rule)} (${held.skill}) — after ${plural(held.repairs, 'repair')}, ${what}`,
+		);
 	}
 	return lines.join('\n');
 }
 
-// The "Repaired" section, or '' when no rule needed a repair.
+// For the failure issue: the rule the run stopped on, if it stopped on one,
+// and the rules held back before it.
+export function failureDetailsMarkdown(report) {
+	const parts = [];
+	const stop = report.stoppedOn;
+	if (stop) {
+		const on = stop.rule ? ` on ${code(stop.rule)} (${stop.skill})` : '';
+		parts.push(`**Generation stopped${on}:** ${code(stop.reason)}`);
+	}
+	const heldBack = heldBackMarkdown(report);
+	if (heldBack) parts.push(heldBack);
+	return parts.join('\n\n');
+}
+
 export function repairedMarkdown(report) {
 	if (!report.repaired.length) return '';
 	const lines = [
@@ -73,14 +83,14 @@ export function repairedMarkdown(report) {
 			'Check that each restored fact landed where it belongs.',
 		'',
 	];
-	for (const r of report.repaired) {
+	for (const repaired of report.repaired) {
 		const what = [
-			r.restored.length && `restored ${r.restored.map(code).join(', ')}`,
-			...(r.fixed ?? []).map((problem) => `fixed: body ${problem}`),
+			repaired.restored.length && `restored ${repaired.restored.map(code).join(', ')}`,
+			...repaired.fixed.map((problem) => `fixed: body ${problem}`),
 		]
 			.filter(Boolean)
 			.join('; ');
-		lines.push(`- ${code(r.rule)} — ${plural(r.repairs, 'repair')}: ${what}`);
+		lines.push(`- ${code(repaired.rule)} — ${plural(repaired.repairs, 'repair')}: ${what}`);
 	}
 	return lines.join('\n');
 }

@@ -14,19 +14,17 @@
 // lib/llm.mjs `ruleConversation`), so this is testable without the network.
 
 import { structuralProblems } from './body-checks.mjs';
-import { droppedFacts, missingAnchors } from './retention.mjs';
+import { anchorsBeyondFacts, droppedFacts, missingAnchors } from './retention.mjs';
 
-export const DEFAULT_MAX_REPAIRS = 2;
+const DEFAULT_MAX_REPAIRS = 2;
 
-// GENERATE_MAX_REPAIRS as a repair budget: unset or empty means the default,
-// anything but a non-negative integer is an error.
 export function parseMaxRepairs(raw) {
 	if (raw === undefined || raw === '') return DEFAULT_MAX_REPAIRS;
-	const n = Number(raw);
-	if (!Number.isInteger(n) || n < 0) {
+	const budget = Number(raw);
+	if (!Number.isInteger(budget) || budget < 0) {
 		throw new Error(`GENERATE_MAX_REPAIRS must be a non-negative integer (got ${raw})`);
 	}
-	return n;
+	return budget;
 }
 
 // Everything the validators would reject in a generated body: retained facts
@@ -60,8 +58,8 @@ export async function regenerateFaithfully({
 	maxRepairs = DEFAULT_MAX_REPAIRS,
 }) {
 	const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
-	const addUsage = (u = {}) => {
-		for (const k of Object.keys(usage)) usage[k] += u[k] ?? 0;
+	const addUsage = (callUsage = {}) => {
+		for (const field of Object.keys(usage)) usage[field] += callUsage[field] ?? 0;
 	};
 
 	let repairs = 0;
@@ -80,8 +78,10 @@ export async function regenerateFaithfully({
 			});
 			firstProblems ??= problems;
 			if (!hasProblems(problems)) {
-				// A string can be both a dropped fact and a missing anchor.
-				const restored = [...new Set([...firstProblems.dropped, ...firstProblems.missingAnchors])];
+				const restored = [
+					...firstProblems.dropped,
+					...anchorsBeyondFacts(firstProblems.missingAnchors, firstProblems.dropped),
+				];
 				return {
 					ok: true,
 					body: result.body,

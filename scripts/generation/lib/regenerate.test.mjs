@@ -102,6 +102,20 @@ test('must_cover misses are repaired the same way', async () => {
 	assert.deepEqual(out.restored, ['select()']);
 });
 
+test('a pinned fact restored by a repair is reported once', async () => {
+	const conversation = scripted(
+		valid('Use `limit(end)`.'),
+		valid('Use `limit(end)` and `sort(property)`.'),
+	);
+	const out = await regenerateFaithfully({
+		conversation,
+		previousBody,
+		source,
+		mustCover: ['`sort(property)`'],
+	});
+	assert.deepEqual(out.restored, ['sort(property)']);
+});
+
 test('structural problems are repaired, and reported as fixed', async () => {
 	const conversation = scripted(
 		'Preamble before the title.\n\n' + valid('Use `limit(end)` and `sort(property)`.'),
@@ -143,7 +157,7 @@ test('maxRepairs 0 holds back on the first failure without a repair call', async
 	assert.deepEqual(conversation.repairs, []);
 });
 
-test('a model error holds the rule back instead of crashing the run', async () => {
+test('a model error ends the attempt with the error instead of throwing', async () => {
 	const conversation = scripted(valid('Use `limit(end)`.'), new Error('overloaded'));
 	const out = await regenerateFaithfully({ conversation, previousBody, source });
 	assert.equal(out.ok, false);

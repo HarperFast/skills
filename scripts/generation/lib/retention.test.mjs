@@ -5,11 +5,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { bodyAtHead, droppedFacts, inlineCodeSpans, missingAnchors } from './retention.mjs';
+import {
+	anchorsBeyondFacts,
+	bodyAtHead,
+	droppedFacts,
+	inlineCodeSpans,
+	missingAnchors,
+} from './retention.mjs';
 
 const md = (...lines) => lines.join('\n');
 
@@ -83,5 +90,22 @@ test('an unreadable baseline is an error, not a missing one', () => {
 	} finally {
 		process.chdir(cwd);
 		fs.rmSync(outside, { recursive: true, force: true });
+	}
+});
+
+test('an anchor that is only a dropped fact again, backticks or not, is not repeated', () => {
+	assert.deepEqual(anchorsBeyondFacts(['`Accept`', 'Accept', 'other'], ['Accept']), ['other']);
+});
+
+test('a repository with no commit yet has no readable baseline either', () => {
+	const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'unborn-head-'));
+	const cwd = process.cwd();
+	try {
+		execFileSync('git', ['init', '-q'], { cwd: fresh });
+		process.chdir(fresh);
+		assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/);
+	} finally {
+		process.chdir(cwd);
+		fs.rmSync(fresh, { recursive: true, force: true });
 	}
 });

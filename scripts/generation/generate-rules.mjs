@@ -32,10 +32,10 @@
 // structural checks — what the validators gate on (lib/regenerate.mjs
 // checkBody). A body that fails goes back to the model with what is wrong, up
 // to GENERATE_MAX_REPAIRS times. A rule that still fails is held back: its
-// committed file is left untouched (so its stale inputHash retries it next
-// run) and the run carries on, so one bad rule cannot block every other docs
-// change (#118). Holding back needs a committed body that itself passes the
-// checks; without one the run fails, as before.
+// file is left untouched (so its stale inputHash retries it next run) and the
+// run carries on, so one bad rule cannot block every other docs change (#118).
+// The run still stops (exit 1) on a model error, and on a rule whose existing
+// file could not pass validate-generated either.
 //
 // Environment:
 //   ANTHROPIC_API_KEY     Required for any rule in `mode: generate`.
@@ -66,6 +66,7 @@ import {
 	bodyOf,
 	buildFrontmatter,
 	composeRuleFile,
+	frontmatterProblems,
 	SKILL_INDEX_BEGIN,
 	SKILL_INDEX_END,
 } from './lib/render.mjs';
@@ -99,9 +100,18 @@ function resolveDocsSha(docsRepoPath) {
 	}
 }
 
-// Read the existing rule file as { meta, body }, or null if the file doesn't
-// exist yet. Attempt the read and handle ENOENT rather than checking for
-// existence first — a separate check would race with the read.
+// A failure that ends the run with exit 1. `rule` ({ skill, rule }) names the
+// rule it stopped on, for the report.
+class StopRun extends Error {
+	constructor(message, rule) {
+		super(message);
+		this.rule = rule;
+	}
+}
+
+// Read the existing rule file as { frontmatter, meta, body }, or null if the
+// file doesn't exist yet. Attempt the read and handle ENOENT rather than
+// checking for existence first — a separate check would race with the read.
 async function readExisting(filePath) {
 	let raw;
 	try {
@@ -110,11 +120,11 @@ async function readExisting(filePath) {
 		if (err.code === 'ENOENT') return null;
 		throw err;
 	}
-	return { meta: matter(raw).data?.metadata ?? null, body: bodyOf(raw) };
+	const { data } = matter(raw);
+	return { frontmatter: data, meta: data?.metadata ?? null, body: bodyOf(raw) };
 }
 
-// Join a list of facts/anchors for a console line, capped so one badly
-// regenerated rule cannot bury the log. The --report JSON carries every entry.
+// Capped so one rule cannot bury the log; --report carries every entry.
 function listForLog(items, max = 12) {
 	const shown = items.slice(0, max).map((i) => JSON.stringify(i));
 	return items.length > max
@@ -122,12 +132,12 @@ function listForLog(items, max = 12) {
 		: shown.join(', ');
 }
 
-// One line saying what is wrong with a body, from checkBody's lists.
-function describeProblems({ dropped, missingAnchors, invalid }) {
+function describeProblems({ dropped, missingAnchors, invalid, frontmatter = [] }) {
 	return [
 		dropped.length && `dropped ${listForLog(dropped)}`,
 		missingAnchors.length && `missing must_cover ${listForLog(missingAnchors)}`,
 		...invalid.map((problem) => `body ${problem}`),
+		...frontmatter,
 	]
 		.filter(Boolean)
 		.join('; ');
@@ -135,10 +145,26 @@ function describeProblems({ dropped, missingAnchors, invalid }) {
 
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
+	const report = { regenerated: [], repaired: [], heldBack: [] };
+	try {
+		await run(args, report);
+	} catch (err) {
+		if (err instanceof StopRun) report.stoppedOn = { ...err.rule, reason: err.message };
+		throw err;
+	} finally {
+		// Also when the run stops: the failure issue reads what was held back.
+		if (args.report) {
+			await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+		}
+	}
+}
+
+async function run(args, report) {
 	const docsRepoPath = path.resolve(args.docsPath);
 	const docsBuildDir = path.join(docsRepoPath, 'build');
 
 	const docsSha = resolveDocsSha(docsRepoPath);
+	report.docsSha = docsSha;
 	const repairLimit = parseMaxRepairs(process.env.GENERATE_MAX_REPAIRS);
 	console.log(`Docs build: ${docsBuildDir}`);
 	console.log(`Docs SHA:   ${docsSha}`);
@@ -151,8 +177,6 @@ async function main() {
 	// skill — it belongs after the loop over SKILLS.
 	let ruleMatched = false;
 	let totalUsage = { input: 0, output: 0, cacheRead: 0 };
-	// What --report records. Only rules this run attempted appear.
-	const report = { docsSha, regenerated: [], repaired: [], heldBack: [] };
 
 	for (const skill of SKILLS) {
 		const manifest = await loadManifest(skill);
@@ -177,14 +201,15 @@ async function main() {
 			try {
 				sourceContent = await resolveSources(docsBuildDir, entry.sources);
 			} catch (err) {
-				console.error(`✗ ${entry.rule}: failed to resolve sources — ${err.message}`);
-				if (err.code === 'ENOENT') {
-					console.error(
-						`  No flat-markdown found under ${docsBuildDir}. ` +
-							`Run \`npm ci && npm run build\` in the docs checkout (or fix --docs-path).`,
-					);
-				}
-				process.exit(1);
+				const hint =
+					err.code === 'ENOENT'
+						? `\n  No flat-markdown found under ${docsBuildDir}. ` +
+							`Run \`npm ci && npm run build\` in the docs checkout (or fix --docs-path).`
+						: '';
+				throw new StopRun(`${entry.rule}: failed to resolve sources — ${err.message}${hint}`, {
+					skill: skill.dir,
+					rule: entry.rule,
+				});
 			}
 			const inputHash = computeInputHash(sourceContent);
 
@@ -246,37 +271,38 @@ async function main() {
 				totalUsage.output += outcome.usage.output_tokens;
 				totalUsage.cacheRead += outcome.usage.cache_read_input_tokens;
 
+				const where = { skill: skill.dir, rule: entry.rule };
+				// An API, auth or truncation error says nothing about the rule, and
+				// holding back on it could leave a green run with nothing synced.
+				if (outcome.error) {
+					throw new StopRun(`${entry.rule}: model call failed: ${outcome.error}`, where);
+				}
 				if (!outcome.ok) {
-					const reason = outcome.error
-						? `model call failed: ${outcome.error}`
-						: describeProblems(outcome);
+					const reason = describeProblems(outcome);
 					// Holding back keeps the file on disk, so it is only safe when
-					// that file passes the same checks. A rule with no file yet, or
-					// one whose file fails them too, fails the run, as before.
-					if (!existing) {
-						console.error(`✗ ${entry.rule}: ${reason}`);
-						process.exit(1);
-					}
-					const keptProblems = checkBody({ body: existing.body, ...checks });
+					// that file passes everything validate-generated checks.
+					if (!existing) throw new StopRun(`${entry.rule}: ${reason}`, where);
+					const keptProblems = {
+						...checkBody({ body: existing.body, ...checks }),
+						frontmatter: frontmatterProblems(entry, existing.frontmatter),
+					};
 					if (hasProblems(keptProblems)) {
-						console.error(
-							`✗ ${entry.rule}: ${reason} — and the committed body cannot be kept ` +
-								`instead: ${describeProblems(keptProblems)}`,
+						throw new StopRun(
+							`${entry.rule}: ${reason} — and the existing body cannot be kept instead: ` +
+								describeProblems(keptProblems),
+							where,
 						);
-						process.exit(1);
 					}
 					console.warn(
 						`⚠ ${entry.rule}: held back, existing body kept — ` +
 							`after ${outcome.repairs} repair(s), ${reason}`,
 					);
 					report.heldBack.push({
-						skill: skill.dir,
-						rule: entry.rule,
+						...where,
 						repairs: outcome.repairs,
 						dropped: outcome.dropped,
 						missingAnchors: outcome.missingAnchors,
 						invalid: outcome.invalid,
-						...(outcome.error && { error: outcome.error }),
 					});
 					continue;
 				}
@@ -299,8 +325,10 @@ async function main() {
 					});
 				}
 			} else {
-				console.error(`✗ ${entry.rule}: unknown mode "${entry.mode}"`);
-				process.exit(1);
+				throw new StopRun(`${entry.rule}: unknown mode "${entry.mode}"`, {
+					skill: skill.dir,
+					rule: entry.rule,
+				});
 			}
 
 			const frontmatter = buildFrontmatter(entry, { sourceCommit: docsSha, inputHash });
@@ -318,8 +346,7 @@ async function main() {
 	// and reassembly phases below.
 	if (args.rule && !ruleMatched) {
 		const manifests = SKILLS.map((s) => path.join(s.dir, s.manifestFile)).join(', ');
-		console.error(`Rule "${args.rule}" not found in any manifest (${manifests})`);
-		process.exit(1);
+		throw new StopRun(`Rule "${args.rule}" not found in any manifest (${manifests})`);
 	}
 
 	// Format the generated rule files first, so AGENTS.md is assembled from the
@@ -397,10 +424,6 @@ async function main() {
 		}
 	}
 
-	if (args.report) {
-		await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
-	}
-
 	console.log(
 		`\nGeneration complete: ${changed} regenerated, ${report.heldBack.length} held back, ` +
 			`${skipped} unchanged, ${synthesized} synthesized (skipped).`,
@@ -408,7 +431,7 @@ async function main() {
 	if (report.heldBack.length > 0) {
 		console.warn(
 			`Held back (existing bodies kept; retried next run): ` +
-				report.heldBack.map((h) => h.rule).join(', '),
+				report.heldBack.map((held) => held.rule).join(', '),
 		);
 	}
 	if (totalUsage.input || totalUsage.output) {
@@ -420,6 +443,10 @@ async function main() {
 }
 
 main().catch((err) => {
+	if (err instanceof StopRun) {
+		console.error(`✗ ${err.message}`);
+		process.exit(1);
+	}
 	console.error('generate-rules crashed:', err);
 	process.exit(2);
 });

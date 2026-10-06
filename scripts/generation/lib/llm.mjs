@@ -14,6 +14,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { anchorsBeyondFacts } from './retention.mjs';
 import { stripFencedBlocks } from './sources.mjs';
 
 const TEMPLATES_DIR = path.join(import.meta.dirname, '..', 'templates');
@@ -111,8 +112,6 @@ export function ruleConversation({
 	};
 }
 
-// The first user message: the rule to write, its anchors and links, and the
-// resolved source documentation.
 export function ruleRequest({ rule, description, sourceContent, mustCover, crossLinks }) {
 	const sections = [
 		`# Rule to generate: ${rule}`,
@@ -175,7 +174,7 @@ export function repairRequest({ dropped = [], missingAnchors = [], invalid = [],
 	}
 
 	// A pinned fact is both dropped and a missing anchor; ask for it once.
-	const anchorsOnly = missingAnchors.filter((s) => !dropped.includes(s));
+	const anchorsOnly = anchorsBeyondFacts(missingAnchors, dropped);
 	if (anchorsOnly.length) {
 		sections.push(
 			``,

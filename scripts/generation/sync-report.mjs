@@ -38,6 +38,12 @@
 //                         report (--generation-report <file>), or nothing. The
 //                         workflow adds it to the auto-sync failure issue.
 //
+//   --format splice-held-back
+//                         Print the PR body in --pr-body-file with its held-back
+//                         section replaced by --generation-report's. The workflow
+//                         uses it when a run has nothing new to commit but an
+//                         open sync PR should still name the held-back rules.
+//
 // Offline-first: hashing reads only the local docs build; pr-body reads only the
 // local docs git history. No network calls.
 //
@@ -48,10 +54,12 @@
 //   node scripts/generation/sync-report.mjs --docs-path ../documentation --format pr-body --from ../provenance.json \
 //     [--generation-report ../generation-report.json]
 //   node scripts/generation/sync-report.mjs --format held-back --generation-report ../generation-report.json
+//   node scripts/generation/sync-report.mjs --format splice-held-back --pr-body-file ../pr-body.md \
+//     --generation-report ../generation-report.json
 //
 // Exit codes (report modes): 1 only when --strict and there is at least one
-// stale rule or resolution error; 0 otherwise. pr-body and held-back always
-// exit 0.
+// stale rule or resolution error; 0 otherwise. pr-body, held-back and
+// splice-held-back always exit 0.
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -63,10 +71,12 @@ import matter from 'gray-matter';
 import { loadManifest, SKILLS } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
 import {
+	heldBackBlock,
 	heldBackMarkdown,
 	loadGenerationReport,
 	repairedMarkdown,
 	ruleKey,
+	spliceHeldBack,
 } from './lib/generation-report.mjs';
 
 const PLAN_PATH = 'docs/plans/docs-driven-skills.md';
@@ -79,6 +89,7 @@ function parseArgs(argv) {
 		out: null,
 		from: null,
 		generationReport: null,
+		prBodyFile: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -88,12 +99,12 @@ function parseArgs(argv) {
 		else if (a === '--out') args.out = argv[++i];
 		else if (a === '--from') args.from = argv[++i];
 		else if (a === '--generation-report') args.generationReport = argv[++i];
+		else if (a === '--pr-body-file') args.prBodyFile = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
-	if (!['text', 'json', 'pr-body', 'held-back'].includes(args.format)) {
-		throw new Error(
-			`--format must be one of text / json / pr-body / held-back (got ${args.format})`,
-		);
+	const formats = ['text', 'json', 'pr-body', 'held-back', 'splice-held-back'];
+	if (!formats.includes(args.format)) {
+		throw new Error(`--format must be one of ${formats.join(' / ')} (got ${args.format})`);
 	}
 	return args;
 }
@@ -249,9 +260,9 @@ function composePrBody(docsRepoPath, snapshot, generation) {
 		}
 	}
 
-	for (const section of [heldBackMarkdown(generation), repairedMarkdown(generation)]) {
-		if (section) lines.push(section, '');
-	}
+	lines.push(heldBackBlock(generation), '');
+	const repaired = repairedMarkdown(generation);
+	if (repaired) lines.push(repaired, '');
 
 	lines.push(
 		`Produced by \`.github/workflows/generate.yaml\`. Review the diff as you ` +
@@ -277,12 +288,19 @@ async function main() {
 		return;
 	}
 
-	if (args.format === 'held-back') {
+	if (args.format === 'held-back' || args.format === 'splice-held-back') {
 		if (!args.generationReport) {
-			throw new Error('--format held-back requires --generation-report <file>');
+			throw new Error(`--format ${args.format} requires --generation-report <file>`);
 		}
-		const section = heldBackMarkdown(await loadGenerationReport(args.generationReport));
-		if (section) process.stdout.write(section + '\n');
+		const generation = await loadGenerationReport(args.generationReport);
+		if (args.format === 'held-back') {
+			const section = heldBackMarkdown(generation);
+			if (section) process.stdout.write(section + '\n');
+			return;
+		}
+		if (!args.prBodyFile)
+			throw new Error('--format splice-held-back requires --pr-body-file <file>');
+		process.stdout.write(spliceHeldBack(await fs.readFile(args.prBodyFile, 'utf-8'), generation));
 		return;
 	}
 

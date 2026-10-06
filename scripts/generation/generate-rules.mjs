@@ -28,12 +28,14 @@
 //                      workflow renders it into the sync PR body.
 //
 // A `mode: generate` body must keep every fact its committed version carries
-// that the docs still state, plus every `must_cover` string — the checks
-// validate-generated.mjs gates on (lib/retention.mjs). A body that misses any
-// goes back to the model with the list, up to GENERATE_MAX_REPAIRS times. A
-// rule that still fails is held back: its committed file is left untouched
-// (so its stale inputHash retries it next run) and the run carries on, so one
-// lossy rule cannot block every other docs change (#118).
+// that the docs still state, contain every `must_cover` string, and pass the
+// structural checks — what the validators gate on (lib/regenerate.mjs
+// checkBody). A body that fails goes back to the model with what is wrong, up
+// to GENERATE_MAX_REPAIRS times. A rule that still fails is held back: its
+// committed file is left untouched (so its stale inputHash retries it next
+// run) and the run carries on, so one bad rule cannot block every other docs
+// change (#118). Holding back needs a committed body that itself passes the
+// checks; without one the run fails, as before.
 //
 // Environment:
 //   ANTHROPIC_API_KEY     Required for any rule in `mode: generate`.
@@ -51,7 +53,12 @@ import matter from 'gray-matter';
 import { loadManifest, SKILLS, sortedRules } from './lib/manifest.mjs';
 import { computeInputHash, resolveSources } from './lib/sources.mjs';
 import { generationModel, ruleConversation } from './lib/llm.mjs';
-import { DEFAULT_MAX_REPAIRS, regenerateFaithfully } from './lib/regenerate.mjs';
+import {
+	checkBody,
+	hasProblems,
+	parseMaxRepairs,
+	regenerateFaithfully,
+} from './lib/regenerate.mjs';
 import { bodyAtHead } from './lib/retention.mjs';
 import {
 	assembleAgentsMd,
@@ -79,16 +86,6 @@ function parseArgs(argv) {
 		else throw new Error(`Unknown argument: ${a}`);
 	}
 	return args;
-}
-
-function maxRepairs() {
-	const raw = process.env.GENERATE_MAX_REPAIRS;
-	if (raw === undefined || raw === '') return DEFAULT_MAX_REPAIRS;
-	const n = Number(raw);
-	if (!Number.isInteger(n) || n < 0) {
-		throw new Error(`GENERATE_MAX_REPAIRS must be a non-negative integer (got ${raw})`);
-	}
-	return n;
 }
 
 function resolveDocsSha(docsRepoPath) {
@@ -125,13 +122,24 @@ function listForLog(items, max = 12) {
 		: shown.join(', ');
 }
 
+// One line saying what is wrong with a body, from checkBody's lists.
+function describeProblems({ dropped, missingAnchors, invalid }) {
+	return [
+		dropped.length && `dropped ${listForLog(dropped)}`,
+		missingAnchors.length && `missing must_cover ${listForLog(missingAnchors)}`,
+		...invalid.map((problem) => `body ${problem}`),
+	]
+		.filter(Boolean)
+		.join('; ');
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const docsRepoPath = path.resolve(args.docsPath);
 	const docsBuildDir = path.join(docsRepoPath, 'build');
 
 	const docsSha = resolveDocsSha(docsRepoPath);
-	const repairLimit = maxRepairs();
+	const repairLimit = parseMaxRepairs(process.env.GENERATE_MAX_REPAIRS);
 	console.log(`Docs build: ${docsBuildDir}`);
 	console.log(`Docs SHA:   ${docsSha}`);
 
@@ -213,6 +221,16 @@ async function main() {
 			if (entry.mode === 'direct') {
 				body = sourceContent;
 			} else if (entry.mode === 'generate') {
+				// The same baseline validate-generated compares against.
+				const previousBody = bodyAtHead(
+					path.posix.join(skill.dir, skill.rulesDir, `${entry.rule}.md`),
+				);
+				const checks = {
+					previousBody,
+					source: sourceContent,
+					mustCover: entry.must_cover,
+					allowDropped: entry.allow_dropped,
+				};
 				const outcome = await regenerateFaithfully({
 					conversation: ruleConversation({
 						rule: entry.rule,
@@ -221,11 +239,7 @@ async function main() {
 						mustCover: entry.must_cover,
 						crossLinks: entry.cross_links,
 					}),
-					// The same baseline validate-generated compares against.
-					previousBody: bodyAtHead(path.posix.join(skill.dir, skill.rulesDir, `${entry.rule}.md`)),
-					source: sourceContent,
-					mustCover: entry.must_cover,
-					allowDropped: entry.allow_dropped,
+					...checks,
 					maxRepairs: repairLimit,
 				});
 				totalUsage.input += outcome.usage.input_tokens;
@@ -235,17 +249,20 @@ async function main() {
 				if (!outcome.ok) {
 					const reason = outcome.error
 						? `model call failed: ${outcome.error}`
-						: [
-								outcome.dropped.length && `dropped ${listForLog(outcome.dropped)}`,
-								outcome.missingAnchors.length &&
-									`missing must_cover ${listForLog(outcome.missingAnchors)}`,
-							]
-								.filter(Boolean)
-								.join('; ');
-					// Holding back means keeping the committed file. A rule with no
-					// file yet has nothing to keep, so it fails here, as before.
+						: describeProblems(outcome);
+					// Holding back keeps the file on disk, so it is only safe when
+					// that file passes the same checks. A rule with no file yet, or
+					// one whose file fails them too, fails the run, as before.
 					if (!existing) {
 						console.error(`✗ ${entry.rule}: ${reason}`);
+						process.exit(1);
+					}
+					const keptProblems = checkBody({ body: existing.body, ...checks });
+					if (hasProblems(keptProblems)) {
+						console.error(
+							`✗ ${entry.rule}: ${reason} — and the committed body cannot be kept ` +
+								`instead: ${describeProblems(keptProblems)}`,
+						);
 						process.exit(1);
 					}
 					console.warn(
@@ -258,21 +275,27 @@ async function main() {
 						repairs: outcome.repairs,
 						dropped: outcome.dropped,
 						missingAnchors: outcome.missingAnchors,
+						invalid: outcome.invalid,
 						...(outcome.error && { error: outcome.error }),
 					});
 					continue;
 				}
 				body = outcome.body;
 				if (outcome.repairs > 0) {
+					const fixes = [
+						outcome.restored.length && `restored ${listForLog(outcome.restored)}`,
+						...outcome.fixed.map((problem) => `fixed: body ${problem}`),
+					];
 					console.log(
-						`  ${entry.rule}: restored after ${outcome.repairs} repair(s): ` +
-							listForLog(outcome.restored),
+						`  ${entry.rule}: repaired in ${outcome.repairs} pass(es) — ` +
+							fixes.filter(Boolean).join('; '),
 					);
 					report.repaired.push({
 						skill: skill.dir,
 						rule: entry.rule,
 						repairs: outcome.repairs,
 						restored: outcome.restored,
+						fixed: outcome.fixed,
 					});
 				}
 			} else {

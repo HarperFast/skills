@@ -52,8 +52,12 @@ jobs:
 
       - name: Resolve docs ref
         id: docsref
+        # Through env, not interpolated into the script: the ref comes from a
+        # dispatch payload or a workflow input, and `${{ }}` inside `run:` is
+        # pasted into the shell source before it runs.
+        env:
+          REF: ${{ github.event.client_payload.sha || github.event.inputs.docs_ref || 'main' }}
         run: |
-          REF="${{ github.event.client_payload.sha || github.event.inputs.docs_ref || 'main' }}"
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "Docs ref: $REF"
 
@@ -201,15 +205,36 @@ jobs:
           # reported "no changes".
           mapfile -t SKILL_DIRS < <(node scripts/generation/skill-dirs.mjs)
 
+          BRANCH="auto/docs-sync"
           HELD_BACK=$(jq '.heldBack | length' ../generation-report.json)
 
           # The generator writes rule bodies, AGENTS.md and SKILL.md under these.
           if git diff --quiet -- "${SKILL_DIRS[@]}"; then
+            # Nothing new to commit. An open sync PR still has to name the
+            # rules held back now — or stop naming ones that no longer are —
+            # so refresh just that section of its body.
+            if ! OPEN_PR=$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty'); then
+              echo "::error::Could not determine whether an open sync PR owns $BRANCH."
+              exit 1
+            fi
+            if [ -n "$OPEN_PR" ]; then
+              gh pr view "$OPEN_PR" --json body --jq .body > ../pr-body-current.md
+              npm run --silent sync:report -- --format splice-held-back \
+                --pr-body-file ../pr-body-current.md \
+                --generation-report ../generation-report.json > ../pr-body-next.md
+              if cmp -s ../pr-body-current.md ../pr-body-next.md; then
+                echo "No new changes; sync PR #${OPEN_PR} is current."
+              else
+                gh pr edit "$OPEN_PR" --body-file ../pr-body-next.md
+                echo "No new changes; refreshed the held-back rules in sync PR #${OPEN_PR}."
+              fi
+              exit 0
+            fi
             if [ "$HELD_BACK" -gt 0 ]; then
-              # Nothing reached a PR, so nothing names the held-back rules:
-              # fail, so the failure issue records them. Every sync retries
-              # them until they regenerate faithfully or the manifest changes.
-              echo "::error::Nothing to sync, but ${HELD_BACK} rule(s) were held back because regeneration kept dropping facts: $(jq -r '[.heldBack[].rule] | join(", ")' ../generation-report.json)."
+              # No PR exists to name the held-back rules: fail, so the failure
+              # issue records them. Every sync retries them until they
+              # regenerate faithfully or the manifest changes.
+              echo "::error::Nothing to sync, but ${HELD_BACK} rule(s) were held back because regeneration kept failing their checks: $(jq -r '[.heldBack[].rule] | join(", ")' ../generation-report.json)."
               exit 1
             fi
             echo "No changes — skills are already in sync with docs."
@@ -218,7 +243,6 @@ jobs:
 
           DOCS_SHA=$(git -C ../documentation rev-parse HEAD)
           SHORT=${DOCS_SHA:0:7}
-          BRANCH="auto/docs-sync"
 
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
@@ -277,11 +301,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DOCS_REF: ${{ steps.docsref.outputs.ref }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
         run: |
           set -euo pipefail
           # Resolve the actual docs commit SHA (falls back to the ref if the
           # documentation checkout failed before we could read HEAD).
-          DOCS_SHA=$(git -C ../documentation rev-parse HEAD 2>/dev/null || echo "${{ steps.docsref.outputs.ref }}")
+          DOCS_SHA=$(git -C ../documentation rev-parse HEAD 2>/dev/null || echo "$DOCS_REF")
 
           # One open issue for every failure, whatever the docs SHA, so a
           # failure that repeats across docs deploys collects comments on one
@@ -295,7 +321,7 @@ jobs:
             npm run --silent sync:report -- --format held-back \
               --generation-report ../generation-report.json >> "$DETAILS" || true
           fi
-          if [ "${{ steps.validate.outcome }}" = "failure" ] && [ -s ../validate.log ]; then
+          if [ "$VALIDATE_OUTCOME" = "failure" ] && [ -s ../validate.log ]; then
             {
               echo
               echo '<details><summary>Validation output (last 60 lines)</summary>'
@@ -310,11 +336,17 @@ jobs:
 
           # REST, not `gh issue list`: it pages through every open issue, where
           # the list command stops at 30 and could miss the one to reuse.
-          # Issues only (the endpoint also returns PRs). A failed lookup falls
-          # through to opening a new issue: a duplicate beats a silent failure.
-          EXISTING=$(gh api --paginate "/repos/${{ github.repository }}/issues?state=open&per_page=100" \
-            --jq ".[] | select(.pull_request == null and .title == \"${TITLE}\") | .number" \
-            2>/dev/null | head -1 || true)
+          # Issues only (the endpoint also returns PRs). A failed lookup is not
+          # an empty one, but it still opens a new issue, loudly: a duplicate
+          # is one click to close, and skipping the report would leave this
+          # failure with no trace at all.
+          if MATCHES=$(gh api --paginate "/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+            --jq ".[] | select(.pull_request == null and .title == \"${TITLE}\") | .number"); then
+            EXISTING=$(printf '%s\n' "$MATCHES" | head -1)
+          else
+            echo "::warning::Could not look up open failure issues; opening a new one instead of commenting."
+            EXISTING=""
+          fi
 
           if [ -n "$EXISTING" ]; then
             echo "Existing failure issue #${EXISTING} — appending comment."

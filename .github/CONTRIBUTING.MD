@@ -159,7 +159,7 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 5. **Produces the body** — `mode: generate` calls Claude under the rule template; `mode: direct` copies the resolved content verbatim.
 
-   A generated body must keep every inline-code fact that the committed body carries and the docs still state (the fact-retention check), and must contain every `must_cover` string. A body that misses any goes back to Claude with the list to restore, up to `GENERATE_MAX_REPAIRS` times (default 2). A rule that still misses some is **held back**: its committed body is kept, its stale input hash retries it on the next sync, and the rest of the run carries on — one lossy rule no longer blocks every other docs change.
+   A generated body must pass what the validators check: keep every inline-code fact that the committed body carries and the docs still state (the fact-retention check), contain every `must_cover` string, start with an H1, meet the minimum length, and leak no MDX. A body that fails goes back to Claude with what is wrong, up to `GENERATE_MAX_REPAIRS` times (default 2). A rule that still fails is **held back**: its committed body is kept, its stale input hash retries it on the next sync, and the rest of the run carries on — one bad rule no longer blocks every other docs change. Holding back needs a committed body that passes the same checks; a new rule, or one whose committed body fails them too, still fails the run.
 
 6. **Writes the rule file** with updated frontmatter (`sourceCommit`, `inputHash`, `sources` snapshot).
 
@@ -169,7 +169,7 @@ When docs change (or on a weekly safety-net cron), `.github/workflows/generate.y
 
 9. **Validates** — runs `validate-generated.mjs` (manifest lint, frontmatter reconciliation, must-cover assertions, fact retention, AGENTS.md round-trip).
 
-10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR. The PR body names each held-back rule with the facts it kept dropping, and each rule a repair pass had to fix. If rules were held back and nothing else changed, there is no PR to name them, so the run fails instead.
+10. **Opens a sync PR** if anything changed — branch `auto/docs-sync`, title `docs: regenerate rules from documentation@<sha>`. One rolling branch; re-triggering before merge force-updates the same PR. The PR body names each held-back rule with what it kept getting wrong, and each rule a repair pass had to fix. When nothing else changed, the run refreshes the held-back list in the open sync PR's body; with no open PR to name them, it fails instead.
 
     A failure in any step adds a comment to the one open `Auto-sync generation failure` issue (or opens it), quoting the held-back rules and the validation output.
 

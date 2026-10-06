@@ -1,32 +1,56 @@
-// Regenerate one `mode: generate` rule body, repairing what the model drops,
-// and decide whether the result may replace the committed body.
+// Regenerate one `mode: generate` rule body, repairing what the model gets
+// wrong, and decide whether the result may replace the committed body.
 //
 // The model compresses each regeneration differently, so a one-shot rewrite
 // routinely loses facts that the committed body carries and the docs still
-// state. The validator rightly refuses such a body — and before this existed,
-// one lossy rule failed the whole sync: from 2026-09-14 no sync passed, and no
-// docs change reached the published skills (#118).
-//
-// So each attempt is checked here with the same rules the validator gates on
-// (lib/retention.mjs, plus must_cover). A failing attempt goes back to the
-// model with exactly what is missing; after `maxRepairs` repairs the rule is
-// reported as not ok, and the caller keeps the committed body (holds the rule
-// back) so the rest of the sync can proceed.
+// state, and the validator refuses such a body. Each attempt is therefore
+// checked here with the same rules the validators gate on (checkBody). A
+// failing attempt goes back to the model with exactly what is wrong; after
+// `maxRepairs` repairs the rule is reported as not ok, and the caller keeps the
+// committed body (holds the rule back) so one bad rule cannot fail the whole
+// sync (#118).
 //
 // Pure orchestration: the model sits behind `conversation` (see
 // lib/llm.mjs `ruleConversation`), so this is testable without the network.
 
+import { structuralProblems } from './body-checks.mjs';
 import { droppedFacts, missingAnchors } from './retention.mjs';
 
 export const DEFAULT_MAX_REPAIRS = 2;
 
+// GENERATE_MAX_REPAIRS as a repair budget: unset or empty means the default,
+// anything but a non-negative integer is an error.
+export function parseMaxRepairs(raw) {
+	if (raw === undefined || raw === '') return DEFAULT_MAX_REPAIRS;
+	const n = Number(raw);
+	if (!Number.isInteger(n) || n < 0) {
+		throw new Error(`GENERATE_MAX_REPAIRS must be a non-negative integer (got ${raw})`);
+	}
+	return n;
+}
+
+// Everything the validators would reject in a generated body: retained facts
+// it dropped, must_cover strings it lacks, and structural problems.
+export function checkBody({ body, previousBody, source, mustCover = [], allowDropped = [] }) {
+	return {
+		dropped: droppedFacts({ previousBody, body, source, allowDropped }),
+		missingAnchors: missingAnchors(body, mustCover),
+		invalid: structuralProblems(body),
+	};
+}
+
+export function hasProblems(problems) {
+	return Object.values(problems).some((list) => list.length > 0);
+}
+
 // Returns:
-//   ok: true  → { ok, body, repairs, restored, usage }
-//               `restored` lists what the repairs put back (empty when the
+//   ok: true  → { ok, body, repairs, restored, fixed, usage }
+//               `restored` lists the facts and anchors the repairs put back and
+//               `fixed` the structural problems they fixed (both empty when the
 //               first body passed), for the sync PR's reviewers.
-//   ok: false → { ok, repairs, dropped, missingAnchors, error, usage }
-//               `dropped`/`missingAnchors` are what the last body still lacked;
-//               `error` is set instead when a model call failed.
+//   ok: false → { ok, repairs, dropped, missingAnchors, invalid, error, usage }
+//               the lists are what the last body still got wrong; `error` is
+//               set instead when a model call failed.
 export async function regenerateFaithfully({
 	conversation,
 	previousBody,
@@ -47,15 +71,25 @@ export async function regenerateFaithfully({
 		result = await conversation.generate();
 		addUsage(result.usage);
 		for (;;) {
-			const problems = {
-				dropped: droppedFacts({ previousBody, body: result.body, source, allowDropped }),
-				missingAnchors: missingAnchors(result.body, mustCover),
-			};
+			const problems = checkBody({
+				body: result.body,
+				previousBody,
+				source,
+				mustCover,
+				allowDropped,
+			});
 			firstProblems ??= problems;
-			if (problems.dropped.length === 0 && problems.missingAnchors.length === 0) {
+			if (!hasProblems(problems)) {
 				// A string can be both a dropped fact and a missing anchor.
 				const restored = [...new Set([...firstProblems.dropped, ...firstProblems.missingAnchors])];
-				return { ok: true, body: result.body, repairs, restored, usage };
+				return {
+					ok: true,
+					body: result.body,
+					repairs,
+					restored,
+					fixed: firstProblems.invalid,
+					usage,
+				};
 			}
 			if (repairs >= maxRepairs) return { ok: false, repairs, ...problems, usage };
 			repairs++;
@@ -63,6 +97,14 @@ export async function regenerateFaithfully({
 			addUsage(result.usage);
 		}
 	} catch (err) {
-		return { ok: false, repairs, dropped: [], missingAnchors: [], error: err.message, usage };
+		return {
+			ok: false,
+			repairs,
+			dropped: [],
+			missingAnchors: [],
+			invalid: [],
+			error: err.message,
+			usage,
+		};
 	}
 }

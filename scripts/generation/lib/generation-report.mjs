@@ -39,11 +39,12 @@ export function heldBackMarkdown(report) {
 	const lines = [
 		'### Held back',
 		'',
-		'These rules have docs changes that were **not** synced. Regeneration kept dropping ' +
-			'facts that the committed rule carries and the docs still state, so each keeps its ' +
-			'committed body, and every sync retries it. To unblock one, pin the facts it keeps ' +
-			'losing with `must_cover`, split the rule if its sources are more than the model ' +
-			'reliably keeps, or record an intended removal under `allow_dropped` in the manifest.',
+		'These rules have docs changes that were **not** synced. Regeneration kept failing ' +
+			'its checks — usually by dropping facts that the committed rule carries and the docs ' +
+			'still state — so each keeps its committed body, and every sync retries it. To ' +
+			'unblock one, pin the facts it keeps losing with `must_cover`, split the rule if its ' +
+			'sources are more than the model reliably keeps, or record an intended removal under ' +
+			'`allow_dropped` in the manifest.',
 		'',
 	];
 	for (const h of report.heldBack) {
@@ -53,6 +54,7 @@ export function heldBackMarkdown(report) {
 					h.dropped.length && `still dropped ${h.dropped.map(code).join(', ')}`,
 					h.missingAnchors.length &&
 						`still missing \`must_cover\` ${h.missingAnchors.map(code).join(', ')}`,
+					...(h.invalid ?? []).map((problem) => `body still ${problem}`),
 				]
 					.filter(Boolean)
 					.join('; ');
@@ -67,14 +69,44 @@ export function repairedMarkdown(report) {
 	const lines = [
 		'### Repaired during generation',
 		'',
-		'The first regeneration of these rules dropped the facts below, and a repair pass ' +
-			'restored them. Check that each one landed where it belongs.',
+		'The first regeneration of these rules failed its checks, and a repair pass fixed it. ' +
+			'Check that each restored fact landed where it belongs.',
 		'',
 	];
 	for (const r of report.repaired) {
-		lines.push(
-			`- ${code(r.rule)} — ${plural(r.repairs, 'repair')}: ${r.restored.map(code).join(', ')}`,
-		);
+		const what = [
+			r.restored.length && `restored ${r.restored.map(code).join(', ')}`,
+			...(r.fixed ?? []).map((problem) => `fixed: body ${problem}`),
+		]
+			.filter(Boolean)
+			.join('; ');
+		lines.push(`- ${code(r.rule)} — ${plural(r.repairs, 'repair')}: ${what}`);
 	}
 	return lines.join('\n');
+}
+
+// Markers around the held-back section in the sync PR body, so a run with
+// nothing new to commit can still refresh that section in the open PR
+// (spliceHeldBack) without recomposing the provenance around it.
+export const HELD_BACK_BEGIN = '<!-- held-back:begin -->';
+export const HELD_BACK_END = '<!-- held-back:end -->';
+
+// The held-back section between its markers. The markers are emitted even
+// when nothing is held back, so a later splice always has a place to land.
+export function heldBackBlock(report) {
+	const section = heldBackMarkdown(report);
+	return [HELD_BACK_BEGIN, ...(section ? [section] : []), HELD_BACK_END].join('\n');
+}
+
+// `body` with its held-back section replaced by the report's. A body without
+// markers (written before they existed) gets the section appended, and only
+// when there is something to say.
+export function spliceHeldBack(body, report) {
+	const start = body.indexOf(HELD_BACK_BEGIN);
+	const end = body.indexOf(HELD_BACK_END, start);
+	if (start !== -1 && end !== -1) {
+		return body.slice(0, start) + heldBackBlock(report) + body.slice(end + HELD_BACK_END.length);
+	}
+	if (!report.heldBack.length) return body;
+	return `${body.trimEnd()}\n\n${heldBackBlock(report)}\n`;
 }

@@ -56,7 +56,15 @@ const MAX_CONTEXT_CHARS = 240;
 //
 // Both throw on an API error, an empty body, or a body cut off at MAX_TOKENS —
 // a truncated body would otherwise pass for a rule that dropped its tail.
-export function ruleConversation({ rule, description, sourceContent, mustCover, crossLinks }) {
+// `createMessage` stands in for the Messages API in tests.
+export function ruleConversation({
+	rule,
+	description,
+	sourceContent,
+	mustCover,
+	crossLinks,
+	createMessage = (params) => client().messages.create(params),
+}) {
 	const messages = [
 		{
 			role: 'user',
@@ -65,7 +73,7 @@ export function ruleConversation({ rule, description, sourceContent, mustCover, 
 	];
 
 	async function send() {
-		const response = await client().messages.create({
+		const response = await createMessage({
 			model: MODEL,
 			max_tokens: MAX_TOKENS,
 			temperature: 0,
@@ -142,15 +150,15 @@ export function ruleRequest({ rule, description, sourceContent, mustCover, cross
 	return sections.join('\n');
 }
 
-// The reply to a body that failed the retention or must_cover check. Each
-// dropped fact is quoted with the committed line it came from: the bare token
-// says what to restore, the line says where it belonged and what it meant.
-// Every listed fact is still in the source (that is how it was selected), so
+// The reply to a body that failed checkBody (lib/regenerate.mjs). Each dropped
+// fact is quoted with the committed line it came from: the bare token says
+// what to restore, the line says where it belonged and what it meant. Every
+// listed fact is still in the source (that is how it was selected), so
 // restoring it never requires inventing anything.
-export function repairRequest({ dropped = [], missingAnchors = [], previousBody }) {
+export function repairRequest({ dropped = [], missingAnchors = [], invalid = [], previousBody }) {
 	const sections = [
-		`Your rule body is missing content it has to keep. Return the complete rule body again, ` +
-			`with every item below restored and everything else left as it is.`,
+		`Your rule body cannot be published as it is. Return the complete rule body again, ` +
+			`with every item below fixed and everything else left as it is.`,
 	];
 
 	if (dropped.length) {
@@ -174,6 +182,14 @@ export function repairRequest({ dropped = [], missingAnchors = [], previousBody 
 			`## Required strings your body is missing`,
 			`Each must appear verbatim (see "Must cover" above):`,
 			...anchorsOnly.map((s) => `- ${s}`),
+		);
+	}
+
+	if (invalid.length) {
+		sections.push(
+			``,
+			`## Structural problems to fix`,
+			...invalid.map((problem) => `- The body ${problem}.`),
 		);
 	}
 

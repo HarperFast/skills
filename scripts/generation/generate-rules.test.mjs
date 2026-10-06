@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import yaml from 'js-yaml';
 
 import { SKILLS } from './lib/manifest.mjs';
 import { buildFrontmatter, composeRuleFile } from './lib/render.mjs';
@@ -189,6 +190,28 @@ test('a model error stops the run, and the report still names the rule', async (
 			report.heldBack.map((held) => held.rule),
 			['kept'],
 		);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('a rule is not held back on a file the validator would reject', async () => {
+	const root = scaffold();
+	try {
+		// The manifest moved on without the rule file, so keeping the file would
+		// fail validate-generated's frontmatter reconciliation.
+		const manifestPath = path.join(root, 'harper-best-practices/rules.manifest.yaml');
+		const manifest = yaml.load(fs.readFileSync(manifestPath, 'utf-8'));
+		manifest.rules[0].description = 'A new description.';
+		fs.writeFileSync(manifestPath, yaml.dump(manifest));
+
+		const { status, output, report } = await generate(root, {
+			kept: [body('Kept', LOSSY), body('Kept', LOSSY), body('Kept', LOSSY)],
+		});
+		assert.equal(status, 1, output);
+		assert.equal(report.stoppedOn.rule, 'kept');
+		assert.match(report.stoppedOn.reason, /cannot be kept instead: .*"description" diverges/);
+		assert.deepEqual(report.heldBack, []);
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

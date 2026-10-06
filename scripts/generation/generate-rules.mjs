@@ -33,9 +33,9 @@
 // checkBody). A body that fails goes back to the model with what is wrong, up
 // to GENERATE_MAX_REPAIRS times. A rule that still fails is held back: its
 // file is left untouched (so its stale inputHash retries it next run) and the
-// run carries on, so one bad rule cannot block every other docs change (#118).
-// The run still stops (exit 1) on a model error, and on a rule whose existing
-// file could not pass validate-generated either.
+// run carries on, so one bad rule cannot block every other docs change. The
+// run still stops (exit 1) on a model error, and on a rule whose existing file
+// could not pass validate-generated either.
 //
 // Environment:
 //   ANTHROPIC_API_KEY     Required for any rule in `mode: generate`.
@@ -100,8 +100,7 @@ function resolveDocsSha(docsRepoPath) {
 	}
 }
 
-// A failure that ends the run with exit 1. `rule` ({ skill, rule }) names the
-// rule it stopped on, for the report.
+// Exit 1 rather than a crash; `rule` ({ skill, rule }) goes in the report.
 class StopRun extends Error {
 	constructor(message, rule) {
 		super(message);
@@ -126,7 +125,7 @@ async function readExisting(filePath) {
 
 // Capped so one rule cannot bury the log; --report carries every entry.
 function listForLog(items, max = 12) {
-	const shown = items.slice(0, max).map((i) => JSON.stringify(i));
+	const shown = items.slice(0, max).map((item) => JSON.stringify(item));
 	return items.length > max
 		? `${shown.join(', ')} (+${items.length - max} more)`
 		: shown.join(', ');
@@ -153,8 +152,13 @@ async function main() {
 		throw err;
 	} finally {
 		// Also when the run stops: the failure issue reads what was held back.
+		// A failed write must not replace the error that stopped the run.
 		if (args.report) {
-			await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+			try {
+				await fs.writeFile(args.report, JSON.stringify(report, null, 2) + '\n', 'utf-8');
+			} catch (err) {
+				console.error(`Could not write the report to ${args.report}: ${err.message}`);
+			}
 		}
 	}
 }

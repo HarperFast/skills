@@ -8,7 +8,7 @@
 // failing attempt goes back to the model with exactly what is wrong; after
 // `maxRepairs` repairs the rule is reported as not ok, and the caller keeps the
 // committed body (holds the rule back) so one bad rule cannot fail the whole
-// sync (#118).
+// sync.
 //
 // Pure orchestration: the model sits behind `conversation` (see
 // lib/llm.mjs `ruleConversation`), so this is testable without the network.

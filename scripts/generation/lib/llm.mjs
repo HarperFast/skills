@@ -206,7 +206,8 @@ export function repairRequest({ dropped = [], missingAnchors = [], invalid = [],
 // hit would be a different use of the token.
 function contextLine(body, fact) {
 	const lines = stripFencedBlocks(body).split('\n');
-	const hit = lines.find((l) => l.includes(`\`${fact}\``)) ?? lines.find((l) => l.includes(fact));
+	const hit =
+		lines.find((line) => line.includes(`\`${fact}\``)) ?? lines.find((line) => line.includes(fact));
 	if (!hit) return null;
 	const line = hit.replace(/\s+/g, ' ').trim();
 	return line.length > MAX_CONTEXT_CHARS ? `${line.slice(0, MAX_CONTEXT_CHARS)}…` : line;

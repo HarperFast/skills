@@ -74,11 +74,37 @@ test('missing anchors keep manifest order', () => {
 	assert.deepEqual(missingAnchors('anything', undefined), []);
 });
 
+// Run `check` with a scratch repository as the working directory.
+function inScratchRepo(setup, check) {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-'));
+	const cwd = process.cwd();
+	try {
+		execFileSync('git', ['init', '-q'], { cwd: root });
+		setup(root);
+		process.chdir(root);
+		check();
+	} finally {
+		process.chdir(cwd);
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+}
+
 test('the HEAD baseline is the committed body without frontmatter, or null', () => {
-	// Run from the repo root, as `npm test` does.
-	const body = bodyAtHead('harper-best-practices/rules/querying-rest-apis.md');
-	assert.match(body, /^# /);
-	assert.equal(bodyAtHead('harper-best-practices/rules/no-such-rule.md'), null);
+	inScratchRepo(
+		(root) => {
+			fs.mkdirSync(path.join(root, 'rules'));
+			fs.writeFileSync(path.join(root, 'rules/a.md'), '---\nname: a\n---\n\n# A\n\nBody.\n');
+			const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+			git('add', '-A');
+			git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'a');
+			// Uncommitted edits are not the baseline.
+			fs.writeFileSync(path.join(root, 'rules/a.md'), '# Edited\n');
+		},
+		() => {
+			assert.equal(bodyAtHead('rules/a.md'), '# A\n\nBody.');
+			assert.equal(bodyAtHead('rules/missing.md'), null);
+		},
+	);
 });
 
 test('an unreadable baseline is an error, not a missing one', () => {
@@ -98,14 +124,8 @@ test('an anchor that is only a dropped fact again, backticks or not, is not repe
 });
 
 test('a repository with no commit yet has no readable baseline either', () => {
-	const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'unborn-head-'));
-	const cwd = process.cwd();
-	try {
-		execFileSync('git', ['init', '-q'], { cwd: fresh });
-		process.chdir(fresh);
-		assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/);
-	} finally {
-		process.chdir(cwd);
-		fs.rmSync(fresh, { recursive: true, force: true });
-	}
+	inScratchRepo(
+		() => {},
+		() => assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/),
+	);
 });

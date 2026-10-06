@@ -1,9 +1,7 @@
-// Render the generator's --report JSON (see generate-rules.mjs) as Markdown
-// for the sync PR body and the auto-sync failure issue.
-//
-// A held-back rule is only useful to a reviewer if it is named with what it
-// lost: that list is what they pin with `must_cover`, waive with
-// `allow_dropped`, or take as evidence the rule needs splitting.
+// Markdown for the generator's --report JSON, in the sync PR body and the
+// failure issue. Held-back rules are listed with exactly what they still lack:
+// that list is what a reviewer pins with `must_cover`, waives with
+// `allow_dropped`, or takes as evidence the rule needs splitting.
 
 import fs from 'node:fs/promises';
 

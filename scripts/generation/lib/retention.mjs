@@ -3,10 +3,11 @@
 // validate-generated.mjs gates on it, and generate-rules.mjs runs the same
 // check on each regenerated body so it can repair or hold back a lossy one
 // before the gate sees it. The two must agree exactly: if the generator
-// accepted a body the validator then rejected, one lossy rule would block the
-// whole sync again — which is the failure this module exists to prevent (#118).
+// accepted a body the validator then rejected, one lossy rule would fail the
+// whole sync.
 
 import { execFileSync } from 'node:child_process';
+import process from 'node:process';
 import matter from 'gray-matter';
 
 import { stripFencedBlocks } from './sources.mjs';
@@ -46,15 +47,22 @@ export function inlineCodeSpans(md) {
 //
 // HEAD rather than the working tree, in both the generator and the validator,
 // so a local re-run cannot launder a fact an earlier uncommitted run dropped.
+// Working directories whose HEAD commit has been verified: HEAD does not move
+// during a run, so once per repository is enough.
+const verifiedHeads = new Set();
+
 export function bodyAtHead(relPath) {
 	const spec = `HEAD:${relPath}`;
 	const fail = (err) => new Error(`Cannot read the committed baseline ${spec}: ${err.message}`);
-	try {
-		// `HEAD:<path>` alone exits 1 for an unborn HEAD as well as a missing
-		// path, so the commit is verified first.
-		git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
-	} catch (err) {
-		throw fail(err);
+	if (!verifiedHeads.has(process.cwd())) {
+		try {
+			// `HEAD:<path>` alone exits 1 for an unborn HEAD as well as a missing
+			// path, so the commit is verified first.
+			git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+		} catch (err) {
+			throw fail(err);
+		}
+		verifiedHeads.add(process.cwd());
 	}
 	try {
 		git(['rev-parse', '--verify', '--quiet', spec]);

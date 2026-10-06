@@ -53,13 +53,21 @@ const verifiedHeads = new Set();
 
 export function bodyAtHead(relPath) {
 	const spec = `HEAD:${relPath}`;
-	const fail = (err) => new Error(`Cannot read the committed baseline ${spec}: ${err.message}`);
+	// Git's own stderr says what went wrong; the spawn error's message (e.g.
+	// ENOENT when git is missing) is the fallback.
+	const fail = (err) =>
+		new Error(
+			`Cannot read the committed baseline ${spec}: ${err.stderr?.toString().trim() || err.message}`,
+		);
 	if (!verifiedHeads.has(process.cwd())) {
 		try {
 			// `HEAD:<path>` alone exits 1 for an unborn HEAD as well as a missing
 			// path, so the commit is verified first.
 			git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
 		} catch (err) {
+			if (err.status === 1) {
+				throw new Error(`Cannot read the committed baseline ${spec}: HEAD has no commit yet`);
+			}
 			throw fail(err);
 		}
 		verifiedHeads.add(process.cwd());

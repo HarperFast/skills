@@ -112,7 +112,10 @@ test('an unreadable baseline is an error, not a missing one', () => {
 	const cwd = process.cwd();
 	try {
 		process.chdir(outside);
-		assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/);
+		assert.throws(
+			() => bodyAtHead('rules/x.md'),
+			/^Error: Cannot read the committed baseline HEAD:rules\/x\.md: fatal: not a git repository/,
+		);
 	} finally {
 		process.chdir(cwd);
 		fs.rmSync(outside, { recursive: true, force: true });
@@ -126,6 +129,6 @@ test('an anchor that is only a dropped fact again, backticks or not, is not repe
 test('a repository with no commit yet has no readable baseline either', () => {
 	inScratchRepo(
 		() => {},
-		() => assert.throws(() => bodyAtHead('rules/x.md'), /Cannot read the committed baseline/),
+		() => assert.throws(() => bodyAtHead('rules/x.md'), /HEAD has no commit yet$/),
 	);
 });

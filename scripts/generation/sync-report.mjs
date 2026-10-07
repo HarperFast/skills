@@ -187,7 +187,6 @@ function git(args) {
 
 const rulesDirs = () => SKILLS.map((skill) => path.posix.join(skill.dir, skill.rulesDir));
 
-// `skill/rule` for a rule file path, so rules match across skills.
 function ruleKeyOf(relPath) {
 	const skill = SKILLS.find((candidate) =>
 		relPath.startsWith(path.posix.join(candidate.dir, candidate.rulesDir) + '/'),
@@ -195,9 +194,7 @@ function ruleKeyOf(relPath) {
 	return `${skill.dir}/${path.posix.basename(relPath, '.md')}`;
 }
 
-// Every rule file the checked-out branch changes relative to `base`. `status`
-// is git's A/M/D; `recordedCommit` is the docs commit the rule was last synced
-// from on `base`, null when it has no recorded baseline there.
+// `status` is git's A/M/D.
 function changedRules(base) {
 	const changed = [];
 	const lines = git([

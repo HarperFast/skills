@@ -1,8 +1,3 @@
-// Regenerate one `mode: generate` rule body, sending what the validators
-// would reject back to the model, and report whether the result may replace
-// the committed body. Testable without the network: the model sits behind
-// `conversation` (lib/llm.mjs `ruleConversation`).
-
 import { structuralProblems } from './body-checks.mjs';
 import { anchorsBeyondFacts, droppedFacts, missingAnchors } from './retention.mjs';
 
@@ -17,8 +12,6 @@ export function parseMaxRepairs(raw) {
 	return budget;
 }
 
-// Everything the validators would reject in a generated body: retained facts
-// it dropped, must_cover strings it lacks, and structural problems.
 export function checkBody({ body, previousBody, source, mustCover = [], allowDropped = [] }) {
 	return {
 		dropped: droppedFacts({ previousBody, body, source, allowDropped }),
@@ -31,14 +24,8 @@ export function hasProblems(problems) {
 	return Object.values(problems).some((list) => list.length > 0);
 }
 
-// Returns:
-//   ok: true  → { ok, body, repairs, restored, fixed, usage }
-//               `restored` lists the facts and anchors the repairs put back and
-//               `fixed` the structural problems they fixed (both empty when the
-//               first body passed), for the sync PR's reviewers.
-//   ok: false → { ok, repairs, dropped, missingAnchors, invalid, error, usage }
-//               the lists are what the last body still got wrong; `error` is
-//               set instead when a model call failed.
+// `restored` and `fixed` report what the first body got wrong, which is what
+// a reviewer of the repaired rule needs to check.
 export async function regenerateFaithfully({
 	conversation,
 	previousBody,

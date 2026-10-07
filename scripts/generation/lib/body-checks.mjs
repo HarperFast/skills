@@ -1,31 +1,22 @@
-// Structural checks a generated rule body must pass to be publishable,
-// whatever facts it carries. validate-generated.mjs gates on the length and
-// MDX checks, validate-skills.mjs on the H1; the generator applies all three
-// before accepting a body, so a structurally broken body is repaired or held
-// back like a lossy one instead of failing the whole sync.
+// The checks validate-generated.mjs (length, MDX) and validate-skills.mjs (H1)
+// gate on, so the generator can repair or hold back a broken body instead of
+// failing the whole sync.
 
 import { stripFencedBlocks } from './sources.mjs';
 
 export const MIN_GENERATED_BODY_CHARS = 200;
 
-// Remove fenced and inline code so leaked-MDX heuristics don't false-positive
-// on legitimate `import`/JSX-like syntax inside code examples. Fences are
-// stripped by the shared scanner so tilde fences and long delimiter runs are
-// handled the same way sliceSection handles them.
+// Code examples legitimately contain `import ... from` and `<Generic>`.
 function stripCode(md) {
 	return stripFencedBlocks(md).replace(/`[^`]*`/g, '');
 }
 
-// JSX components or MDX `import` statements outside fenced/inline code. Code
-// examples legitimately contain `import ... from` and `<Generic>` type params,
-// so code is stripped first.
 export function hasLeakedMdx(body) {
 	const prose = stripCode(body);
 	return /^import\s.+\sfrom\s/m.test(prose) || /<[A-Z][A-Za-z0-9]*[\s/>]/.test(prose);
 }
 
-// What is wrong with a generated body's structure, each as a predicate on
-// "the body", or [] when nothing is.
+// Each problem reads as a predicate on "the body"; callers prefix it.
 export function structuralProblems(body) {
 	const trimmed = body.trim();
 	const problems = [];

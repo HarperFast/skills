@@ -5,17 +5,17 @@ metadata:
   mode: generate
   sources:
     - reference/v5/rest/querying.md
-  sourceCommit: 677ad213d67822e109c83619e181ca23a59823db
-  inputHash: 0f8efee293628a52
+  sourceCommit: 2cfb81318f17e0aca2d600109e6ad813d2d0443e
+  inputHash: 25b9daabc0a28fd5
 ---
 
 # Querying REST APIs
 
-Instructions for the agent to filter, sort, select, and paginate Harper REST API collections using URL query parameters.
+Instructions for the agent to filter, sort, select, and paginate records through Harper's URL-based REST query language.
 
 ## When to Use
 
-Apply this rule whenever building or modifying code that queries Harper REST collection endpoints. Use it when you need to filter records by attribute values, apply comparison operators, sort or paginate results, or join across related tables. See [automatic-apis.md](automatic-apis.md) for how Harper exposes tables as REST endpoints.
+Apply this rule whenever you need to construct or handle GET requests against Harper collection endpoints that require filtering by attribute value, comparison operators, sorting, field selection, or paginated results. This rule also covers type coercion syntax and relationship joins via dot notation. See [automatic-apis.md](automatic-apis.md) for how REST endpoints are generated from schemas.
 
 ## How It Works
 
@@ -26,7 +26,13 @@ Apply this rule whenever building or modifying code that queries Harper REST col
    GET /Product/?category=software&inStock=true
    ```
 
-2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for numeric, string, and date comparisons.
+   To filter for null values:
+
+   ```
+   GET /Product/?discount=null
+   ```
+
+2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for range and pattern matching.
 
    | Operator             | Meaning                                |
    | -------------------- | -------------------------------------- |
@@ -61,7 +67,7 @@ Apply this rule whenever building or modifying code that queries Harper REST col
    GET /Product/?price=gt=100&lt=200
    ```
 
-4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically. Use explicit prefixes to force a type.
+4. **Apply type conversion**: For FIQL comparators (`==`, `!=`, `=gt=`, etc.), Harper converts values automatically. Use explicit type prefixes to force a specific type.
 
    | Syntax                                    | Behavior                                    |
    | ----------------------------------------- | ------------------------------------------- |
@@ -81,20 +87,20 @@ Apply this rule whenever building or modifying code that queries Harper REST col
    GET /Product/?rating=5|featured=true
    ```
 
-6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
+6. **Group conditions**: Use parentheses or square brackets to control evaluation order. Prefer square brackets when building queries from user input, since standard URI encoding safely encodes `[` and `]`.
 
    ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
    GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
    ```
 
-   Construct from JavaScript:
+   Build grouped queries in JavaScript:
 
    ```javascript
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-7. **Select specific properties with `select(`**: Append `select(...)` as a query function separated by `&`.
+7. **Select specific properties with `select()`**: Append `select()` as a query function separated by `&`.
 
    | Syntax                                 | Returns                                     |
    | -------------------------------------- | ------------------------------------------- |
@@ -104,47 +110,99 @@ Apply this rule whenever building or modifying code that queries Harper REST col
    | `?select(property1,)`                  | Objects with a single specified property    |
    | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties |
 
-8. **Paginate with `limit(`**: Use `limit(end)` or `limit(start,end)` to control result count and offset.
+   ```
+   GET /Product/?category=software&select(name)
+   GET /Product/?brand.name=Microsoft&select(name,brand{name})
+   ```
 
-9. **Sort with `sort(`**: Use `sort(property)` or `sort(+property,-property,...)`. Prefix `+` or no prefix = ascending; `-` = descending.
+8. **Limit results with `limit(end)` or `limit(start,end)`**: Append as a query function.
 
-10. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined in the schema using `@relationship`. Relationship attributes are not included by default — use `select()` to include them.
+   ```
+   GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
+   GET /Product/?rating=gt=3&limit(10,30)
+   ```
+
+9. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. List multiple properties to break ties in order.
+
+   ```
+   GET /Product/?rating=gt=3&sort(+name)
+   GET /Product/?sort(+rating,-price)
+   ```
+
+10. **Paginate with a total count**: Use `limit(start,end)` for paging and send a `Prefer` request header to receive a total match count.
+
+    | `Prefer` value    | Meaning                                  |
+    | ----------------- | ---------------------------------------- |
+    | `count=exact`     | Exact count of matching records (opt-in) |
+    | `count=estimated` | Fast approximate count                   |
 
     ```
+    GET /Product/?category=software&limit(0,25)
+    Prefer: count=exact
+    ```
+
+    The server responds with:
+
+    | Header               | Example           | Description                                            |
+    | -------------------- | ----------------- | ------------------------------------------------------ |
+    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range out of total matching records  |
+    | `Range-Unit`         | `items`           | Unit used by `Content-Range`                           |
+    | `Preference-Applied` | `count=exact`     | Count mode the server applied (`exact` or `estimated`) |
+
+    The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`).
+
+    Enable exact counts in the application's REST configuration:
+
+    ```yaml
+    rest:
+      exactCount: true
+    ```
+
+    Without this, a `count=exact` request is served as an estimate.
+
+11. **Query across relationships using dot syntax**: Define relationships in the schema with `@relationship`, then filter and select across them.
+
+    ```
+    GET /Product/?brand.name=Microsoft
+    GET /Brand/?products.name=Keyboard
     GET /Product/?brand.name=Microsoft&select(name,brand{name})
     ```
 
-11. **Query for null values**: Use `=null` as the value to match null or non-null records.
+    Filtering on a related attribute produces INNER JOIN behavior. Selecting a relationship without filtering produces LEFT JOIN behavior — the property is omitted if the foreign key is null or references a non-existent record.
+
+12. **Access a specific property by URL**: Append the property name with dot syntax to the record ID.
+
     ```
-    GET /Product/?discount=null
+    GET /MyTable/123.propertyName
     ```
+
+    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors.
 
 ## Examples
 
-**Filter with comparison operators and select:**
+**Range filter with select and sort:**
 
 ```
-GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)
+GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)&sort(+price)
 ```
 
-**Paginate and sort:**
+**Paginated request with exact count:**
 
 ```
-GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
-GET /Product/?rating=gt=3&limit(10,30)
-GET /Product/?rating=gt=3&sort(+name)
-GET /Product/?sort(+rating,-price)
+GET /Product/?category=software&limit(0,25)
+Prefer: count=exact
 ```
 
-**OR logic with grouping:**
+Response headers:
 
 ```
-GET /Product/?price=lt=100|[rating=5&[tag=fast|tag=scalable|tag=efficient]&inStock=true]
+HTTP/1.1 200 OK
+Content-Range: items 0-24/1234
+Range-Unit: items
+Preference-Applied: count=exact
 ```
 
-**Relationship join with nested select:**
-
-Define the schema:
+**Relationship schema and join query:**
 
 ```graphql
 type Product @table @export {
@@ -160,11 +218,8 @@ type Brand @table @export {
 }
 ```
 
-Query with join:
-
 ```
 GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
-GET /Brand/?products.name=Keyboard
 ```
 
 **Many-to-many relationship:**
@@ -182,16 +237,17 @@ type Product @table @export {
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-**Access a specific property by record ID:**
+**OR grouping with user-supplied tags:**
 
-```
-GET /MyTable/123.propertyName
+```javascript
+let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
 ```
 
 ## Notes
 
-- Only indexed attributes can be used as the primary filter attribute; when combining multiple attributes, only one needs to be indexed.
-- Relationship attributes are excluded from responses by default. Always use `select(` to include them.
-- When selecting a related attribute without filtering on it, the behavior is a LEFT JOIN — the property is omitted if the foreign key is null or references a non-existent record.
-- The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` in URL paths are reserved as content-type selectors and take precedence over a property of the same name.
-- Square brackets are preferred over parentheses when building grouped queries programmatically, because `[` and `]` are safely URL-encoded by standard encoding functions while `(` is not.
+- The queried attribute must be indexed for basic attribute filtering to execute. For multi-attribute queries, only one attribute needs to be indexed.
+- Null indexing requires indexes created after the feature was introduced. Rebuild existing indexes (remove and re-add) to support `name==null` queries.
+- `limit()` must be a non-negative integer no larger than **10,000**, and the requested window (offset + limit) no larger than **1,000,000**, for count headers to be returned.
+- A `HEAD` request with a `Prefer: count=exact` header returns count headers with no body — it saves bandwidth but still scans the matched set.
+- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers` automatically.
+- Operators `!=` and `=ct=` (contains) do not produce cardinality estimates; the total is reported as `*` when these are used with `count=exact`.

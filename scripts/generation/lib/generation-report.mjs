@@ -1,8 +1,3 @@
-// Markdown for the generator's --report JSON, in the sync PR body and the
-// failure issue. Held-back rules are listed with exactly what they still lack:
-// that list is what a reviewer pins with `must_cover`, waives with
-// `allow_dropped`, or takes as evidence the rule needs splitting.
-
 import fs from 'node:fs/promises';
 
 export async function loadGenerationReport(file) {
@@ -14,9 +9,8 @@ function emptyReport() {
 	return { regenerated: [], repaired: [], heldBack: [] };
 }
 
-// An inline code span for arbitrary text. must_cover anchors may contain
-// backticks (e.g. '`Accept`'), so the delimiter must be a longer backtick run
-// than any inside, padded with spaces when the text starts or ends with one.
+// must_cover anchors may contain backticks (e.g. '`Accept`'), so the delimiter
+// must be a longer backtick run than any inside.
 export function code(text) {
 	const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
 	const fence = '`'.repeat(longest + 1);
@@ -55,8 +49,6 @@ export function heldBackMarkdown(report) {
 	return lines.join('\n');
 }
 
-// For the failure issue: the rule the run stopped on, if it stopped on one,
-// and the rules held back before it.
 export function failureDetailsMarkdown(report) {
 	const parts = [];
 	const stop = report.stoppedOn;
@@ -90,9 +82,8 @@ export function repairedMarkdown(report) {
 	return lines.join('\n');
 }
 
-// Each sync commit records the rules its run repaired as trailers, so the
-// record travels with the push and the PR body can be rebuilt from the branch
-// alone. The value is the report entry as JSON.
+// Repairs ride on the sync commit, so the record survives a run that pushes
+// and then fails to update the PR body.
 const REPAIRED_TRAILER = 'Sync-Repaired: ';
 
 const isStringList = (value) =>

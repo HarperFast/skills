@@ -38,19 +38,14 @@ export function inlineCodeSpans(md) {
 	return spans;
 }
 
-// The rule body as committed at HEAD, or null when HEAD has no such file (a
-// new rule): absence of a baseline is not a retention violation. Any other
-// failure to read it throws — no repository, no git, or no HEAD commit yet.
-// Treating an unreadable baseline as absent would switch retention off
-// silently, and the generator and validator would then both accept a lossy
-// body.
-//
-// HEAD rather than the working tree, in both the generator and the validator,
-// so a local re-run cannot launder a fact an earlier uncommitted run dropped.
-// Working directories whose HEAD commit has been verified: HEAD does not move
-// during a run, so once per repository is enough.
 const verifiedHeads = new Set();
 
+// null only when HEAD has no such file (a new rule). Any other failure throws:
+// treating an unreadable baseline as absent would switch retention off
+// silently in both the generator and the validator.
+//
+// HEAD rather than the working tree, so a local re-run cannot launder a fact
+// an earlier uncommitted run dropped.
 export function bodyAtHead(relPath) {
 	const spec = `HEAD:${relPath}`;
 	const fail = (err) =>
@@ -117,9 +112,8 @@ export function missingAnchors(body, mustCover = []) {
 	return mustCover.filter((must) => !body.includes(must));
 }
 
-// The anchors that are not just a dropped fact again, for listing both without
-// repeats. An anchor may carry its code-span backticks (`` `Accept` ``) where
-// the fact is the bare token.
+// An anchor may carry its code-span backticks (`` `Accept` ``) where the fact
+// is the bare token.
 export function anchorsBeyondFacts(anchors, facts) {
 	return anchors.filter((anchor) => !facts.includes(anchor.replace(/^`+|`+$/g, '')));
 }

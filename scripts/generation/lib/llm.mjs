@@ -46,18 +46,10 @@ export function generationModel() {
 	return MODEL;
 }
 
-// How much of the committed rule line to quote beside each dropped fact. Enough
-// to show where the fact lived (a table row, a step) without pasting the body.
 const MAX_CONTEXT_CHARS = 240;
 
-// A rule-generation conversation. `generate()` produces the first body;
-// `repair(problems)` replies to the model's last body with what it lost and
-// asks for the whole body back, so the model edits its own draft against the
-// same source instead of rewriting from scratch. Each returns { body, usage }.
-//
-// Both throw on an API error, an empty body, or a body cut off at MAX_TOKENS —
-// a truncated body would otherwise pass for a rule that dropped its tail.
-// `createMessage` stands in for the Messages API in tests.
+// A body cut off at MAX_TOKENS is rejected: it would otherwise pass for a rule
+// that dropped its tail.
 export function ruleConversation({
 	rule,
 	description,
@@ -149,11 +141,8 @@ export function ruleRequest({ rule, description, sourceContent, mustCover, cross
 	return sections.join('\n');
 }
 
-// The reply to a body that failed checkBody (lib/regenerate.mjs). Each dropped
-// fact is quoted with the committed line it came from: the bare token says
-// what to restore, the line says where it belonged and what it meant. Every
-// listed fact is still in the source (that is how it was selected), so
-// restoring it never requires inventing anything.
+// Every dropped fact is still in the source (that is how it was selected), so
+// asking for it back never asks the model to invent.
 export function repairRequest({ dropped = [], missingAnchors = [], invalid = [], previousBody }) {
 	const sections = [
 		`Your rule body cannot be published as it is. Return the complete rule body again, ` +
@@ -200,10 +189,8 @@ export function repairRequest({ dropped = [], missingAnchors = [], invalid = [],
 	return sections.join('\n');
 }
 
-// The first prose line of `body` that carries `fact` as inline code (falling
-// back to any mention), with whitespace runs (table padding) collapsed, and
-// capped. Fenced blocks are skipped: facts come from inline code, so a fence
-// hit would be a different use of the token.
+// Fenced blocks are skipped: facts come from inline code, so a fence hit would
+// be a different use of the token.
 function contextLine(body, fact) {
 	const lines = stripFencedBlocks(body).split('\n');
 	const hit =

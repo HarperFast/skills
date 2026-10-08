@@ -1605,7 +1605,7 @@ Instructions for the agent to follow when defining custom REST endpoints with Ja
 
 #### When to Use
 
-Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or registering routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed resource or when a specific URL shape is required.
+Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when you need fine-grained control over URL shape and path parameters.
 
 #### How It Works
 
@@ -1615,7 +1615,13 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    import { tables, Resource } from 'harper';
    ```
 
-2. **Define a class that `extends Resource`**: Implement HTTP methods as `static` methods. Each method receives a `target` object.
+   CommonJS alternative:
+
+   ```javascript
+   const { tables, Resource } = require('harper');
+   ```
+
+2. **Define a class that `extends Resource`**: Use `export class` so Harper exposes it as an endpoint. Implement HTTP methods as `static` methods on the class.
 
    ```javascript
    export class CustomEndpoint extends Resource {
@@ -1627,7 +1633,7 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-3. **Use `async` static methods to call external services**: Return or forward the response directly.
+3. **Use `static` async methods to call external services**: Each HTTP verb maps to a `static` method of the same lowercase name.
 
    ```javascript
    export class MyExternalData extends Resource {
@@ -1645,24 +1651,20 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    }
    ```
 
-4. **Export the class to expose it as an endpoint**: The export form controls the resulting URL. Choose the form that matches the URL shape you need.
+4. **Control the URL by choosing the export form**: The shape of the export determines the resulting URL path.
 
    | Export form                                 | URL             | Notes                                                           |
    | ------------------------------------------- | --------------- | --------------------------------------------------------------- |
-   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment. Case-sensitive.            |
+   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment; case-sensitive.            |
    | `export const Bar = { Foo };`               | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
    | `export const bar = { 'foo-baz': Foo };`    | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
    | `export { Foo as '/widget/:id' }`           | `/widget/:id`   | Rename the export to set the path directly.                     |
    | `static path = '/widget/:id'` (class field) | `/widget/:id`   | Declare path on the class; overrides the export name.           |
-   | `server.resources.set('my-path', Foo);`     | `/my-path/`     | Programmatic registration for dynamic paths.                    |
+   | `server.resources.set('my-path', Foo);`     | `/my-path/`     | Programmatic registration; useful when the path is dynamic.     |
 
-5. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the resource class.
+   URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
 
-   ```javascript
-   server.resources.set('my-path', Foo);
-   ```
-
-6. **Declare dynamic path segments with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
+5. **Declare dynamic path segments with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
 
    ```javascript
    export class Widget extends Resource {
@@ -1672,13 +1674,36 @@ Apply this rule when creating custom HTTP endpoints, wrapping external APIs, or 
    		return { id: target.id, action: target.action };
    	}
    }
+
+   export class Files extends Resource {
+   	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
+   	static path = '/files/*rest';
+   	static get(target) {
+   		return { path: target.rest };
+   	}
+   }
    ```
 
-7. **Resolve path precedence correctly**: Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats a `:param`, which beats a `*` wildcard, compared left to right.
+   - A leading `/` in `static path` makes the path root-relative (top-level), independent of the file's location.
+   - A leading `./` or bare name resolves relative to the component directory.
+   - A bare `*` (no name) binds under `target.wildcard`. A wildcard must be the final segment.
+   - `static path` takes precedence over the export name.
+   - Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats `:param`, which beats `*`, compared left to right.
+
+6. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the resource class.
+
+   ```javascript
+   server.resources.set('my-path', Foo);
+   ```
+
+7. **Optionally use a resource as a cache source for a local table**: Call `sourcedFrom` on the target table.
+   ```javascript
+   tables.MyCache.sourcedFrom(MyExternalData);
+   ```
 
 #### Examples
 
-**Wrapping an external API and using it as a cache source:**
+**Custom endpoint with external API wrapping:**
 
 ```javascript
 import { tables, Resource } from 'harper';
@@ -1701,9 +1726,19 @@ export class MyExternalData extends Resource {
 tables.MyCache.sourcedFrom(MyExternalData);
 ```
 
-**Catch-all wildcard path:**
+**Path parameters with `static path`:**
 
 ```javascript
+import { Resource } from 'harper';
+
+export class Widget extends Resource {
+	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
+	static path = '/widget/:id/action/:action';
+	static get(target) {
+		return { id: target.id, action: target.action };
+	}
+}
+
 export class Files extends Resource {
 	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
 	static path = '/files/*rest';
@@ -1713,27 +1748,26 @@ export class Files extends Resource {
 }
 ```
 
-**Root-relative fixed route:**
+**Programmatic registration:**
 
 ```javascript
-export class AcmeChallenge extends Resource {
-	static path = '/.well-known/acme-challenge/:token';
+import { Resource } from 'harper';
+
+export class Foo extends Resource {
 	static get(target) {
-		return { token: target.token };
+		return { ok: true };
 	}
 }
+
+server.resources.set('my-path', Foo);
 ```
 
 #### Notes
 
-- URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
-- A leading `/` in `static path` makes the path root-relative (top-level), independent of the file's location.
-- A leading `./` or a bare name in `static path` resolves relative to the component directory.
-- A bare `*` (no name) binds under `target.wildcard`. A wildcard must be the final segment of the path.
-- `static path` takes precedence over the export name when both are present.
-- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as URI templates.
-- When a resource `extends` an existing table, avoid conflicting exports between the schema and the JavaScript implementation.
-- Link the `harper` package in your component directory to ensure correct typings: `npm link harper`. All installed components have `harper` automatically linked.
+- Avoid conflicting exports between the schema and the JavaScript implementation when a resource `extends` an existing table.
+- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
+- When bundling for SSR with a tool like Vite, keep `harper` external so it resolves to the runtime: `ssr: { external: ['harper'] }`.
+- For components in their own directory, run `npm link harper` to ensure typings match the running installation.
 
 ### 3.2 Extending Tables
 
@@ -1833,25 +1867,31 @@ export class MyTable extends tables.MyTable {
 
 ### 3.3 Programmatic Table Requests
 
-Instructions for the agent to interact with Harper tables programmatically using the `tables` object, the Query API, and transactions.
+Instructions for the agent to follow when interacting with Harper tables programmatically using the `tables` object.
 
 #### When to Use
 
-Apply this rule when writing server-side Harper component code that reads from or writes to tables directly — for example, in HTTP handlers, background jobs, timers, or SSR render functions. Use it whenever you need to construct queries with `conditions`, `sort`, `select`, `limit`, or `offset`, or when you need explicit transaction control via `transaction()`.
+Apply this rule when writing server-side Harper component code that reads from or writes to tables using the programmatic API — for example, in HTTP handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct queries with `conditions`, `sort`, `select`, pagination, or transactions outside of the REST layer.
 
 #### How It Works
 
-1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a named property of `tables`. Each property is the table class implementing the Resource API.
+1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a property of `tables`. Each property is the table class implementing the Resource API.
 
    ```javascript
    import { tables, transaction } from 'harper';
    const { Product } = tables;
-   // equivalent to: databases.data.Product
+   // same as: databases.data.Product
    ```
 
-   For standalone components, run `npm link harper` so imports resolve to the live runtime.
+   For components in their own directory, run:
 
-2. **Define your schema with `@table`**: Tables must be declared in `schema.graphql`. Mark attributes you intend to sort or filter on with `@indexed`.
+   ```bash
+   npm link harper
+   ```
+
+   All installed components have `harper` automatically linked.
+
+2. **Define your schema with `@table`**: Every type you want to access via `tables` must carry the `@table` directive. Mark queryable fields with `@indexed`.
 
    ```graphql
    type Product @table {
@@ -1861,7 +1901,7 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-3. **Query records with `search(`**: Pass a Query object to `search(`. Iterate results with `for await`.
+3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable.
 
    ```javascript
    const query = {
@@ -1872,7 +1912,7 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-4. **Build `conditions`**: Each condition object supports these properties:
+4. **Build `conditions`**: Each condition object supports the following properties:
 
    | Property     | Description                                                                                                                                              |
    | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1882,53 +1922,60 @@ Apply this rule when writing server-side Harper component code that reads from o
    | `conditions` | Nested conditions array                                                                                                                                  |
    | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
 
-5. **Control result shape with `select`**: Pass an array of property names, a single string, or nested objects for relationships.
+5. **Apply `select` to shape results**: Pass an array of property names, a string for a single property, or nested objects for relationships.
 
    ```javascript
-   // Scalar fields only
+   // Flat select
    Product.search({ select: ['name', 'price'] });
 
-   // Partial related record
+   // Nested relationship select
    Book.get({ id: 42, select: ['id', 'title', { name: 'author', select: ['name'] }] });
    ```
 
    Special `select` values: `$id`, `$updatedtime`, `$distance`.
 
-6. **Paginate with `limit` and `offset`**:
+6. **Apply `sort`**: Harper uses an index to provide sort order.
+
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
+   - If the sort `attribute` is `@indexed`, no condition is required.
+   - If the sort `attribute` is not indexed, at least one entry in `conditions` (on **any** attribute) is required.
+   - Sorting by a non-indexed attribute with zero conditions raises:
+     > `HdbError: <attribute> is not indexed and not combined with any other conditions`
+   - The bare `@primaryKey` is treated as not indexed for sort purposes. To iterate in primary-key order, add an open-ended condition:
+
+     ```javascript
+     Product.search({
+     	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
+     	sort: { attribute: 'id' },
+     });
+     ```
+
+   - Pass `allowFullScan: true` to permit an unconditional ordered scan, or omit `sort` entirely to iterate without an index requirement.
+
+7. **Paginate with `limit` and `offset`**:
 
    ```javascript
    Product.search({ conditions: [...], limit: 20, offset: 40 });
    ```
 
-7. **Sort with `sort`**: The `sort` object accepts `attribute`, `descending` (default `false`), and `next` for tie-breaking. Harper uses an index for sort order — the sort `attribute` must be `@indexed`, **or** at least one entry in `conditions` must be present.
-
-   Sorting by a non-indexed attribute with zero conditions raises:
-
-   > `HdbError: <attribute> is not indexed and not combined with any other conditions`
-
-   Note: `@primaryKey` alone is treated as not indexed for sort purposes. To scan the whole table in primary-key order, add an open-ended condition:
-
-   ```javascript
-   Product.search({
-   	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
-   	sort: { attribute: 'id' },
-   });
-   ```
-
-   Alternatively, pass `allowFullScan: true` to permit an unconditional ordered scan, or omit `sort` entirely to iterate without an index requirement.
-
-8. **Debug query planning with `explain` and `enforceExecutionOrder`**:
+8. **Debug with `explain` and `enforceExecutionOrder`**:
    - `explain: true` — returns conditions reordered as Harper will execute them.
-   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling automatic re-ordering.
+   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling Harper's automatic re-ordering.
 
-9. **Use `addTo` for concurrent-safe numeric updates**: `addTo` uses CRDT incrementation, safe across threads and nodes.
+9. **Use `addTo` for concurrent-safe increments**: `addTo(property, value)` uses CRDT incrementation, safe across threads and nodes.
 
    ```javascript
-   const record = await Product.update(32);
-   record.addTo('quantity', -1);
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1);
+   }
    ```
 
-10. **Wrap background work in `transaction()`**: HTTP handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a request context. Always `await` the call and `catch` errors.
+10. **Wrap background work in `transaction()`**: Harper auto-starts transactions for HTTP handlers. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
 
     ```javascript
     await transaction(async (txn) => {
@@ -1940,18 +1987,18 @@ Apply this rule when writing server-side Harper component code that reads from o
 
     The `txn` object exposes:
 
-    | Member                | Description                                            |
-    | --------------------- | ------------------------------------------------------ |
-    | `commit()`            | Commits the current transaction                        |
-    | `abort()`             | Aborts and resets the transaction                      |
-    | `resetReadSnapshot()` | Resets the read snapshot to the latest committed state |
-    | `timestamp`           | Timestamp associated with the current transaction      |
+    | Member                | Type            | Description                                            |
+    | --------------------- | --------------- | ------------------------------------------------------ |
+    | `commit()`            | `() => Promise` | Commits the current transaction                        |
+    | `abort()`             | `() => void`    | Aborts the transaction and resets it                   |
+    | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
+    | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
 
-    **Atomicity**: all tables in the same database share one transactional context — writes across multiple tables commit atomically. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
+    On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
 
-    If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — safe to call defensively.
+11. **Understand atomicity**: Transactions span a single database. All tables within the same database share one transactional context — reads return a consistent snapshot and writes across multiple tables commit atomically. Cross-database operations get separate transactions with no cross-database atomicity guarantee.
 
-11. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
+12. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
 
     ```javascript
     // vite.config
@@ -1962,7 +2009,7 @@ Apply this rule when writing server-side Harper component code that reads from o
 
 #### Examples
 
-##### Full CRUD sequence
+**Full CRUD flow:**
 
 ```javascript
 import { tables } from 'harper';
@@ -1974,19 +2021,18 @@ const created = await Product.create({ name: 'Shirt', price: 9.5 });
 // Patch
 await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
 
-// Retrieve by primary key
+// Get by primary key
 const record = await Product.get(created.id);
 
-// Query with conditions
-const query = {
+// Search with conditions
+for await (const record of Product.search({
 	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
-};
-for await (const record of Product.search(query)) {
+})) {
 	// process record
 }
 ```
 
-##### Nested conditions with `or`
+**Nested conditions with `or`:**
 
 ```javascript
 Product.search({
@@ -2003,13 +2049,13 @@ Product.search({
 });
 ```
 
-##### Chained attribute reference (join/relationship)
+**Chained attribute reference (join):**
 
 ```javascript
 Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
 ```
 
-##### Background job with `transaction()`
+**Background job with `transaction()`:**
 
 ```javascript
 import { isMainThread } from 'node:worker_threads';
@@ -2037,7 +2083,7 @@ if (isMainThread) {
 }
 ```
 
-##### SSR render with `tables`
+**SSR with Harper data:**
 
 ```typescript
 import { tables } from 'harper';
@@ -2050,10 +2096,12 @@ export async function render(url: string): Promise<string> {
 
 #### Notes
 
-- `tables` and `databases` do **not** automatically apply role permissions — calls run in a trusted server-side context. Apply your own authorization controls before exposing results.
-- Destructive operations (`update`, `patch`, `delete`) act on live data and are not easily reversible. Scope them with specific `conditions` and validate the affected set before writing.
-- `tables` is the same live, process-wide object whether accessed as a global or via `import { tables } from 'harper'`. A record written through one component is immediately visible to every other.
-- Run `npm link harper` for components in their own directory to ensure typings match the running installation.
+- `tables` and `databases` calls run in a trusted server-side context and do **not** automatically apply the target table's role permissions.
+- Programmatic `update`, `patch`, and `delete` calls operate directly on stored data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — making it safe to call defensively.
+- Always `await` the `transaction()` call and `catch` errors when outside a request context; an unawaited call means a failed write is never observed.
+- Guard against timer overlap: if a job can outlast its interval, use a `running` flag to skip a tick rather than opening two transactions over the same rows.
+- CommonJS is also supported: `const { tables, Resource } = require('harper');`
 
 ### 3.4 TypeScript Type Stripping in Harper
 
@@ -2276,18 +2324,20 @@ Instructions for the agent to follow when deploying a Harper application to a re
 
 #### When to Use
 
-Apply this rule when deploying a Harper application to a remote Harper instance or Fabric cluster, including first-time deploys, redeployments, rollbacks, and CI/CD pipeline deployments. Also apply it when provisioning credentials for private repository deploys. See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) for setting up the cluster before deploying.
+Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, whether from a local machine or a CI/CD pipeline. Use it to configure authentication, select a package source, and run `harper deploy` with the correct parameters.
+
+See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) to set up a cluster before deploying.
 
 #### How It Works
 
-1. **Authenticate against the remote cluster**: Run `harper login` once, pointing at the cluster's Application URL (found on the cluster's **Config → Overview** page). The CLI stores the token and writes `HARPER_CLI_TARGET` to a local `.env`.
+1. **Authenticate against the cluster**: Run `harper login` once, pointing at the cluster's Application URL (found on the cluster's **Config → Overview** page). The CLI stores the token so subsequent commands need no credentials. If the current directory already has a `.env` file that sets no target, it also appends `HARPER_CLI_TARGET` to it.
 
    ```bash
    harper login <Application URL>
    # Provide cluster username and password when prompted
    ```
 
-2. **Deploy the application**: After login, run `harper deploy` without repeating credentials. Use `restart=true` and `replicated=true` for production deploys.
+2. **Deploy the application**: After logging in, run `harper deploy` without repeating credentials. Omit `package` to package and deploy the current local directory.
 
    ```bash
    harper deploy \
@@ -2298,16 +2348,16 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
      replicated=true
    ```
 
-3. **Choose a package source**: Set the `package` parameter to any valid npm dependency value. Options:
+3. **Choose a package source**: Set `package` to any valid npm dependency value.
 
-   | Source                  | Example value                                                |
-   | ----------------------- | ------------------------------------------------------------ |
-   | Current local directory | Omit `package`                                               |
-   | npm package             | `package="@harperdb/status-check"`                           |
-   | GitHub (shorthand)      | `package="HarperFast/status-check"`                          |
-   | GitHub (URL)            | `package="https://github.com/HarperFast/status-check"`       |
-   | Private repo (SSH)      | `package="git+ssh://git@github.com:HarperDB/secret-app.git"` |
-   | Tarball                 | `package="https://example.com/application.tar.gz"`           |
+   | Value                                                        | Meaning                                        |
+   | ------------------------------------------------------------ | ---------------------------------------------- |
+   | _(omit)_                                                     | Package and deploy the current local directory |
+   | `package="@harperdb/status-check"`                           | npm package                                    |
+   | `package="HarperFast/status-check"`                          | GitHub shorthand                               |
+   | `package="https://github.com/HarperFast/status-check"`       | GitHub URL                                     |
+   | `package="git+ssh://git@github.com:HarperDB/secret-app.git"` | Private repo (SSH)                             |
+   | `package="https://example.com/application.tar.gz"`           | Tarball                                        |
 
    When using git tags, use the `semver` directive:
 
@@ -2315,68 +2365,55 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
    HarperFast/application-template#semver:v1.0.0
    ```
 
-4. **Deploy by reference (pinned commit)**: Use `by_ref=true` to send a pinned git reference instead of uploading a snapshot. The cluster fetches and builds from that exact commit SHA.
+4. **Deploy by reference** (pinned commit): Use `by_ref=true` to send a pinned git reference instead of uploading a snapshot. The cluster fetches and builds that exact commit.
 
    ```bash
    harper deploy by_ref=true restart=true replicated=true
    ```
 
    - `by_ref` — Build the package reference from the local repository.
-   - `ref` _(optional)_ — Deploy a specific commit, tag, or branch instead of `HEAD`. Implies `by_ref`. Tags and branches in `refs/tags` and `refs/heads` namespaces are resolved to a full commit SHA before the deploy is sent.
+   - `ref` _(optional)_ — Deploy a specific commit, tag, or branch instead of `HEAD`. Implies `by_ref`. Resolved to a full commit SHA before being sent.
    - `credential` _(optional)_ — Set to `true` to authenticate the clone with the stored credential for the repository's host. Omit for public repositories.
 
-   ```bash
-   # Deploy a specific tag
-   harper deploy ref=v1.2.0 restart=true replicated=true
+   Deploy a specific tag or commit:
 
-   # Roll back by deploying an older commit
+   ```bash
+   harper deploy ref=v1.2.0 restart=true replicated=true
    harper deploy ref=9f8c2a1 restart=true replicated=true
    ```
 
-   **Important constraints on refs:**
-   - A full commit SHA is accepted directly with no resolution.
-   - Every other `ref` must resolve to something a clone can fetch: `refs/tags/*` or `refs/heads/*`, or a bare branch or tag name.
-   - Qualified refs outside those two namespaces (e.g., `refs/pull/123/head`) are rejected.
-   - Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
-   - Run `git fetch` if a ref can't be resolved, or pass a full commit SHA.
+   Valid `ref` values must resolve to `refs/heads/*` or `refs/tags/*`, or a bare branch or tag name. Qualified refs outside those two namespaces (e.g. `refs/pull/123/head`) are rejected. A full commit SHA is always accepted directly with no resolution attempted. Run `git fetch` if a ref can't be resolved, or pass a full commit SHA.
 
-5. **Handle private repositories**: Pass `credential=true` so the CLI attaches a credentials reference that the cluster resolves in memory at clone time. No token travels in the operation body or lands on disk.
+   **Commit and push before deploying by reference.** The cluster clones from the remote and only sees pushed commits.
+
+5. **Roll back to a previous release**: Activate a kept release by its `deployment_id` to restore the exact installed release without a fetch, rebuild, or reinstall.
 
    ```bash
-   harper deploy by_ref=true credential=true restart=true replicated=true
+   harper deploy project=<name> deployment_id=<id> restart=true
    ```
 
-   Provision the credential once with `setup=true` before using `credential=true`.
-
-6. **Provision a deploy credential**: Run `harper deploy setup=true` once per component and source to provision credentials for private deploys. This operation requires **super_user** — run it with an administrative credential, not the CI identity.
+6. **Provision a deploy credential for private repositories**: Run `harper deploy setup=true` once per component and source. This requires **super_user** privileges — run it with an administrative credential.
 
    ```bash
    harper deploy setup=true
    ```
 
-   This interactive command:
+   The setup flow:
    1. Fetches the cluster's public key with `get_secrets_public_key`.
    2. Encrypts the token locally into an `enc:v1:` envelope.
-   3. Stores only the ciphertext with `set_secret`, in the component-scoped tier.
+   3. Stores only the ciphertext with `set_secret`, scoped to the component.
    4. Grants the component permission to resolve it with `grant_secret`.
    5. Prints the `credentials` reference for the deploy to use.
 
-   **Use a fine-grained PAT** for GitHub repositories. The prompt defaults to a fine-grained personal access token with **Contents: Read-only** on that one repository. If you use the `gh` CLI session token instead, it typically carries `read:org`, `repo`, `gist`, and `workflow` scopes across your whole account — the CLI prints a warning if you choose it. Use the narrowest credential that does the job, because the stored token is replayed on every cold deploy and rollback.
+   The plaintext never leaves your machine. Prefer a **fine-grained** personal access token with **Contents: Read-only** on the target repository. Avoid broad session tokens — they typically carry `read:org`, `gist`, and `workflow` scopes across your whole account.
 
-7. **Use environment variables for CI/CD**: Instead of `harper login`, export credentials as environment variables.
+7. **Deploy from a private repository**: Pass `credential=true` after provisioning the deploy credential.
 
    ```bash
-   export HARPER_CLI_USERNAME=<username>
-   export HARPER_CLI_PASSWORD=<password>
-   harper deploy \
-     project=<name> \
-     package=<package> \
-     target=<remote> \
-     restart=true \
-     replicated=true
+   harper deploy by_ref=true credential=true restart=true replicated=true
    ```
 
-8. **Use dedicated auth parameters for one-off commands** (not recommended for production): Pass `auth_username` and `auth_password` directly. These take precedence over environment variables and saved login tokens.
+8. **Use one-off authentication parameters** (not recommended for production): Pass `auth_username` and `auth_password` directly. These take precedence over environment variables and saved login tokens.
 
    ```bash
    harper deploy \
@@ -2389,65 +2426,61 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
      replicated=true
    ```
 
+9. **Use CI/CD pipelines**: For GitHub Actions, use workload identity (OIDC) so no Harper credential is stored in the pipeline. Alternatively, supply a refresh token from `harper login --for-ci`. On a `pull_request` run, pass the head SHA explicitly:
+
+   ```bash
+   harper deploy ref=${{ github.event.pull_request.head.sha }} restart=true replicated=true
+   ```
+
 #### Examples
 
-**Standard deploy after login:**
+**Login and deploy the current directory to a remote cluster:**
 
 ```bash
 harper login https://my-cluster.harperdbcloud.com
 harper deploy \
   project=my-app \
-  package="HarperFast/my-app" \
   target=https://my-cluster.harperdbcloud.com \
   restart=true \
   replicated=true
 ```
 
-**Deploy by reference with a tag:**
+**Deploy a specific GitHub repository by tag:**
 
 ```bash
-harper deploy ref=v1.2.0 restart=true replicated=true
+harper deploy \
+  project=my-app \
+  package="HarperFast/application-template#semver:v1.0.0" \
+  target=https://my-cluster.harperdbcloud.com \
+  restart=true \
+  replicated=true
 ```
 
-**Deploy a private GitHub repo by reference:**
+**Deploy by reference from a private repository after provisioning credentials:**
 
 ```bash
-# Provision credential once (requires super_user)
+# Provision once (requires super_user)
 harper deploy setup=true
 
-# Deploy using stored credential
+# Deploy by reference with credential
 harper deploy by_ref=true credential=true restart=true replicated=true
 ```
 
-**GitHub Actions — pull request deploy:**
+**Roll back to a previous deployment:**
 
 ```bash
-harper deploy ref=${{ github.event.pull_request.head.sha }} restart=true replicated=true
-```
-
-**CI/CD deploy using environment variables:**
-
-```bash
-export HARPER_CLI_USERNAME=<username>
-export HARPER_CLI_PASSWORD=<password>
-harper deploy \
-  project=my-app \
-  package="@myorg/my-app" \
-  target=https://my-cluster.harperdbcloud.com \
-  restart=true \
-  replicated=true
+harper deploy project=my-app deployment_id=<id> restart=true
 ```
 
 #### Notes
 
-- The cluster's Application URL is found on the **Config → Overview** page of the Fabric dashboard.
-- `harper deploy setup=true` calls `get_secrets_public_key`, `set_secret`, and `grant_secret`, all of which require **super_user**. Do not run it with the CI identity.
-- The `enc:v1:` envelope means the plaintext token never leaves your machine — only ciphertext is stored and replicated.
-- Secrets are stored scoped to the component, not in the global `processEnv` tier. If a global secret already exists at the derived name, it is converted to the scoped tier.
+- The cluster's Application URL is found on the **Config → Overview** page.
+- `harper deploy setup=true` requires **super_user** — run it with an administrative credential, not the CI identity it provisions for.
+- Secrets are stored scoped to the component, never in the global `processEnv` tier. The `enc:v1:` envelope is the only form of the token that ever leaves your machine or travels over the operations API.
 - For SSH-based private repos, use the `add_ssh_key` operation to register keys before deploying.
-- If your application requires a build step that cannot run on the cluster node, deploy a built payload (omit `by_ref`) instead of deploying by reference.
+- A `ref` pointing to `refs/tags` is resolved to a full commit SHA before the deploy is sent. Tags that move mid-deploy could otherwise leave cluster nodes running different code.
 - The unpushed-commit check is skipped under GitHub Actions; the dirty-tree warning still applies.
-- Annotated tags in `refs/tags` resolve to the commit they point at, not the tag object.
+- Deploying by reference means the cluster installs and builds from source. If your application requires a build step that cannot run on the node, deploy a built payload instead.
 
 ### 4.2 Creating a Harper Fabric Account and Cluster
 

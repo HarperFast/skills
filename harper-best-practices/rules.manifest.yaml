@@ -595,8 +595,12 @@ rules:
   # Infrastructure & Ops (priority 4 — MEDIUM)
   # ===========================================================================
 
+  # Deploying is split across two rules: as one, its sources would come to
+  # ~57KB, well over any other rule's input, and the larger the input, the more
+  # facts regeneration compresses away. This rule covers a CLI deploy and what
+  # happens to a release afterwards; deploying-from-ci covers OIDC in CI.
   - rule: deploying-to-harper-fabric
-    description: How to deploy a Harper application to the Harper Fabric cloud.
+    description: How to deploy a Harper application to Harper Fabric with the CLI, check that the release was certified, and roll back by activating a previous release's `deployment_id`.
     category: ops
     priority: 4
     order: 1
@@ -607,6 +611,36 @@ rules:
         role: primary
       - path: fabric/cluster-creation-management.md
         section: 'Connecting the Harper CLI to a Cluster'
+        role: supplemental
+      # The CLI forms of `restart=rolling`, `replicated=false`, `activate=false`
+      # and `deployment_id=`. Matched by heading text, so the
+      # `restart=rolling` anchor also fails if commands.md ever gains an
+      # earlier `Parameters` heading.
+      - path: reference/v5/cli/commands.md
+        section: 'Parameters'
+        role: supplemental
+      # How `list_deployments` and `get_job` are run from the CLI.
+      - path: reference/v5/cli/operations-api-commands.md
+        section: 'General Syntax'
+        role: supplemental
+      # `deploy_component` is sourced by subsection: the whole section is
+      # ~30KB, mostly detail that does not change what an agent does.
+      # `Restarting` is left out: Parameters and the canary section carry
+      # what an agent needs from it.
+      - path: reference/v5/operations-api/operations.md
+        section: 'Certifying a release in a canary worker'
+        role: primary
+      - path: reference/v5/operations-api/operations.md
+        section: 'Staging a build and activating it later'
+        role: primary
+      - path: reference/v5/operations-api/operations.md
+        section: 'Going back to a previous release'
+        role: primary
+      - path: reference/v5/operations-api/operations.md
+        section: '`list_deployments`'
+        role: supplemental
+      - path: reference/v5/operations-api/operations.md
+        section: '`get_job`'
         role: supplemental
     must_cover:
       - 'harper deploy'
@@ -619,6 +653,10 @@ rules:
       #   enc:v1: (1×)      → the client-side-encryption envelope
       # They double as the rename detector for that subheading: if it is
       # retitled or removed, the content goes and these anchors fail.
+      #
+      # Deploying by reference is no longer the CI default, but a private
+      # repository is still deployed that way. If the docs move this guidance
+      # out of `## Remote Management`, re-point the source; don't drop these.
       - 'fine-grained'
       - 'Contents: Read-only'
       - 'read:org'
@@ -633,35 +671,145 @@ rules:
       # provisions for. The source escapes it as `super\_user`; every generated
       # body so far unescapes, so the anchor is the unescaped form.
       - 'super_user'
+      # Going back: activating a kept release rebuilds nothing, where
+      # redeploying an older commit installs it again from source.
+      # `stagingRetention` holds how many releases a node keeps.
+      - 'deployment_id'
+      - 'list_deployments'
+      - 'stagingRetention'
+      - 'activate: false'
+      # On Pro and Fabric a deploy replicates unless `replicated=false`.
+      - 'replicated=false'
+      # `not-requested` occurs only in the `certification` table, so it holds
+      # the table, not a passing mention of the field. `restartJobId`, `get_job`
+      # and `COMPLETE` hold the wait: a rolling deploy responds once its job
+      # starts, and its record says `success` even if the job then fails.
+      - 'restart=rolling'
+      - 'certification'
+      - 'not-requested'
+      - 'fails closed'
+      - 'restartJobId'
+      - 'get_job'
+      - 'COMPLETE'
     cross_links:
       - creating-a-fabric-account-and-cluster
+      - deploying-from-ci
+
+  - rule: deploying-from-ci
+    description: How to deploy a Harper application from GitHub Actions with OIDC trusted publishing, so CI stores no Harper credential.
+    category: ops
+    priority: 4
+    order: 2
+    mode: generate
+    # The guide's isolated-worker and per-PR preview sections are left out:
+    # ~18KB on their own, and a different task from deploying a release.
+    sources:
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Let the workflow authenticate with OIDC'
+        role: primary
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Path A: deploy a tagged release from your repository'
+        role: primary
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Give Harper a durable credential for a private source'
+        role: supplemental
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Path B: build in CI, publish to GitHub Packages, deploy the artifact'
+        role: supplemental
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Check the deployment record'
+        role: supplemental
+      - path: learn/developers/deploying-from-ci.md
+        section: 'Operational notes'
+        role: supplemental
+      # Where the exchange sits in credential precedence, and how to diagnose
+      # a refused one.
+      - path: reference/v5/cli/authentication.md
+        section: 'Workload identity (OIDC)'
+        role: supplemental
+      - path: reference/v5/operations-api/operations.md
+        section: 'Policy specificity for GitHub Actions'
+        role: supplemental
+      - path: reference/v5/operations-api/operations.md
+        section: '`list_oidc_trust`'
+        role: supplemental
+      - path: reference/v5/operations-api/operations.md
+        section: '`drop_oidc_trust`'
+        role: supplemental
+    must_cover:
+      - 'id-token: write'
+      - 'vars.HARPER_CLI_TARGET'
+      # A configured credential outranks the exchange, so a pipeline that
+      # keeps its refresh token never uses OIDC.
+      - 'HARPER_CLI_REFRESH_TOKEN'
+      # The workflow as written: without a checkout and the CLI, a clean
+      # runner has nothing to deploy and nothing to deploy it with.
+      # `runs-on: ubuntu-latest` and `.[0].status` occur only inside the
+      # workflows, so they hold the job wrapper and the wait loop, which
+      # fact retention can't see inside a fence.
+      - 'actions/checkout'
+      - 'npm install -g harper'
+      - 'runs-on: ubuntu-latest'
+      - '.[0].status'
+      # `workflow_path` is what a tag-triggered release pins instead of
+      # `workflow_ref`. `trailing slash` holds the audience rule, without which
+      # a policy never matches. The environment is the ref gate, and only as
+      # strong as its deployment branch and tag rules.
+      - 'add_oidc_trust'
+      - 'super_user'
+      - 'token.actions.githubusercontent.com'
+      - 'repository_id'
+      - 'workflow_ref'
+      - 'workflow_path'
+      - 'environment: production'
+      - 'Deployment branches and tags'
+      - 'trailing slash'
+      # An `operations` allowlist refuses what it doesn't list, so the wait
+      # step needs `get_job`. A job lives only on the node that received the
+      # deploy, so polls through a load-balanced URL have to reach it.
+      - 'deploy_component'
+      - 'get_job'
+      - 'get_deployment'
+      - 'restartJobId'
+      - 'load-balanced'
+      - 'credential=true'
+      # A rejected exchange never says which check failed; `invalid_reason`
+      # and the `oidc-trust` log do. Dropping a policy leaves an issued token
+      # valid for its hour; `alter_user` stops it.
+      - 'list_oidc_trust'
+      - 'invalid_reason'
+      - 'oidc-trust'
+      - 'drop_oidc_trust'
+      - 'alter_user'
+    cross_links:
+      - deploying-to-harper-fabric
 
   - rule: creating-a-fabric-account-and-cluster
     description: How to create a Harper Fabric account, organization, and cluster.
     category: ops
     priority: 4
-    order: 2
+    order: 3
     mode: synthesized
 
   - rule: creating-harper-apps
     description: How to initialize a new Harper application using the CLI.
     category: ops
     priority: 4
-    order: 3
+    order: 4
     mode: synthesized
 
   - rule: serving-web-content
     description: How to serve static files and integrated Vite/React applications in Harper.
     category: ops
     priority: 4
-    order: 4
+    order: 5
     mode: synthesized
 
   - rule: logging
     description: Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
     category: ops
     priority: 4
-    order: 5
+    order: 6
     mode: generate
     sources:
       - path: reference/v5/logging/overview.md
@@ -677,7 +825,7 @@ rules:
     description: How to load environment variables from .env files into a Harper application using the loadEnv plugin.
     category: ops
     priority: 4
-    order: 6
+    order: 7
     mode: generate
     sources:
       - path: reference/v5/environment-variables/overview.md
@@ -693,7 +841,7 @@ rules:
     description: Breaking changes and recommended updates when migrating a Harper application to v5.
     category: ops
     priority: 4
-    order: 7
+    order: 8
     mode: generate
     sources:
       - path: release-notes/v5-lincoln/v5-migration.md
@@ -723,7 +871,7 @@ rules:
     description: How to delegate tasks to Harper's built-in agent via the CLI and the agent operations API.
     category: ops
     priority: 4
-    order: 8
+    order: 9
     mode: synthesized
     cross_links:
       - deploying-to-harper-fabric

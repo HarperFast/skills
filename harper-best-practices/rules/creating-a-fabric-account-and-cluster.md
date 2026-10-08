@@ -16,7 +16,7 @@ Follow these steps to set up your Harper Fabric environment for deployment.
 3. **Create a Cluster**: Create a new cluster. This can be on the free tier, no credit card required.
 4. **Set Credentials**: During setup, set the cluster username and password to finish configuring it.
 5. **Get Application URL**: Navigate to the **Config** tab and copy the **Application URL**.
-6. **Configure Environment**: Update your `.env` file or GitHub Actions secrets with cluster-specific credentials.
+6. **Connect the CLI**: Run `harper login` with the Application URL to store a token for the cluster, and set the URL as `HARPER_CLI_TARGET` in your `.env` file. Prefer this to putting the cluster username and password in `.env`, and don't store them in GitHub Actions secrets: to deploy from GitHub Actions, set up OIDC trusted publishing instead (see [deploying-from-ci](deploying-from-ci.md)).
 7. **Next Steps**: See the [deploying-to-harper-fabric](deploying-to-harper-fabric.md) rule for detailed instructions on deploying your application successfully.
 
 ## Examples
@@ -24,7 +24,10 @@ Follow these steps to set up your Harper Fabric environment for deployment.
 ### Environment Configuration
 
 ```bash
-CLI_TARGET_USERNAME='YOUR_CLUSTER_USERNAME'
-CLI_TARGET_PASSWORD='YOUR_CLUSTER_PASSWORD'
-CLI_TARGET='YOUR_CLUSTER_URL'
+harper login YOUR_CLUSTER_URL
+```
+
+```bash
+# .env
+HARPER_CLI_TARGET='YOUR_CLUSTER_URL'
 ```

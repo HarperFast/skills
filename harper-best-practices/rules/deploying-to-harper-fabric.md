@@ -8,8 +8,8 @@ metadata:
     - >-
       fabric/cluster-creation-management.md#Connecting the Harper CLI to a
       Cluster
-  sourceCommit: 2cfb81318f17e0aca2d600109e6ad813d2d0443e
-  inputHash: c821d15a19e2370f
+  sourceCommit: e73e5efb2823cc52caf7a6458d67fbcff3bbff2c
+  inputHash: dc9d96d6393de8f7
 ---
 
 # Deploying to Harper Fabric
@@ -18,18 +18,20 @@ Instructions for the agent to follow when deploying a Harper application to a re
 
 ## When to Use
 
-Apply this rule when deploying a Harper application to a remote Harper instance or Fabric cluster, including first-time deploys, redeployments, rollbacks, and CI/CD pipeline deployments. Also apply it when provisioning credentials for private repository deploys. See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) for setting up the cluster before deploying.
+Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, whether from a local machine or a CI/CD pipeline. Use it to configure authentication, select a package source, and run `harper deploy` with the correct parameters.
+
+See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) to set up a cluster before deploying.
 
 ## How It Works
 
-1. **Authenticate against the remote cluster**: Run `harper login` once, pointing at the cluster's Application URL (found on the cluster's **Config → Overview** page). The CLI stores the token and writes `HARPER_CLI_TARGET` to a local `.env`.
+1. **Authenticate against the cluster**: Run `harper login` once, pointing at the cluster's Application URL (found on the cluster's **Config → Overview** page). The CLI stores the token so subsequent commands need no credentials. If the current directory already has a `.env` file that sets no target, it also appends `HARPER_CLI_TARGET` to it.
 
    ```bash
    harper login <Application URL>
    # Provide cluster username and password when prompted
    ```
 
-2. **Deploy the application**: After login, run `harper deploy` without repeating credentials. Use `restart=true` and `replicated=true` for production deploys.
+2. **Deploy the application**: After logging in, run `harper deploy` without repeating credentials. Omit `package` to package and deploy the current local directory.
 
    ```bash
    harper deploy \
@@ -40,16 +42,16 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
      replicated=true
    ```
 
-3. **Choose a package source**: Set the `package` parameter to any valid npm dependency value. Options:
+3. **Choose a package source**: Set `package` to any valid npm dependency value.
 
-   | Source                  | Example value                                                |
-   | ----------------------- | ------------------------------------------------------------ |
-   | Current local directory | Omit `package`                                               |
-   | npm package             | `package="@harperdb/status-check"`                           |
-   | GitHub (shorthand)      | `package="HarperFast/status-check"`                          |
-   | GitHub (URL)            | `package="https://github.com/HarperFast/status-check"`       |
-   | Private repo (SSH)      | `package="git+ssh://git@github.com:HarperDB/secret-app.git"` |
-   | Tarball                 | `package="https://example.com/application.tar.gz"`           |
+   | Value                                                        | Meaning                                        |
+   | ------------------------------------------------------------ | ---------------------------------------------- |
+   | _(omit)_                                                     | Package and deploy the current local directory |
+   | `package="@harperdb/status-check"`                           | npm package                                    |
+   | `package="HarperFast/status-check"`                          | GitHub shorthand                               |
+   | `package="https://github.com/HarperFast/status-check"`       | GitHub URL                                     |
+   | `package="git+ssh://git@github.com:HarperDB/secret-app.git"` | Private repo (SSH)                             |
+   | `package="https://example.com/application.tar.gz"`           | Tarball                                        |
 
    When using git tags, use the `semver` directive:
 
@@ -57,68 +59,55 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
    HarperFast/application-template#semver:v1.0.0
    ```
 
-4. **Deploy by reference (pinned commit)**: Use `by_ref=true` to send a pinned git reference instead of uploading a snapshot. The cluster fetches and builds from that exact commit SHA.
+4. **Deploy by reference** (pinned commit): Use `by_ref=true` to send a pinned git reference instead of uploading a snapshot. The cluster fetches and builds that exact commit.
 
    ```bash
    harper deploy by_ref=true restart=true replicated=true
    ```
 
    - `by_ref` — Build the package reference from the local repository.
-   - `ref` _(optional)_ — Deploy a specific commit, tag, or branch instead of `HEAD`. Implies `by_ref`. Tags and branches in `refs/tags` and `refs/heads` namespaces are resolved to a full commit SHA before the deploy is sent.
+   - `ref` _(optional)_ — Deploy a specific commit, tag, or branch instead of `HEAD`. Implies `by_ref`. Resolved to a full commit SHA before being sent.
    - `credential` _(optional)_ — Set to `true` to authenticate the clone with the stored credential for the repository's host. Omit for public repositories.
 
-   ```bash
-   # Deploy a specific tag
-   harper deploy ref=v1.2.0 restart=true replicated=true
+   Deploy a specific tag or commit:
 
-   # Roll back by deploying an older commit
+   ```bash
+   harper deploy ref=v1.2.0 restart=true replicated=true
    harper deploy ref=9f8c2a1 restart=true replicated=true
    ```
 
-   **Important constraints on refs:**
-   - A full commit SHA is accepted directly with no resolution.
-   - Every other `ref` must resolve to something a clone can fetch: `refs/tags/*` or `refs/heads/*`, or a bare branch or tag name.
-   - Qualified refs outside those two namespaces (e.g., `refs/pull/123/head`) are rejected.
-   - Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
-   - Run `git fetch` if a ref can't be resolved, or pass a full commit SHA.
+   Valid `ref` values must resolve to `refs/heads/*` or `refs/tags/*`, or a bare branch or tag name. Qualified refs outside those two namespaces (e.g. `refs/pull/123/head`) are rejected. A full commit SHA is always accepted directly with no resolution attempted. Run `git fetch` if a ref can't be resolved, or pass a full commit SHA.
 
-5. **Handle private repositories**: Pass `credential=true` so the CLI attaches a credentials reference that the cluster resolves in memory at clone time. No token travels in the operation body or lands on disk.
+   **Commit and push before deploying by reference.** The cluster clones from the remote and only sees pushed commits.
+
+5. **Roll back to a previous release**: Activate a kept release by its `deployment_id` to restore the exact installed release without a fetch, rebuild, or reinstall.
 
    ```bash
-   harper deploy by_ref=true credential=true restart=true replicated=true
+   harper deploy project=<name> deployment_id=<id> restart=true
    ```
 
-   Provision the credential once with `setup=true` before using `credential=true`.
-
-6. **Provision a deploy credential**: Run `harper deploy setup=true` once per component and source to provision credentials for private deploys. This operation requires **super_user** — run it with an administrative credential, not the CI identity.
+6. **Provision a deploy credential for private repositories**: Run `harper deploy setup=true` once per component and source. This requires **super_user** privileges — run it with an administrative credential.
 
    ```bash
    harper deploy setup=true
    ```
 
-   This interactive command:
+   The setup flow:
    1. Fetches the cluster's public key with `get_secrets_public_key`.
    2. Encrypts the token locally into an `enc:v1:` envelope.
-   3. Stores only the ciphertext with `set_secret`, in the component-scoped tier.
+   3. Stores only the ciphertext with `set_secret`, scoped to the component.
    4. Grants the component permission to resolve it with `grant_secret`.
    5. Prints the `credentials` reference for the deploy to use.
 
-   **Use a fine-grained PAT** for GitHub repositories. The prompt defaults to a fine-grained personal access token with **Contents: Read-only** on that one repository. If you use the `gh` CLI session token instead, it typically carries `read:org`, `repo`, `gist`, and `workflow` scopes across your whole account — the CLI prints a warning if you choose it. Use the narrowest credential that does the job, because the stored token is replayed on every cold deploy and rollback.
+   The plaintext never leaves your machine. Prefer a **fine-grained** personal access token with **Contents: Read-only** on the target repository. Avoid broad session tokens — they typically carry `read:org`, `gist`, and `workflow` scopes across your whole account.
 
-7. **Use environment variables for CI/CD**: Instead of `harper login`, export credentials as environment variables.
+7. **Deploy from a private repository**: Pass `credential=true` after provisioning the deploy credential.
 
    ```bash
-   export HARPER_CLI_USERNAME=<username>
-   export HARPER_CLI_PASSWORD=<password>
-   harper deploy \
-     project=<name> \
-     package=<package> \
-     target=<remote> \
-     restart=true \
-     replicated=true
+   harper deploy by_ref=true credential=true restart=true replicated=true
    ```
 
-8. **Use dedicated auth parameters for one-off commands** (not recommended for production): Pass `auth_username` and `auth_password` directly. These take precedence over environment variables and saved login tokens.
+8. **Use one-off authentication parameters** (not recommended for production): Pass `auth_username` and `auth_password` directly. These take precedence over environment variables and saved login tokens.
 
    ```bash
    harper deploy \
@@ -131,62 +120,58 @@ Apply this rule when deploying a Harper application to a remote Harper instance 
      replicated=true
    ```
 
+9. **Use CI/CD pipelines**: For GitHub Actions, use workload identity (OIDC) so no Harper credential is stored in the pipeline. Alternatively, supply a refresh token from `harper login --for-ci`. On a `pull_request` run, pass the head SHA explicitly:
+
+   ```bash
+   harper deploy ref=${{ github.event.pull_request.head.sha }} restart=true replicated=true
+   ```
+
 ## Examples
 
-**Standard deploy after login:**
+**Login and deploy the current directory to a remote cluster:**
 
 ```bash
 harper login https://my-cluster.harperdbcloud.com
 harper deploy \
   project=my-app \
-  package="HarperFast/my-app" \
   target=https://my-cluster.harperdbcloud.com \
   restart=true \
   replicated=true
 ```
 
-**Deploy by reference with a tag:**
+**Deploy a specific GitHub repository by tag:**
 
 ```bash
-harper deploy ref=v1.2.0 restart=true replicated=true
+harper deploy \
+  project=my-app \
+  package="HarperFast/application-template#semver:v1.0.0" \
+  target=https://my-cluster.harperdbcloud.com \
+  restart=true \
+  replicated=true
 ```
 
-**Deploy a private GitHub repo by reference:**
+**Deploy by reference from a private repository after provisioning credentials:**
 
 ```bash
-# Provision credential once (requires super_user)
+# Provision once (requires super_user)
 harper deploy setup=true
 
-# Deploy using stored credential
+# Deploy by reference with credential
 harper deploy by_ref=true credential=true restart=true replicated=true
 ```
 
-**GitHub Actions — pull request deploy:**
+**Roll back to a previous deployment:**
 
 ```bash
-harper deploy ref=${{ github.event.pull_request.head.sha }} restart=true replicated=true
-```
-
-**CI/CD deploy using environment variables:**
-
-```bash
-export HARPER_CLI_USERNAME=<username>
-export HARPER_CLI_PASSWORD=<password>
-harper deploy \
-  project=my-app \
-  package="@myorg/my-app" \
-  target=https://my-cluster.harperdbcloud.com \
-  restart=true \
-  replicated=true
+harper deploy project=my-app deployment_id=<id> restart=true
 ```
 
 ## Notes
 
-- The cluster's Application URL is found on the **Config → Overview** page of the Fabric dashboard.
-- `harper deploy setup=true` calls `get_secrets_public_key`, `set_secret`, and `grant_secret`, all of which require **super_user**. Do not run it with the CI identity.
-- The `enc:v1:` envelope means the plaintext token never leaves your machine — only ciphertext is stored and replicated.
-- Secrets are stored scoped to the component, not in the global `processEnv` tier. If a global secret already exists at the derived name, it is converted to the scoped tier.
+- The cluster's Application URL is found on the **Config → Overview** page.
+- `harper deploy setup=true` requires **super_user** — run it with an administrative credential, not the CI identity it provisions for.
+- Secrets are stored scoped to the component, never in the global `processEnv` tier. The `enc:v1:` envelope is the only form of the token that ever leaves your machine or travels over the operations API.
 - For SSH-based private repos, use the `add_ssh_key` operation to register keys before deploying.
-- If your application requires a build step that cannot run on the cluster node, deploy a built payload (omit `by_ref`) instead of deploying by reference.
+- A `ref` pointing to `refs/tags` is resolved to a full commit SHA before the deploy is sent. Tags that move mid-deploy could otherwise leave cluster nodes running different code.
 - The unpushed-commit check is skipped under GitHub Actions; the dirty-tree warning still applies.
-- Annotated tags in `refs/tags` resolve to the commit they point at, not the tag object.
+- Deploying by reference means the cluster installs and builds from source. If your application requires a build step that cannot run on the node, deploy a built payload instead.

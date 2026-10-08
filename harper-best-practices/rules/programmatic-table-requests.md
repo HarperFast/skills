@@ -14,31 +14,37 @@ metadata:
       reference/v5/resources/resource-api.md#`addTo(property: string, value:
       number)`
     - reference/v5/components/javascript-environment.md#Module Formats
-  sourceCommit: 9e6ecf87dd25bb488ad44dc2876ca6439ccd682e
-  inputHash: f5629f73cde74764
+  sourceCommit: e73e5efb2823cc52caf7a6458d67fbcff3bbff2c
+  inputHash: bb360b0d6c0a7bd4
 ---
 
 # Programmatic Table Requests
 
-Instructions for the agent to interact with Harper tables programmatically using the `tables` object, the Query API, and transactions.
+Instructions for the agent to follow when interacting with Harper tables programmatically using the `tables` object.
 
 ## When to Use
 
-Apply this rule when writing server-side Harper component code that reads from or writes to tables directly — for example, in HTTP handlers, background jobs, timers, or SSR render functions. Use it whenever you need to construct queries with `conditions`, `sort`, `select`, `limit`, or `offset`, or when you need explicit transaction control via `transaction()`.
+Apply this rule when writing server-side Harper component code that reads from or writes to tables using the programmatic API — for example, in HTTP handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct queries with `conditions`, `sort`, `select`, pagination, or transactions outside of the REST layer.
 
 ## How It Works
 
-1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a named property of `tables`. Each property is the table class implementing the Resource API.
+1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a property of `tables`. Each property is the table class implementing the Resource API.
 
    ```javascript
    import { tables, transaction } from 'harper';
    const { Product } = tables;
-   // equivalent to: databases.data.Product
+   // same as: databases.data.Product
    ```
 
-   For standalone components, run `npm link harper` so imports resolve to the live runtime.
+   For components in their own directory, run:
 
-2. **Define your schema with `@table`**: Tables must be declared in `schema.graphql`. Mark attributes you intend to sort or filter on with `@indexed`.
+   ```bash
+   npm link harper
+   ```
+
+   All installed components have `harper` automatically linked.
+
+2. **Define your schema with `@table`**: Every type you want to access via `tables` must carry the `@table` directive. Mark queryable fields with `@indexed`.
 
    ```graphql
    type Product @table {
@@ -48,7 +54,7 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-3. **Query records with `search(`**: Pass a Query object to `search(`. Iterate results with `for await`.
+3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable.
 
    ```javascript
    const query = {
@@ -59,7 +65,7 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-4. **Build `conditions`**: Each condition object supports these properties:
+4. **Build `conditions`**: Each condition object supports the following properties:
 
    | Property     | Description                                                                                                                                              |
    | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -69,53 +75,60 @@ Apply this rule when writing server-side Harper component code that reads from o
    | `conditions` | Nested conditions array                                                                                                                                  |
    | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
 
-5. **Control result shape with `select`**: Pass an array of property names, a single string, or nested objects for relationships.
+5. **Apply `select` to shape results**: Pass an array of property names, a string for a single property, or nested objects for relationships.
 
    ```javascript
-   // Scalar fields only
+   // Flat select
    Product.search({ select: ['name', 'price'] });
 
-   // Partial related record
+   // Nested relationship select
    Book.get({ id: 42, select: ['id', 'title', { name: 'author', select: ['name'] }] });
    ```
 
    Special `select` values: `$id`, `$updatedtime`, `$distance`.
 
-6. **Paginate with `limit` and `offset`**:
+6. **Apply `sort`**: Harper uses an index to provide sort order.
+
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
+   - If the sort `attribute` is `@indexed`, no condition is required.
+   - If the sort `attribute` is not indexed, at least one entry in `conditions` (on **any** attribute) is required.
+   - Sorting by a non-indexed attribute with zero conditions raises:
+     > `HdbError: <attribute> is not indexed and not combined with any other conditions`
+   - The bare `@primaryKey` is treated as not indexed for sort purposes. To iterate in primary-key order, add an open-ended condition:
+
+     ```javascript
+     Product.search({
+     	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
+     	sort: { attribute: 'id' },
+     });
+     ```
+
+   - Pass `allowFullScan: true` to permit an unconditional ordered scan, or omit `sort` entirely to iterate without an index requirement.
+
+7. **Paginate with `limit` and `offset`**:
 
    ```javascript
    Product.search({ conditions: [...], limit: 20, offset: 40 });
    ```
 
-7. **Sort with `sort`**: The `sort` object accepts `attribute`, `descending` (default `false`), and `next` for tie-breaking. Harper uses an index for sort order — the sort `attribute` must be `@indexed`, **or** at least one entry in `conditions` must be present.
-
-   Sorting by a non-indexed attribute with zero conditions raises:
-
-   > `HdbError: <attribute> is not indexed and not combined with any other conditions`
-
-   Note: `@primaryKey` alone is treated as not indexed for sort purposes. To scan the whole table in primary-key order, add an open-ended condition:
-
-   ```javascript
-   Product.search({
-   	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
-   	sort: { attribute: 'id' },
-   });
-   ```
-
-   Alternatively, pass `allowFullScan: true` to permit an unconditional ordered scan, or omit `sort` entirely to iterate without an index requirement.
-
-8. **Debug query planning with `explain` and `enforceExecutionOrder`**:
+8. **Debug with `explain` and `enforceExecutionOrder`**:
    - `explain: true` — returns conditions reordered as Harper will execute them.
-   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling automatic re-ordering.
+   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling Harper's automatic re-ordering.
 
-9. **Use `addTo` for concurrent-safe numeric updates**: `addTo` uses CRDT incrementation, safe across threads and nodes.
+9. **Use `addTo` for concurrent-safe increments**: `addTo(property, value)` uses CRDT incrementation, safe across threads and nodes.
 
    ```javascript
-   const record = await Product.update(32);
-   record.addTo('quantity', -1);
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1);
+   }
    ```
 
-10. **Wrap background work in `transaction()`**: HTTP handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a request context. Always `await` the call and `catch` errors.
+10. **Wrap background work in `transaction()`**: Harper auto-starts transactions for HTTP handlers. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
 
     ```javascript
     await transaction(async (txn) => {
@@ -127,18 +140,18 @@ Apply this rule when writing server-side Harper component code that reads from o
 
     The `txn` object exposes:
 
-    | Member                | Description                                            |
-    | --------------------- | ------------------------------------------------------ |
-    | `commit()`            | Commits the current transaction                        |
-    | `abort()`             | Aborts and resets the transaction                      |
-    | `resetReadSnapshot()` | Resets the read snapshot to the latest committed state |
-    | `timestamp`           | Timestamp associated with the current transaction      |
+    | Member                | Type            | Description                                            |
+    | --------------------- | --------------- | ------------------------------------------------------ |
+    | `commit()`            | `() => Promise` | Commits the current transaction                        |
+    | `abort()`             | `() => void`    | Aborts the transaction and resets it                   |
+    | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
+    | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
 
-    **Atomicity**: all tables in the same database share one transactional context — writes across multiple tables commit atomically. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
+    On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
 
-    If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — safe to call defensively.
+11. **Understand atomicity**: Transactions span a single database. All tables within the same database share one transactional context — reads return a consistent snapshot and writes across multiple tables commit atomically. Cross-database operations get separate transactions with no cross-database atomicity guarantee.
 
-11. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
+12. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
 
     ```javascript
     // vite.config
@@ -149,7 +162,7 @@ Apply this rule when writing server-side Harper component code that reads from o
 
 ## Examples
 
-### Full CRUD sequence
+**Full CRUD flow:**
 
 ```javascript
 import { tables } from 'harper';
@@ -161,19 +174,18 @@ const created = await Product.create({ name: 'Shirt', price: 9.5 });
 // Patch
 await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
 
-// Retrieve by primary key
+// Get by primary key
 const record = await Product.get(created.id);
 
-// Query with conditions
-const query = {
+// Search with conditions
+for await (const record of Product.search({
 	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
-};
-for await (const record of Product.search(query)) {
+})) {
 	// process record
 }
 ```
 
-### Nested conditions with `or`
+**Nested conditions with `or`:**
 
 ```javascript
 Product.search({
@@ -190,13 +202,13 @@ Product.search({
 });
 ```
 
-### Chained attribute reference (join/relationship)
+**Chained attribute reference (join):**
 
 ```javascript
 Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
 ```
 
-### Background job with `transaction()`
+**Background job with `transaction()`:**
 
 ```javascript
 import { isMainThread } from 'node:worker_threads';
@@ -224,7 +236,7 @@ if (isMainThread) {
 }
 ```
 
-### SSR render with `tables`
+**SSR with Harper data:**
 
 ```typescript
 import { tables } from 'harper';
@@ -237,7 +249,9 @@ export async function render(url: string): Promise<string> {
 
 ## Notes
 
-- `tables` and `databases` do **not** automatically apply role permissions — calls run in a trusted server-side context. Apply your own authorization controls before exposing results.
-- Destructive operations (`update`, `patch`, `delete`) act on live data and are not easily reversible. Scope them with specific `conditions` and validate the affected set before writing.
-- `tables` is the same live, process-wide object whether accessed as a global or via `import { tables } from 'harper'`. A record written through one component is immediately visible to every other.
-- Run `npm link harper` for components in their own directory to ensure typings match the running installation.
+- `tables` and `databases` calls run in a trusted server-side context and do **not** automatically apply the target table's role permissions.
+- Programmatic `update`, `patch`, and `delete` calls operate directly on stored data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — making it safe to call defensively.
+- Always `await` the `transaction()` call and `catch` errors when outside a request context; an unawaited call means a failed write is never observed.
+- Guard against timer overlap: if a job can outlast its interval, use a `running` flag to skip a tick rather than opening two transactions over the same rows.
+- CommonJS is also supported: `const { tables, Resource } = require('harper');`

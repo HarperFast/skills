@@ -2823,18 +2823,18 @@ Instructions for the agent to follow when loading environment variables from `.e
 
 #### When to Use
 
-Apply this rule when a Harper application needs to supply secrets, API endpoints, or other configuration values to component code via `process.env` without hardcoding them. Use `loadEnv` any time you need to load one or more `.env` files at application startup.
+Apply this rule when a Harper application needs to supply secrets, API endpoints, or other configuration values to component code via `process.env` without hardcoding them. Use this whenever a `.env` file must be loaded at application startup.
 
 #### How It Works
 
-1. **Declare `loadEnv` in `config.yaml`**: Add `loadEnv` as the first entry in `config.yaml`. It is built into Harper and requires no installation.
+1. **Declare `loadEnv` in `config.yaml`**: Add `loadEnv` as the first entry in your `config.yaml`. It is built into Harper and requires no installation.
 
    ```yaml
    loadEnv:
      files: '.env'
    ```
 
-2. **Place `loadEnv` first**: Harper is a single-process application. List `loadEnv` before all other components so that environment variables are available on `process.env` before dependent components start.
+2. **Place `loadEnv` first**: Harper is a single-process application. List `loadEnv` before all other components so environment variables are available on `process.env` before dependent components start.
 
    ```yaml
    # config.yaml — loadEnv must come first
@@ -2847,9 +2847,9 @@ Apply this rule when a Harper application needs to supply secrets, API endpoints
      files: './src/*.js'
    ```
 
-3. **Access loaded values in component code**: After `loadEnv` runs, all loaded values are available on `process.env` and shared across all components.
+3. **Access variables in component code**: Once loaded, values are available on `process.env` and shared across all components in the process.
 
-4. **Control override behavior**: By default, existing environment variables take precedence over values in `.env` files. Set `override: true` to make loaded values win instead.
+4. **Configure `override` if needed**: By default, existing shell or container environment variables take precedence over `.env` values. Set `override: true` to reverse this — loaded values will overwrite existing environment variables.
 
    ```yaml
    loadEnv:
@@ -2857,7 +2857,7 @@ Apply this rule when a Harper application needs to supply secrets, API endpoints
      override: true
    ```
 
-5. **Load multiple files**: Pass an array of paths or a glob pattern to `files`. Files are loaded in the order specified.
+5. **Load multiple files if needed**: Provide a list of paths or a glob pattern. Files are loaded in the order specified.
 
    ```yaml
    loadEnv:
@@ -2882,7 +2882,7 @@ Apply this rule when a Harper application needs to supply secrets, API endpoints
 
 #### Examples
 
-**Single file, default behavior:**
+**Minimal setup — single `.env` file:**
 
 ```yaml
 # config.yaml
@@ -2905,7 +2905,16 @@ loadEnv:
     - '.env.local'
   override: true
 
-rest: true
+myApp:
+  files: './src/*.js'
+```
+
+**Glob pattern:**
+
+```yaml
+# config.yaml
+loadEnv:
+  files: 'env-vars/*'
 
 myApp:
   files: './src/*.js'
@@ -2913,9 +2922,11 @@ myApp:
 
 #### Notes
 
-- `loadEnv` loads values into `process.env` for **application** code only — it does not configure Harper itself.
-- Harper's own instance-wide configuration is composed at startup **before** any component's `loadEnv` runs. Variables such as `HARPER_CONFIG`, `HARPER_SET_CONFIG`, and `HARPER_DEFAULT_CONFIG` delivered through a `.env` file are read too late and are ignored. Set Harper configuration directly in the configuration file or export variables in the real process/container environment before Harper starts.
-- For production credentials, prefer the encrypted secrets store over a committed `.env` file. Secrets are also delivered to components via `process.env`.
+- `loadEnv` loads **application** environment variables for component code. It does **not** configure Harper itself.
+- Harper's own configuration is composed at startup **before** any `loadEnv` runs. Variables such as `HARPER_CONFIG`, `HARPER_SET_CONFIG`, and `HARPER_DEFAULT_CONFIG` delivered through a `.env` file are read too late and are ignored. Set Harper configuration directly in the configuration file or export variables in the real process/container environment before Harper starts.
+- Changes to a `.env` file that `loadEnv` has already loaded only reach running code after the node's worker threads restart.
+- For production credentials, prefer the encrypted secrets store over a committed `.env` file. Secrets are delivered to components via `process.env` and never appear in operation logs or replication payloads.
+- Individual `.env` values can be stored encrypted so plaintext never reaches the API, logs, or replication payload.
 
 ### 4.7 v5 Upgrade: Breaking Changes and Migration Guide
 

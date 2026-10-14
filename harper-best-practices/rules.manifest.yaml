@@ -636,6 +636,11 @@ rules:
       - path: reference/v5/operations-api/operations.md
         section: 'Going back to a previous release'
         role: primary
+      # What a retried activation does on each node, and that a retry with
+      # `restart` restarts every worker even where the release is live.
+      - path: reference/v5/operations-api/operations.md
+        section: 'Retrying an activation'
+        role: supplemental
       - path: reference/v5/operations-api/operations.md
         section: '`list_deployments`'
         role: supplemental
@@ -696,7 +701,7 @@ rules:
       - deploying-from-ci
 
   - rule: deploying-from-ci
-    description: How to deploy a Harper application from GitHub Actions with OIDC trusted publishing, so CI stores no Harper credential.
+    description: How to deploy a Harper application from GitHub Actions with OIDC trusted publishing, so CI stores no Harper credential, including the one-command setup with `harper deploy setup=true provider=github-actions`.
     category: ops
     priority: 4
     order: 2
@@ -704,6 +709,12 @@ rules:
     # The guide's isolated-worker and per-PR preview sections are left out:
     # ~18KB on their own, and a different task from deploying a release.
     sources:
+      # The one-command setup (v5.4.0) for a workflow that deploys when changes
+      # merge to a branch, which create-harper projects scaffold. The guide's
+      # hand-written policy is still what a tag-triggered release needs.
+      - path: reference/v5/cli/commands.md
+        section: 'GitHub Actions deploys (OIDC)'
+        role: primary
       - path: learn/developers/deploying-from-ci.md
         section: 'Let the workflow authenticate with OIDC'
         role: primary
@@ -737,19 +748,33 @@ rules:
         section: '`drop_oidc_trust`'
         role: supplemental
     must_cover:
+      # The one-command setup: `workflow=` holds the default-file rule (a
+      # `deploy.yml` workflow can't match a policy pinned to `deploy.yaml`),
+      # and `github-actions-<project>` the policy name a revocation drops.
+      - 'provider=github-actions'
+      - 'workflow='
+      - 'github-actions-<project>'
+      # The version check `harper deploy` makes before it uploads; a role
+      # without it logs a refused operation on every run.
+      - 'registration_info'
       - 'id-token: write'
       - 'vars.HARPER_CLI_TARGET'
       # A configured credential outranks the exchange, so a pipeline that
       # keeps its refresh token never uses OIDC.
       - 'HARPER_CLI_REFRESH_TOKEN'
       # The workflow as written: without a checkout and the CLI, a clean
-      # runner has nothing to deploy and nothing to deploy it with.
-      # `runs-on: ubuntu-latest` and `.[0].status` occur only inside the
-      # workflows, so they hold the job wrapper and the wait loop, which
-      # fact retention can't see inside a fence.
+      # runner has nothing to deploy and nothing to deploy it with. Fact
+      # retention can't see inside a fence, and step 2's single job also has
+      # `runs-on: ubuntu-latest` and `actions/checkout`, so Path A's complete
+      # workflow is held by what only it has: its trigger (`push:` and
+      # `tags: ['v*']`), its `jobs:` wrapper, `npm install -g harper`, and the
+      # wait loop's `.[0].status`.
       - 'actions/checkout'
       - 'npm install -g harper'
       - 'runs-on: ubuntu-latest'
+      - 'push:'
+      - "tags: ['v*']"
+      - 'jobs:'
       - '.[0].status'
       # `workflow_path` is what a tag-triggered release pins instead of
       # `workflow_ref`. `trailing slash` holds the audience rule, without which
@@ -781,6 +806,8 @@ rules:
       - 'oidc-trust'
       - 'drop_oidc_trust'
       - 'alter_user'
+      # The user setup creates, which an incident revocation deactivates.
+      - '<project>-ci-deploy'
     cross_links:
       - deploying-to-harper-fabric
 

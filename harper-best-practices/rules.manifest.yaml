@@ -767,10 +767,11 @@ rules:
       # retention can't see inside a fence, and step 2's single job also has
       # `runs-on: ubuntu-latest` and `actions/checkout`, so Path A's complete
       # workflow is held by what only it has: its trigger (`push:` and
-      # `tags: ['v*']`), its `jobs:` wrapper, `npm install -g harper`, and the
-      # wait loop's `.[0].status`.
+      # `tags: ['v*']`), its `jobs:` wrapper, and the wait loop's
+      # `.[0].status`. The CLI install is held with its pin: an unpinned one
+      # would change under a rerun of an old tag after a new major release.
       - 'actions/checkout'
-      - 'npm install -g harper'
+      - 'npm install --global harper@^5.3'
       - 'runs-on: ubuntu-latest'
       - 'push:'
       - "tags: ['v*']"

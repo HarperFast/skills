@@ -2645,10 +2645,12 @@ Apply this rule when asked to deploy from CI, to set up or fix a deploy workflow
          HARPER_CLI_TARGET: ${{ vars.HARPER_CLI_TARGET }}
        steps:
          - uses: actions/checkout@v4
+           with:
+             persist-credentials: false
          - uses: actions/setup-node@v4
            with:
              node-version: 22
-         - run: npm install -g harper
+         - run: npm install --global harper@^5.3
          - name: Deploy the tagged commit
            run: harper deploy project=my-app by_ref=true restart=rolling json=true > deploy.json
          - name: Wait for every node to take the release

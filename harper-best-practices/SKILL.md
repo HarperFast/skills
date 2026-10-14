@@ -78,7 +78,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 ### 4. Infrastructure & Ops (MEDIUM)
 
 - `deploying-to-harper-fabric` — How to deploy a Harper application to Harper Fabric with the CLI, check that the release was certified, and roll back by activating a previous release's `deployment_id`.
-- `deploying-from-ci` — How to deploy a Harper application from GitHub Actions with OIDC trusted publishing, so CI stores no Harper credential.
+- `deploying-from-ci` — How to deploy a Harper application from GitHub Actions with OIDC trusted publishing, so CI stores no Harper credential, including the one-command setup with `harper deploy setup=true provider=github-actions`.
 - `creating-a-fabric-account-and-cluster` — How to create a Harper Fabric account, organization, and cluster.
 - `creating-harper-apps` — How to initialize a new Harper application using the CLI.
 - `serving-web-content` — How to serve static files and integrated Vite/React applications in Harper.

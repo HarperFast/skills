@@ -20,10 +20,11 @@ metadata:
       reference/v5/operations-api/operations.md#Staging a build and activating
       it later
     - reference/v5/operations-api/operations.md#Going back to a previous release
+    - reference/v5/operations-api/operations.md#Retrying an activation
     - reference/v5/operations-api/operations.md#`list_deployments`
     - reference/v5/operations-api/operations.md#`get_job`
-  sourceCommit: e73e5efb2823cc52caf7a6458d67fbcff3bbff2c
-  inputHash: fc5eb845ac203e77
+  sourceCommit: 81c1b0e8ce8da147a662f2ead72ce0c8769d0177
+  inputHash: 899b47f26b8dca34
 ---
 
 # Deploying to Harper Fabric
@@ -43,7 +44,7 @@ Apply this rule when deploying to a remote cluster, choosing how it restarts, re
    # Provide cluster username and password when prompted
    ```
 
-   - For CI/CD on GitHub Actions, use workload identity (OIDC) instead, so the pipeline stores no Harper credential: see [deploying-from-ci.md](deploying-from-ci.md). Elsewhere, give the pipeline a refresh token from `harper login --for-ci` rather than a password.
+   - For CI/CD on GitHub Actions, use workload identity (OIDC) instead, so the pipeline stores no Harper credential. From v5.4.0, `harper deploy setup=true provider=github-actions` sets it up in one command: see [deploying-from-ci.md](deploying-from-ci.md). Elsewhere, give the pipeline a refresh token from `harper login --for-ci` rather than a password.
    - For a one-off command, `auth_username=` and `auth_password=` also work, and take precedence over environment variables and saved login tokens. Don't use them in production.
 
 2. **Deploy with a restart**: Run `harper deploy`, with `restart=true` or `restart=rolling` so the release is certified before it serves (step 3).
@@ -92,7 +93,7 @@ Apply this rule when deploying to a remote cluster, choosing how it restarts, re
    	"operation": "deploy_component",
    	"project": "my-app",
    	"deployment_id": "<id of the deployment you want back>",
-   	"restart": true
+   	"restart": "rolling"
    }
    ```
 
@@ -125,7 +126,7 @@ Apply this rule when deploying to a remote cluster, choosing how it restarts, re
    Make it live by deploying that `deployment_id`, as in step 4. Nothing changes until then, and `get_deployment` reports it as `staged`.
    - Pass `restart` on the activation, not the stage: `restart` is rejected alongside `activate: false`.
    - The activation takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host`. They are rejected, because the staged build already decided them.
-   - Activating the release that is already live succeeds and changes nothing, so a retry is safe.
+   - Activating the release that is already live succeeds without a swap, so if an activation fails partway (a peer was unreachable, or the root config entry wasn't written), retry the same `deployment_id`. A node that already switched answers success, one still holding the build switches now, and one that holds neither answers `404`; the retry also finishes what the failed attempt left half done. With `restart`, a node where the release is already live still restarts every worker, isolated applications' included. Without it, the node marks the component as needing a restart.
    - A staged build outlives later deploys: stage v2, deploy v3, and activating v2's id returns the component to v2.
    - `file:` directory sources cannot be staged.
    - Upgrade every node before staging. A node before v5.3.0 doesn't recognize `activate: false`, and serves the release immediately. A peer that doesn't confirm staging fails the operation with the node names.
@@ -162,7 +163,7 @@ Apply this rule when deploying to a remote cluster, choosing how it restarts, re
    harper deploy by_ref=true credential=true restart=true replicated=true
    ```
 
-   Provision that credential once per component and source with `harper deploy setup=true`. It is interactive, and its operations require **super_user**, so run it with an administrative credential, not the CI identity it provisions for. It:
+   Provision that credential once per component and source with `harper deploy setup=true`. (With `provider=github-actions`, it sets up GitHub Actions deploys instead: see [deploying-from-ci.md](deploying-from-ci.md).) It is interactive, and its operations require **super_user**, so run it with an administrative credential, not the CI identity it provisions for. It:
    1. Fetches the cluster's public key with `get_secrets_public_key`.
    2. Encrypts the token locally into an `enc:v1:` envelope, so the plaintext never leaves your machine.
    3. Stores only the ciphertext with `set_secret`, scoped to the component, never in the global `processEnv` tier.
@@ -200,7 +201,7 @@ harper deploy project=my-app deployment_id=<previous deployment_id> restart=roll
 ```bash
 harper deploy project=my-app package=npm:@my-org/my-app@1.2.3 activate=false
 # Later, with the deployment_id the stage returned
-harper deploy project=my-app deployment_id=<staged deployment_id> restart=true
+harper deploy project=my-app deployment_id=<staged deployment_id> restart=rolling
 ```
 
 **Deploy a pull request's head commit by reference in GitHub Actions:**

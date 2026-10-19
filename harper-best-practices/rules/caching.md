@@ -13,6 +13,8 @@ metadata:
 
 Instructions for the agent to implement integrated data caching from external sources using Harper's cache table directives and `sourcedFrom` API.
 
+**Instead of:** Redis or Memcached cache-aside layers. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when an application needs to wrap an external API, microservice, or database with a fast local cache. Use it when you need to define TTL-based cache expiration, connect an upstream data source to a Harper table, or implement on-demand cache invalidation.

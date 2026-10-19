@@ -16,6 +16,8 @@ metadata:
 
 Instructions for the agent to follow when storing and retrieving large binary content using the `Blob` data type in Harper.
 
+**Instead of:** S3 or GCS buckets for app-managed files. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when a schema field needs to store large binary content such as images, video, audio, or large HTML — typically content larger than 20KB. Use `Blob` instead of `Bytes` when streaming support and out-of-record storage are required. See [handling-binary-data](handling-binary-data.md) for broader binary data guidance.

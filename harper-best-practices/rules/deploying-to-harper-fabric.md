@@ -31,6 +31,8 @@ metadata:
 
 Instructions for the agent to deploy a Harper application to Harper Fabric using the CLI, verify certification status, and roll back by activating a previous release's `deployment_id`.
 
+**Instead of:** Docker Compose stacks; deploying several services separately. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, checking whether a release was certified after rollout, or rolling back to a previous release without rebuilding. Also apply it when provisioning credentials for private repositories or staging a build for later activation.

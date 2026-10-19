@@ -15,6 +15,8 @@ metadata:
 
 Instructions for the agent to follow when storing and serving binary data (images, audio, arbitrary content types) in Harper.
 
+**Instead of:** S3 or GCS buckets for app-managed files. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when a Harper resource needs to accept, store, or serve binary payloads such as images, audio files, or calendar data. Use it when clients send raw binary via `PUT`/`POST`, or when they send `base64`-encoded data inside a JSON body.

@@ -22,6 +22,10 @@
 //                      AGENTS.md and the SKILL.md index are still reassembled from
 //                      the on-disk rule bodies, so the result is committable.
 //   --force            Regenerate even if the input hash is unchanged.
+//   --assemble-only    Skip regeneration entirely (no docs checkout, no model
+//                      calls). Only re-applies each rule's manifest-driven
+//                      "Instead of" line, formats, and reassembles AGENTS.md
+//                      and the SKILL.md index. Use after editing `replaces`.
 //   --report <file>    Write a JSON report of this run: rules regenerated,
 //                      rules repaired (and what was restored), and rules held
 //                      back (and what they still lacked). The auto-sync
@@ -69,6 +73,8 @@ import {
 	frontmatterProblems,
 	SKILL_INDEX_BEGIN,
 	SKILL_INDEX_END,
+	stripInsteadOf,
+	withInsteadOf,
 } from './lib/render.mjs';
 
 function parseArgs(argv) {
@@ -76,6 +82,7 @@ function parseArgs(argv) {
 		docsPath: process.env.DOCS_PATH || '../documentation',
 		rule: null,
 		force: false,
+		assembleOnly: false,
 		report: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -83,6 +90,7 @@ function parseArgs(argv) {
 		if (a === '--docs-path') args.docsPath = argv[++i];
 		else if (a === '--rule') args.rule = argv[++i];
 		else if (a === '--force') args.force = true;
+		else if (a === '--assemble-only') args.assembleOnly = true;
 		else if (a === '--report') args.report = argv[++i];
 		else throw new Error(`Unknown argument: ${a}`);
 	}
@@ -194,7 +202,7 @@ async function run(args, report) {
 
 		if (args.rule && rules.length > 0) ruleMatched = true;
 
-		for (const entry of rules) {
+		for (const entry of args.assembleOnly ? [] : rules) {
 			const filePath = path.join(rulesDir, `${entry.rule}.md`);
 
 			if (entry.mode === 'synthesized') {
@@ -254,9 +262,12 @@ async function run(args, report) {
 				body = sourceContent;
 			} else if (entry.mode === 'generate') {
 				// The same baseline validate-generated compares against.
-				const previousBody = bodyAtHead(
+				// The Instead-of line is rendered, not generated, so it is not part of
+				// the baseline the model's body is compared against.
+				const committedBody = bodyAtHead(
 					path.posix.join(skill.dir, skill.rulesDir, `${entry.rule}.md`),
 				);
+				const previousBody = committedBody === null ? null : stripInsteadOf(committedBody);
 				const checks = {
 					previousBody,
 					source: sourceContent,
@@ -290,7 +301,7 @@ async function run(args, report) {
 					// that file passes everything validate-generated checks.
 					if (!existing) throw new StopRun(`${entry.rule}: ${reason}`, where);
 					const keptProblems = {
-						...checkBody({ body: existing.body, ...checks }),
+						...checkBody({ body: stripInsteadOf(existing.body), ...checks }),
 						frontmatter: frontmatterProblems(entry, existing.frontmatter),
 					};
 					if (hasProblems(keptProblems)) {
@@ -339,7 +350,11 @@ async function run(args, report) {
 			}
 
 			const frontmatter = buildFrontmatter(entry, { sourceCommit: docsSha, inputHash });
-			await fs.writeFile(filePath, composeRuleFile(frontmatter, body), 'utf-8');
+			await fs.writeFile(
+				filePath,
+				composeRuleFile(frontmatter, body, { replaces: entry.replaces }),
+				'utf-8',
+			);
 			console.log(`✓ ${entry.rule} (${entry.mode})`);
 			report.regenerated.push({ skill: skill.dir, rule: entry.rule });
 			changed++;
@@ -354,6 +369,24 @@ async function run(args, report) {
 	if (args.rule && !ruleMatched) {
 		const manifests = SKILLS.map((s) => path.join(s.dir, s.manifestFile)).join(', ');
 		throw new StopRun(`Rule "${args.rule}" not found in any manifest (${manifests})`);
+	}
+
+	// Apply each rule's manifest-driven "Instead of" line to its file. This is
+	// deterministic and runs for every mode and every rule (including unchanged,
+	// held-back, and synthesized ones), so the line never depends on whether the
+	// model rewrote the body this run.
+	for (const skill of SKILLS) {
+		const manifest = skill.__manifest ?? (await loadManifest(skill));
+		const rulesDir = path.join(process.cwd(), skill.dir, skill.rulesDir);
+		for (const entry of manifest.rules) {
+			const filePath = path.join(rulesDir, `${entry.rule}.md`);
+			const raw = await fs.readFile(filePath, 'utf-8');
+			const { data, content } = matter(raw);
+			// Rewrite only when the body changes, so frontmatter is never reflowed.
+			if (content.trim() !== withInsteadOf(content, entry.replaces)) {
+				await fs.writeFile(filePath, composeRuleFile(data, content, { replaces: entry.replaces }));
+			}
+		}
 	}
 
 	// Format the generated rule files first, so AGENTS.md is assembled from the

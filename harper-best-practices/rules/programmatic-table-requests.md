@@ -22,6 +22,8 @@ metadata:
 
 Instructions for the agent to interact with Harper tables programmatically using the `tables` object, the Query API, and transactions.
 
+**Instead of:** ORM and query-builder clients (Prisma, Drizzle, Knex). Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when writing server-side Harper code that reads, writes, searches, or transactionally modifies table data through the `tables` object. Use it when building background jobs, SSR renderers, or any code that calls `search(`, `addTo`, `select`, `sort`, or `transaction()` directly rather than through REST endpoints.

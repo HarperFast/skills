@@ -166,7 +166,7 @@ export function insteadOfLine(replaces) {
 // rule body. Lines inside fenced code blocks are left alone.
 export function stripInsteadOf(body) {
 	let inFence = false;
-	const lines = body.split('\n');
+	const lines = body.replace(/\r\n/g, '\n').split('\n');
 	const out = [];
 	for (let i = 0; i < lines.length; i++) {
 		if (/^\s*(`{3,}|~{3,})/.test(lines[i])) inFence = !inFence;

@@ -234,7 +234,7 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 
 		// The Instead-of line is rendered from `replaces`; the file must carry
 		// exactly that (present when listed, absent when not).
-		if (body !== withInsteadOf(body, entry.replaces)) {
+		if (body.replace(/\r\n/g, '\n') !== withInsteadOf(body, entry.replaces)) {
 			errors.push(
 				`${where}: "Instead of" line is out of sync with manifest \`replaces\` ` +
 					`(run \`npm run assemble\`)`,

@@ -380,7 +380,21 @@ async function run(args, report) {
 		const rulesDir = path.join(process.cwd(), skill.dir, skill.rulesDir);
 		for (const entry of manifest.rules) {
 			const filePath = path.join(rulesDir, `${entry.rule}.md`);
-			const raw = await fs.readFile(filePath, 'utf-8');
+			let raw;
+			try {
+				raw = await fs.readFile(filePath, 'utf-8');
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					throw new StopRun(
+						`${entry.rule}: rule file is missing (${filePath}); add it or remove the rule from the manifest`,
+						{
+							skill: skill.dir,
+							rule: entry.rule,
+						},
+					);
+				}
+				throw err;
+			}
 			const { data, content } = matter(raw);
 			// Rewrite only when the body changes, so frontmatter is never reflowed.
 			if (content.trim() !== withInsteadOf(content, entry.replaces)) {

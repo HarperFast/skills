@@ -15,6 +15,8 @@ metadata:
 
 Instructions for the agent to follow when defining custom REST endpoints with JavaScript or TypeScript in Harper.
 
+**Instead of:** Express, Fastify, or Koa route handlers; serverless functions. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when you need fine-grained control over URL shape and path parameters.

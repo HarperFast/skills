@@ -13,6 +13,8 @@ metadata:
 
 Instructions for the agent to enable HNSW vector indexes on table fields and query them for similarity search in Harper.
 
+**Instead of:** Pinecone, Weaviate, pgvector. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when adding a vector similarity search capability to a Harper table — for example, storing text embeddings and querying for nearest neighbors, filtering by distance threshold, or combining vector search with record-level access control. See [adding-tables-with-schemas.md](adding-tables-with-schemas.md) for how to define the surrounding table schema.

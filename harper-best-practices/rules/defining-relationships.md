@@ -14,6 +14,8 @@ metadata:
 
 Instructions for the agent to follow when defining and querying relationships between tables in Harper using the `@relationship` directive.
 
+**Instead of:** ORM relations and join tables (Prisma, Drizzle, Sequelize). Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when adding foreign key relationships between schema tables, enabling join queries, or returning nested related records in query results. Use it any time a schema type needs to reference records in another table via a foreign key attribute.

@@ -12,6 +12,13 @@
 # Phase 4 migrates schema-design-tooling and typescript-type-stripping to
 # mode: generate. creating-harper-apps stays synthesized pending dedicated
 # create-harper CLI documentation.
+#
+# `replaces:` (optional, human-owned) lists the outside tools or services a rule
+# stands in for. The generator never writes it. The renderer turns it into an
+# "Instead of" line in the rule file and an "(instead of: ...)" note in the
+# SKILL.md index. Run `npm run assemble` after editing it.
+# REVIEW: confirm the logging and handling-binary-data entries with Harper
+# engineering; drop any entry that overstates what the rule covers.
 
 rules:
   # ===========================================================================
@@ -24,6 +31,8 @@ rules:
     priority: 1
     order: 1
     mode: synthesized
+    replaces:
+      - Postgres, MySQL, MongoDB, DynamoDB, Supabase, Firebase
 
   - rule: schema-design-tooling
     description: Best practices for Harper schema design, including core directives and GraphQL tooling configuration.
@@ -54,6 +63,8 @@ rules:
     priority: 1
     order: 3
     mode: generate
+    replaces:
+      - ORM relations and join tables (Prisma, Drizzle, Sequelize)
     sources:
       - path: reference/v5/database/schema.md
         section: 'Relationships'
@@ -74,6 +85,8 @@ rules:
     priority: 1
     order: 4
     mode: generate
+    replaces:
+      - Pinecone, Weaviate, pgvector
     sources:
       - path: reference/v5/database/schema.md
         section: 'Vector Indexing'
@@ -93,6 +106,8 @@ rules:
     priority: 1
     order: 5
     mode: generate
+    replaces:
+      - S3 or GCS buckets for app-managed files
     sources:
       - path: reference/v5/database/schema.md
         section: 'Blob Type'
@@ -120,6 +135,8 @@ rules:
     priority: 1
     order: 6
     mode: generate
+    replaces:
+      - S3 or GCS buckets for app-managed files
     sources:
       - path: reference/v5/database/api.md
         section: 'Accepting Binary in JSON Requests'
@@ -148,6 +165,8 @@ rules:
     priority: 2
     order: 1
     mode: generate
+    replaces:
+      - Hand-written CRUD routes (Express, Fastify, Next.js API routes)
     sources:
       # overview.md is sourced section-by-section rather than whole-file: at
       # ~15KB it was the largest single input in the skill, and the compression
@@ -250,6 +269,8 @@ rules:
     priority: 2
     order: 3
     mode: generate
+    replaces:
+      - Socket.io, `ws`, Pusher, Ably, Redis pub/sub, a separate MQTT broker
     sources:
       - path: reference/v5/rest/websockets.md
         role: primary
@@ -265,6 +286,8 @@ rules:
     priority: 2
     order: 4
     mode: generate
+    replaces:
+      - Hand-rolled sessions, `passport`, `jsonwebtoken`, `bcrypt`
     sources:
       - path: reference/v5/resources/resource-api.md
         section: '`getCurrentUser(): User | undefined`'
@@ -421,6 +444,9 @@ rules:
     priority: 3
     order: 1
     mode: generate
+    replaces:
+      - Express, Fastify, or Koa route handlers
+      - serverless functions
     sources:
       - path: reference/v5/resources/overview.md
         section: 'Custom External Data Source'
@@ -459,6 +485,8 @@ rules:
     priority: 3
     order: 2
     mode: generate
+    replaces:
+      - Middleware and controllers wrapped around CRUD routes
     sources:
       - path: reference/v5/resources/overview.md
         section: 'Extending a Table'
@@ -478,6 +506,8 @@ rules:
     priority: 3
     order: 3
     mode: generate
+    replaces:
+      - ORM and query-builder clients (Prisma, Drizzle, Knex)
     sources:
       - path: reference/v5/database/api.md
         section: '`tables`'
@@ -564,6 +594,8 @@ rules:
     priority: 3
     order: 4
     mode: generate
+    replaces:
+      - '`tsc` or `ts-node` build steps for server code'
     sources:
       - path: reference/v5/components/javascript-environment.md
         section: 'TypeScript Support'
@@ -580,6 +612,8 @@ rules:
     priority: 3
     order: 5
     mode: generate
+    replaces:
+      - Redis or Memcached cache-aside layers
     sources:
       - path: learn/developers/caching-with-harper.md
         role: primary
@@ -605,6 +639,9 @@ rules:
     priority: 4
     order: 1
     mode: generate
+    replaces:
+      - Docker Compose stacks
+      - deploying several services separately
     sources:
       - path: reference/v5/components/applications.md
         section: 'Remote Management'
@@ -832,6 +869,9 @@ rules:
     priority: 4
     order: 5
     mode: synthesized
+    replaces:
+      - Nginx, Vercel, or Netlify for the frontend
+      - a separate Vite dev server
 
   - rule: logging
     description: Best practices for logging in Harper, including console capture, the granular logger interface, and programmatic log retrieval.
@@ -839,6 +879,8 @@ rules:
     priority: 4
     order: 6
     mode: generate
+    replaces:
+      - Separate log shippers for app logs (pino or winston transports)
     sources:
       - path: reference/v5/logging/overview.md
         role: primary
@@ -855,6 +897,8 @@ rules:
     priority: 4
     order: 7
     mode: generate
+    replaces:
+      - '`dotenv`'
     sources:
       - path: reference/v5/environment-variables/overview.md
         role: primary

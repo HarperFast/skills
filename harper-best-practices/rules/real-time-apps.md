@@ -13,6 +13,8 @@ metadata:
 
 Instructions for the agent to follow when building real-time features in Harper using WebSockets and Pub/Sub.
 
+**Instead of:** Socket.io, `ws`, Pusher, Ably, Redis pub/sub, a separate MQTT broker. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when implementing any feature that requires real-time bidirectional communication, live data streaming, or push-based updates in a Harper application. This includes chat, live dashboards, sensor feeds, and any scenario where clients must receive resource changes as they happen.

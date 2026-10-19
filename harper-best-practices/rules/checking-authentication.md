@@ -27,6 +27,8 @@ metadata:
 
 Instructions for the agent to handle user authentication, sessions, and JWT token issuance in Harper Resources.
 
+**Instead of:** Hand-rolled sessions, `passport`, `jsonwebtoken`, `bcrypt`. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when implementing login/logout flows, reading the current authenticated user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Resource must gate behavior on identity or credentials. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.

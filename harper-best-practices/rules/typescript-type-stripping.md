@@ -13,6 +13,8 @@ metadata:
 
 Instructions for the agent to run `.ts` files directly in Harper without a build step using Node.js's built-in type stripping.
 
+**Instead of:** `tsc` or `ts-node` build steps for server code. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when writing Harper resource files in TypeScript. Use it any time you need to reference `.ts` source files from `config.yaml` or import between local TypeScript modules in a Harper project.

@@ -15,6 +15,8 @@ metadata:
 
 Instructions for the agent to follow when loading environment variables from `.env` files into a Harper application using the `loadEnv` plugin.
 
+**Instead of:** `dotenv`. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when a Harper application needs to supply secrets, API endpoints, or other configuration values to component code via `process.env` without hardcoding them. Use this whenever a `.env` file must be loaded at application startup.

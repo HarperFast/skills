@@ -47,6 +47,8 @@ import {
 	frontmatterProblems,
 	SKILL_INDEX_BEGIN,
 	SKILL_INDEX_END,
+	stripInsteadOf,
+	withInsteadOf,
 } from './lib/render.mjs';
 import { bodyAtHead, droppedFacts, missingAnchors } from './lib/retention.mjs';
 import { hasLeakedMdx, MIN_GENERATED_BODY_CHARS } from './lib/body-checks.mjs';
@@ -163,6 +165,19 @@ function lintManifest(manifest, scope, errors) {
 			errors.push(`${where}: "allow_dropped" only applies to mode "generate"`);
 		}
 
+		// Human-owned list of outside services this rule stands in for. The
+		// renderer turns it into the rule's "Instead of" line.
+		if (e.replaces !== undefined) {
+			if (!Array.isArray(e.replaces) || e.replaces.length === 0) {
+				errors.push(`${where}: "replaces" must be a non-empty array`);
+			} else {
+				e.replaces.forEach((r, ri) => {
+					if (!isNonEmptyString(r))
+						errors.push(`${where}.replaces[${ri}]: must be a non-empty string`);
+				});
+			}
+		}
+
 		if (e.cross_links !== undefined) {
 			if (!Array.isArray(e.cross_links)) errors.push(`${where}: "cross_links" must be an array`);
 			else {
@@ -217,6 +232,15 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 		const meta = fm.metadata;
 		if (!isPlainObject(meta)) continue;
 
+		// The Instead-of line is rendered from `replaces`; the file must carry
+		// exactly that (present when listed, absent when not).
+		if (body.replace(/\r\n/g, '\n') !== withInsteadOf(body, entry.replaces)) {
+			errors.push(
+				`${where}: "Instead of" line is out of sync with manifest \`replaces\` ` +
+					`(run \`npm run assemble\`)`,
+			);
+		}
+
 		// --- Layer 4: per-mode body checks ---
 		if (entry.mode === 'generate' || entry.mode === 'direct') {
 			if (hasLeakedMdx(body)) {
@@ -246,7 +270,7 @@ async function checkRules(manifest, skill, scope, docsBuildDir, errors) {
 			if (entry.mode === 'direct') {
 				try {
 					const resolved = await resolveSources(docsBuildDir, entry.sources);
-					if (resolved.trim() !== body) {
+					if (resolved.trim() !== stripInsteadOf(body).trim()) {
 						errors.push(
 							`${where}: direct body is not byte-identical to its flat-markdown source (regenerate)`,
 						);

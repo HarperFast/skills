@@ -16,6 +16,8 @@ metadata:
 
 Instructions for the agent to follow when implementing logging in Harper applications, including direct logger usage, tagged loggers, and console capture behavior.
 
+**Instead of:** Separate log shippers for app logs (pino or winston transports). Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when writing any JavaScript component, plugin, or resource that needs to emit structured log entries, filter logs by component, or capture existing `console.log` output into Harper's log system. Use it whenever you need to understand log levels, log entry format, or the `logger` global API.

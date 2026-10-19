@@ -14,6 +14,8 @@ metadata:
 
 Instructions for the agent to follow when adding custom logic to automatically generated table resources in Harper.
 
+**Instead of:** Middleware and controllers wrapped around CRUD routes. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when you need to override or augment the default HTTP handler behavior (GET, POST, PUT, PATCH, DELETE) for a Harper table resource. Use it when a table needs computed properties, input transformation, authorization checks, or custom error responses.

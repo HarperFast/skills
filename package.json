@@ -30,6 +30,7 @@
 		"build": "node scripts/build.mjs",
 		"format": "oxfmt",
 		"format:check": "oxfmt --check",
+		"assemble": "node scripts/generation/generate-rules.mjs --assemble-only",
 		"generate": "node scripts/generation/generate-rules.mjs",
 		"lint:relationships": "node scripts/generation/lint-relationships.mjs",
 		"sync:report": "node scripts/generation/sync-report.mjs",

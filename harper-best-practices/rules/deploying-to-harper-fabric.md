@@ -31,6 +31,8 @@ metadata:
 
 Instructions for the agent to follow when deploying a Harper application to a Harper Fabric cluster, or any remote Harper instance, with the `harper` CLI, and when checking, staging, or going back to a release.
 
+**Instead of:** Docker Compose stacks; deploying several services separately. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when deploying to a remote cluster, choosing how it restarts, reading a deploy's `certification`, staging a release to make live later, or rolling back to a previous release. To deploy from CI with no stored credential, see [deploying-from-ci.md](deploying-from-ci.md). To set up the cluster first, see [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md).

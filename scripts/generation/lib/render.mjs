@@ -87,7 +87,8 @@ export function assembleSkillIndex(manifest) {
 		const impact = CATEGORY_IMPACT[cat] || '';
 		out.push(`### ${i + 1}. ${label} (${impact})`, '');
 		for (const rule of byCategory.get(cat)) {
-			out.push(`- \`${rule.rule}\` — ${rule.description}`);
+			const insteadOf = rule.replaces?.length ? ` (instead of: ${rule.replaces.join('; ')})` : '';
+			out.push(`- \`${rule.rule}\` — ${rule.description}${insteadOf}`);
 		}
 		out.push('');
 	});
@@ -152,10 +153,61 @@ export function frontmatterProblems(entry, fm) {
 	return problems;
 }
 
+// The "Instead of" line a rule carries when its manifest entry has a
+// `replaces` list. Deterministic: it is rendered from the manifest, never
+// written by the model, and applies to every mode.
+export const INSTEAD_OF_PREFIX = '**Instead of:**';
+
+export function insteadOfLine(replaces) {
+	return `${INSTEAD_OF_PREFIX} ${replaces.join('; ')}. Use this rule rather than adding that service. See \`harper-architecture\`.`;
+}
+
+// Remove any existing Instead-of line (and the blank line after it) from a
+// rule body. Lines inside fenced code blocks are left alone.
+export function stripInsteadOf(body) {
+	let inFence = false;
+	const lines = body.replace(/\r\n/g, '\n').split('\n');
+	const out = [];
+	for (let i = 0; i < lines.length; i++) {
+		if (/^\s*(`{3,}|~{3,})/.test(lines[i])) inFence = !inFence;
+		if (!inFence && lines[i].startsWith(INSTEAD_OF_PREFIX)) {
+			if (lines[i + 1] === '') i++;
+			continue;
+		}
+		out.push(lines[i]);
+	}
+	return out.join('\n');
+}
+
+// Return `body` with the Instead-of line for `replaces` placed after the H1 and
+// its summary paragraph, directly before the first H2 (`## When to Use`). With
+// no `replaces` the line is removed, so the result is the single canonical form
+// for a rule and the function is idempotent.
+export function withInsteadOf(body, replaces) {
+	const stripped = stripInsteadOf(body.trim());
+	if (!Array.isArray(replaces) || replaces.length === 0) return stripped;
+
+	const lines = stripped.split('\n');
+	let inFence = false;
+	let at = lines.length;
+	for (let i = 0; i < lines.length; i++) {
+		if (/^\s*(`{3,}|~{3,})/.test(lines[i])) inFence = !inFence;
+		if (!inFence && /^## /.test(lines[i])) {
+			at = i;
+			break;
+		}
+	}
+	const before = lines.slice(0, at).join('\n').trimEnd();
+	const after = lines.slice(at).join('\n');
+	return [before, insteadOfLine(replaces), after].filter((part) => part !== '').join('\n\n');
+}
+
 // Compose a complete rule file (frontmatter + body). The body is expected to
-// start with its H1. Output is later run through oxfmt by the generator.
-export function composeRuleFile(frontmatter, body) {
-	return matter.stringify(`\n${body.trim()}\n`, frontmatter);
+// start with its H1. `replaces` is the manifest entry's optional list; when
+// present the Instead-of line is inserted into the body. Output is later run
+// through oxfmt by the generator.
+export function composeRuleFile(frontmatter, body, { replaces } = {}) {
+	return matter.stringify(`\n${withInsteadOf(body, replaces)}\n`, frontmatter);
 }
 
 // Shift every Markdown ATX heading in `body` down by `delta` levels, capping at

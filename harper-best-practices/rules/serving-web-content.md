@@ -9,6 +9,8 @@ metadata:
 
 Instructions for the agent to follow when serving web content from Harper.
 
+**Instead of:** Nginx, Vercel, or Netlify for the frontend; a separate Vite dev server. Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Use this skill when you need to serve a frontend (HTML, CSS, JS, or a React/Vue app) directly from your Harper instance — either plain static files or an integrated Vite app with hot module replacement (HMR) in development and a real production build when deployed.

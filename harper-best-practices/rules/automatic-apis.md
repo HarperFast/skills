@@ -20,6 +20,8 @@ metadata:
 
 Instructions for the agent to follow when using Harper's automatically generated REST and WebSocket APIs for exported tables and resources.
 
+**Instead of:** Hand-written CRUD routes (Express, Fastify, Next.js API routes). Use this rule rather than adding that service. See `harper-architecture`.
+
 ## When to Use
 
 Apply this rule when enabling HTTP REST endpoints or WebSocket subscriptions for Harper tables and custom resources. Use it whenever you need to configure the REST plugin, understand the auto-generated endpoint surface, or wire up real-time WebSocket connections. See [querying-rest-apis.md](querying-rest-apis.md) for query syntax and [real-time-apps.md](real-time-apps.md) for real-time patterns.

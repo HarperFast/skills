@@ -235,15 +235,15 @@ type Reading @table(randomAccessFields: true) {
 
 ### 1.3 Defining Relationships Between Tables in Harper
 
-Instructions for the agent to follow when defining and querying relationships between tables in Harper using the `@relationship` directive.
+Instructions for the agent to define and query relationships between Harper tables using the `@relationship` directive in GraphQL schemas.
 
 #### When to Use
 
-Apply this rule when adding foreign key relationships between schema tables, enabling join queries, or returning nested related records in query results. Use it any time a schema type needs to reference records in another table via a foreign key attribute.
+Apply this rule when writing Harper schemas that require join queries across tables, or when query results must include related records as nested properties. Use it whenever a foreign key exists in one table that references another, or when modeling one-to-many, many-to-one, or many-to-many associations.
 
 #### How It Works
 
-1. **Use `@relationship(from: attribute)` for many-to-one or many-to-many**: Place this on the field in the table that holds the foreign key. The `from` parameter names the attribute on this table that stores the foreign key referencing the target table's primary key.
+1. **Declare a many-to-one relationship with `from`**: Place `@relationship(from: attribute)` on a field when the foreign key lives in the current table and references the primary key of the target table. The result type is a single object.
 
    ```graphql
    type RealityShow @table @export {
@@ -259,17 +259,7 @@ Apply this rule when adding foreign key relationships between schema tables, ena
    }
    ```
 
-   If the foreign key attribute is an array, the relationship becomes many-to-many:
-
-   ```graphql
-   type RealityShow @table @export {
-   	id: Long @primaryKey
-   	networkIds: [Long] @indexed
-   	networks: [Network] @relationship(from: networkIds)
-   }
-   ```
-
-2. **Use `@relationship(to: attribute)` for one-to-many or many-to-many**: Place this on the table whose primary key is referenced by the foreign key in the target table. The `to` parameter names the attribute on the target table that holds the foreign key. The result type **must** be an array.
+2. **Declare a one-to-many relationship with `to`**: Place `@relationship(to: attribute)` on a field when the foreign key lives in the target table and references the primary key of the current table. The result type **must** be an array.
 
    ```graphql
    type Network @table @export {
@@ -279,14 +269,14 @@ Apply this rule when adding foreign key relationships between schema tables, ena
    }
    ```
 
-3. **Use `@relationship(from: attribute, to: attribute)` for foreign key to foreign key joins**: Specify both `from` and `to` when neither side uses the primary key. Harper resolves the relationship by searching the target table's `to` attribute for matches using this record's `from` attribute value. The result type must be an array.
+3. **Declare a foreign-key-to-foreign-key relationship with `@relationship(from: attribute, to: attribute)`**: Specify both `from` and `to` when neither side uses the primary key. Harper resolves the relationship by searching the target table's `to` attribute for matches using the current record's `from` attribute value. The result type must be an array.
 
    ```graphql
    type OrderItem @table @export {
    	id: Long @primaryKey
    	orderId: Long @indexed
    	productSku: Long @indexed
-   	products: [Product] @relationship(from: productSku, to: sku)
+   	products: [Product] @relationship(from: productSku, to: sku) # matches products by sku, not primary key
    }
 
    type Product @table @export {
@@ -296,14 +286,25 @@ Apply this rule when adding foreign key relationships between schema tables, ena
    }
    ```
 
-4. **Query across relationships using dot-syntax**: Filter records by related table attributes using chained dot notation. This behaves as an INNER JOIN — only records with a matching related record are returned.
+4. **Declare a many-to-many relationship using an array foreign key with `from`**: When the foreign key field is an array, `@relationship(from: attribute)` establishes a many-to-many relationship. The result type must be an array.
+
+   ```graphql
+   type RealityShow @table @export {
+   	id: Long @primaryKey
+   	networkIds: [Long] @indexed
+   	networks: [Network] @relationship(from: networkIds)
+   }
+   ```
+
+5. **Query across relationships using dot-syntax**: Filter records by related table attributes using dot-chained attribute names. This behaves as an INNER JOIN — only parents with a qualifying related record are returned.
 
    ```
+   GET /RealityShow?network.name=Bravo
    GET /Product/?brand.name=Microsoft
    GET /Brand/?products.name=Keyboard
    ```
 
-5. **Include relationship fields in results using `select()`**: Relationship attributes are not returned by default. Use `select()` to include them, optionally specifying nested fields with `{}`.
+6. **Include relationship fields in results using `select()`**: Relationship attributes are not included by default. Use `select()` to project them, optionally with a nested field list using `{}`.
 
    ```
    GET /Product/?brand.name=Microsoft&select(name,brand)
@@ -311,24 +312,27 @@ Apply this rule when adding foreign key relationships between schema tables, ena
    GET /Product/?name=Keyboard&select(name,brand{name,id})
    ```
 
-   When selecting a relationship without filtering on it, Harper performs a LEFT JOIN — the relationship property is omitted if the foreign key is null or references a non-existent record.
+   Selecting a relationship without an outer dot-syntax filter on it behaves as a LEFT JOIN: parents remain even when there are no related records.
 
-6. **Model many-to-many without a junction table**: Store an array of foreign key values and use `@relationship(from: ...)` pointing to that array attribute. The array order of the foreign key values is preserved when resolving the relationship.
+7. **Filter and page nested relationship results using `[]` inside `select()`**: Apply conditions, sort, and pagination to each parent's related records by placing them inside square brackets in the `select()` expression.
 
-   ```graphql
-   type Product @table @export {
-   	id: Long @primaryKey
-   	name: String
-   	resellerIds: [Long] @indexed
-   	resellers: [Reseller] @relationship(from: "resellerIds")
-   }
+   ```
+   GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
    ```
 
-7. **Define self-referential relationships** for parent-child hierarchies by pointing `@relationship` back at the same table type.
+   An outer relationship filter (e.g., `products.price=ge=number:30`) removes parents without a qualifying child **and** narrows the nested candidates. A filter inside `products[...]` only narrows projected children without removing their parent.
+
+   | Nested option      | Behavior                                                                   |
+   | ------------------ | -------------------------------------------------------------------------- |
+   | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups.           |
+   | `sort(price)`      | Order eligible children before pagination.                                 |
+   | `limit(end)`       | Return at most `end` children per parent.                                  |
+   | `limit(start,end)` | Skip `start` eligible children and return at most `end - start`.           |
+   | `select(id,price)` | Project fields from returned children; omit to return whole child records. |
 
 #### Examples
 
-**Full schema with bidirectional relationships:**
+##### Schema with bidirectional relationships
 
 ```graphql
 type Product @table @export {
@@ -345,25 +349,81 @@ type Brand @table @export {
 }
 ```
 
-**Querying with joins and nested select:**
+##### Many-to-many without a junction table
 
+```graphql
+type Product @table @export {
+	id: Long @primaryKey
+	name: String
+	resellerIds: [Long] @indexed
+	resellers: [Reseller] @relationship(from: "resellerIds")
+}
 ```
-GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
-GET /Brand/?products.name=Keyboard
-```
-
-**Many-to-many query with nested select:**
 
 ```
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
+The array order of `resellerIds` is preserved when resolving the relationship.
+
+##### Nested filtering and pagination scenarios
+
+Schema for the following examples:
+
+```graphql
+type Brand @table @export {
+	id: Int @primaryKey
+	name: String @indexed
+	products: [Product] @relationship(to: "brandId")
+}
+
+type Product @table @export {
+	id: ID @primaryKey
+	brandId: Int @indexed
+	name: String
+	price: Int @indexed
+}
+```
+
+**Keep every brand; show its cheapest product costing at least 30** (LEFT JOIN behavior — Budget Basics returns with an empty product list):
+
+```
+GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
+```
+
+**Return only qualifying brands; inherit the outer price filter** (INNER JOIN behavior — Budget Basics is removed):
+
+```
+GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+```
+
+**Page through each brand's qualifying products** (offset applies independently per brand):
+
+```
+GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1,2)&select(id,name,price)])
+```
+
+**Bound parent pages with stable sorting**:
+
+```
+GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
+```
+
+**Combine OR filters with child sorting and pagination**:
+
+```
+GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
+```
+
 #### Notes
 
-- Every attribute named in `from` or `to` must exist on the respective table and be annotated with `@indexed` to support join queries.
-- The `to`-only and `from`+`to` forms both require the result field type to be an array (e.g., `[RealityShow]`).
-- The `from`-only form on a non-array attribute produces a many-to-one relationship; on an array attribute it produces many-to-many.
-- Self-referential relationships are supported for hierarchical data within a single table.
+- Index all foreign key fields (e.g., `brandId`, `price`) and outer filter fields to support efficient join queries.
+- Use a unique field as the final sort key (e.g., `sort(price,id)`) to ensure deterministic ordering when values are equal.
+- A nested `limit()` bounds children per parent, not the number of parents. Apply a separate outer `limit()` to bound the parent result set.
+- Nested filters require a table-backed relationship. Filters on plain JSON projections or full-text predicates inside a relationship selection return HTTP 400.
+- Invalid `limit()` bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
+- A condition traversing another relationship qualifies the immediate child only; it does not narrow that child's projected descendants. Place grandchild constraints in the grandchild's own bracket selection.
+- Schemas can define self-referential relationships to enable parent-child hierarchies within a single table.
 
 ### 1.4 Vector Indexing
 
@@ -971,28 +1031,28 @@ export class InternalLog extends Resource {
 
 ### 2.2 Querying REST APIs
 
-Instructions for the agent to filter, sort, select, and paginate records through Harper's URL-based REST query language.
+Instructions for the agent to filter, sort, paginate, and project records through Harper's URL-based query language on REST collection endpoints.
 
 #### When to Use
 
-Apply this rule whenever you need to construct or handle GET requests against Harper collection endpoints that require filtering by attribute value, comparison operators, sorting, field selection, or paginated results. This rule also covers type coercion syntax and relationship joins via dot notation. See [automatic-apis.md](automatic-apis.md) for how REST endpoints are generated from schemas.
+Apply this rule whenever building or modifying code that constructs GET requests against Harper REST collection paths and needs to filter by attribute value, apply comparison operators, sort results, paginate, or select specific properties. See [automatic-apis.md](automatic-apis.md) for how Harper exposes tables as REST endpoints in the first place.
 
 #### How It Works
 
-1. **Filter by attribute**: Add query parameters matching attribute names and values. The queried attribute must be indexed.
+1. **Filter by attribute value**: Add query parameters matching attribute names. The queried attribute must be indexed.
 
    ```
    GET /Product/?category=software
    GET /Product/?category=software&inStock=true
    ```
 
-   To filter for null values:
+   Query for null values with:
 
    ```
    GET /Product/?discount=null
    ```
 
-2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for range and pattern matching.
+2. **Apply FIQL comparison operators**: Use the operators below for range and string comparisons. The attribute must be indexed.
 
    | Operator             | Meaning                                |
    | -------------------- | -------------------------------------- |
@@ -1027,7 +1087,7 @@ Apply this rule whenever you need to construct or handle GET requests against Ha
    GET /Product/?price=gt=100&lt=200
    ```
 
-4. **Apply type conversion**: For FIQL comparators (`==`, `!=`, `=gt=`, etc.), Harper converts values automatically. Use explicit type prefixes to force a specific type.
+4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically or explicitly using type prefixes.
 
    | Syntax                                    | Behavior                                    |
    | ----------------------------------------- | ------------------------------------------- |
@@ -1047,113 +1107,135 @@ Apply this rule whenever you need to construct or handle GET requests against Ha
    GET /Product/?rating=5|featured=true
    ```
 
-6. **Group conditions**: Use parentheses or square brackets to control evaluation order. Prefer square brackets when building queries from user input, since standard URI encoding safely encodes `[` and `]`.
+6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
 
    ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
    GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
    ```
 
-   Build grouped queries in JavaScript:
+   Construct from JavaScript:
 
    ```javascript
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-7. **Select specific properties with `select()`**: Append `select()` as a query function separated by `&`.
+7. **Select specific properties with `select()`**: Include `select()` as a query function to control which properties are returned.
 
-   | Syntax                                 | Returns                                     |
-   | -------------------------------------- | ------------------------------------------- |
-   | `?select(property)`                    | Values of a single property directly        |
-   | `?select(property1,property2)`         | Objects with only the specified properties  |
-   | `?select([property1,property2])`       | Arrays of property values                   |
-   | `?select(property1,)`                  | Objects with a single specified property    |
-   | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties |
+   | Syntax                                 | Returns                                           |
+   | -------------------------------------- | ------------------------------------------------- |
+   | `?select(property)`                    | Values of a single property directly              |
+   | `?select(property1,property2)`         | Objects with only the specified properties        |
+   | `?select([property1,property2])`       | Arrays of property values                         |
+   | `?select(property1,)`                  | Objects with a single specified property          |
+   | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties       |
+   | `?select(id,products[limit(1)])`       | Parents with a constrained relationship selection |
 
    ```
    GET /Product/?category=software&select(name)
    GET /Product/?brand.name=Microsoft&select(name,brand{name})
    ```
 
-8. **Limit results with `limit(end)` or `limit(start,end)`**: Append as a query function.
+8. **Paginate with `limit(end)`**: Return records in a zero-based window. `limit(end)` starts at zero; `limit(start,end)` returns at most `end - start` records.
 
    ```
    GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
    GET /Product/?rating=gt=3&limit(10,30)
    ```
 
-9. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. List multiple properties to break ties in order.
+9. **Sort with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
 
    ```
    GET /Product/?rating=gt=3&sort(+name)
    GET /Product/?sort(+rating,-price)
    ```
 
-10. **Paginate with a total count**: Use `limit(start,end)` for paging and send a `Prefer` request header to receive a total match count.
+10. **Request a total count for pagination**: Send a `Prefer` header on `GET` or `HEAD` requests. Counting requires a bounded `limit()` with page size no larger than 10,000 and window end no larger than 1,000,000.
 
     | `Prefer` value    | Meaning                                  |
     | ----------------- | ---------------------------------------- |
     | `count=exact`     | Exact count of matching records (opt-in) |
-    | `count=estimated` | Fast approximate count                   |
+    | `count=estimated` | Fast approximate estimate                |
 
     ```
     GET /Product/?category=software&limit(0,25)
     Prefer: count=exact
     ```
 
-    The server responds with:
+    Response headers:
 
     | Header               | Example           | Description                                            |
     | -------------------- | ----------------- | ------------------------------------------------------ |
-    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range out of total matching records  |
+    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range returned out of total matching |
     | `Range-Unit`         | `items`           | Unit used by `Content-Range`                           |
-    | `Preference-Applied` | `count=exact`     | Count mode the server applied (`exact` or `estimated`) |
+    | `Preference-Applied` | `count=exact`     | Count mode the server applied                          |
 
-    The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`).
-
-    Enable exact counts in the application's REST configuration:
+    Enable exact counts in REST configuration:
 
     ```yaml
     rest:
       exactCount: true
     ```
 
-    Without this, a `count=exact` request is served as an estimate.
+    Without `exactCount: true`, a `count=exact` request is served as an estimate. The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total is distinct from a request that asked for no count.
 
-11. **Query across relationships using dot syntax**: Define relationships in the schema with `@relationship`, then filter and select across them.
+11. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined with `@relationship` in the schema.
 
     ```
     GET /Product/?brand.name=Microsoft
     GET /Brand/?products.name=Keyboard
+    ```
+
+    Include relationship attributes in the response using `select()`:
+
+    ```
     GET /Product/?brand.name=Microsoft&select(name,brand{name})
     ```
 
-    Filtering on a related attribute produces INNER JOIN behavior. Selecting a relationship without filtering produces LEFT JOIN behavior — the property is omitted if the foreign key is null or references a non-existent record.
+12. **Filter and page nested relationships**: Use square brackets inside `select()` to apply conditions, sort, and pagination to each parent's related records. An outer relationship filter also narrows that relationship's nested results — do not repeat the outer filter inside `[...]`.
 
-12. **Access a specific property by URL**: Append the property name with dot syntax to the record ID.
+    ```
+    GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+    ```
+
+    Nested option reference:
+
+    | Nested option      | Behavior                                                        |
+    | ------------------ | --------------------------------------------------------------- |
+    | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups |
+    | `sort(price)`      | Order eligible children before pagination                       |
+    | `limit(end)`       | Return at most `end` children per parent                        |
+    | `limit(start,end)` | Skip `start` eligible children, return at most `end - start`    |
+    | `select(id,price)` | Project fields from returned children                           |
+
+13. **Access a specific property via URL**: Append the property name with dot syntax to the record id.
 
     ```
     GET /MyTable/123.propertyName
     ```
 
-    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors.
+    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors and take precedence over a property of the same name.
 
 #### Examples
 
-**Range filter with select and sort:**
+##### Range filter with sort and limit
 
 ```
-GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)&sort(+price)
+GET /Product/?category=software&price=gt=100&price=lt=200&sort(+price)&limit(0,25)
 ```
 
-**Paginated request with exact count:**
+##### Select with nested relationship projection
+
+```
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+```
+
+##### Paginated count request
 
 ```
 GET /Product/?category=software&limit(0,25)
 Prefer: count=exact
 ```
-
-Response headers:
 
 ```
 HTTP/1.1 200 OK
@@ -1162,27 +1244,13 @@ Range-Unit: items
 Preference-Applied: count=exact
 ```
 
-**Relationship schema and join query:**
-
-```graphql
-type Product @table @export {
-	id: Long @primaryKey
-	name: String
-	brandId: Long @indexed
-	brand: Brand @relationship(from: "brandId")
-}
-type Brand @table @export {
-	id: Long @primaryKey
-	name: String
-	products: [Product] @relationship(to: "brandId")
-}
-```
+##### Nested relationship filter with OR grouping, sort, and pagination
 
 ```
-GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
 ```
 
-**Many-to-many relationship:**
+##### Many-to-many relationship query
 
 ```graphql
 type Product @table @export {
@@ -1197,20 +1265,24 @@ type Product @table @export {
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-**OR grouping with user-supplied tags:**
+##### Stable paginated parent + child query
 
-```javascript
-let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
+```
+GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
 ```
 
 #### Notes
 
-- The queried attribute must be indexed for basic attribute filtering to execute. For multi-attribute queries, only one attribute needs to be indexed.
-- Null indexing requires indexes created after the feature was introduced. Rebuild existing indexes (remove and re-add) to support `name==null` queries.
-- `limit()` must be a non-negative integer no larger than **10,000**, and the requested window (offset + limit) no larger than **1,000,000**, for count headers to be returned.
-- A `HEAD` request with a `Prefer: count=exact` header returns count headers with no body — it saves bandwidth but still scans the matched set.
-- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers` automatically.
-- Operators `!=` and `=ct=` (contains) do not produce cardinality estimates; the total is reported as `*` when these are used with `count=exact`.
+- Queried attributes must be indexed for filtering to execute. Keep relationship lookup fields and outer filter fields indexed.
+- Null indexing requires indexes created or rebuilt after the feature was introduced; existing indexes must be removed and re-added.
+- `select()` brackets inside a relationship selection (e.g., `select(id,products[limit(1)])`) apply nested query options, not grouping logic.
+- Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN; an outer filter behaves as an INNER JOIN.
+- A nested condition narrows projected children but does not remove a parent from results; only an outer relationship filter removes parents.
+- Invalid nested bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
+- Nested filters require a table-backed relationship. Filters on plain JSON projections or custom non-table resources return HTTP 400.
+- The response status for paginated requests is always `200`; Harper does not use `206 Partial Content`.
+- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
+- Use a unique field as the final sort key (e.g., `sort(name,id)`) to ensure deterministic ordering when values are equal.
 
 ### 2.3 Real-Time Apps with WebSockets and Pub/Sub
 
@@ -1878,11 +1950,11 @@ export class MyTable extends tables.MyTable {
 
 ### 3.3 Programmatic Table Requests
 
-Instructions for the agent to follow when interacting with Harper tables programmatically using the `tables` object.
+Instructions for the agent to interact with Harper tables programmatically using the `tables` object, the Query API, and transactions.
 
 #### When to Use
 
-Apply this rule when writing server-side Harper component code that reads from or writes to tables using the programmatic API — for example, in HTTP handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct queries with `conditions`, `sort`, `select`, pagination, or transactions outside of the REST layer.
+Apply this rule when writing server-side Harper code that reads or writes table data directly — for example, in custom resource methods, background jobs, timers, or SSR entry points. Use it whenever you need to query, filter, sort, paginate, or transactionally update records without going through the REST layer.
 
 #### How It Works
 
@@ -1891,18 +1963,27 @@ Apply this rule when writing server-side Harper component code that reads from o
    ```javascript
    import { tables, transaction } from 'harper';
    const { Product } = tables;
-   // same as: databases.data.Product
+   // equivalent to: databases.data.Product
    ```
 
-   For components in their own directory, run:
+   CommonJS is also supported: `const { tables, Resource } = require('harper');`
+
+   For components in their own directory, link the package first:
 
    ```bash
    npm link harper
    ```
 
-   All installed components have `harper` automatically linked.
+   When bundling for SSR with Vite, keep `harper` external so it resolves to the runtime:
 
-2. **Define your schema with `@table`**: Every type you want to access via `tables` must carry the `@table` directive. Mark queryable fields with `@indexed`.
+   ```javascript
+   // vite.config
+   ssr: {
+   	external: ['harper'];
+   }
+   ```
+
+2. **Define your schema with `@table`**: Every type you want to access via `tables` must carry the `@table` directive. Mark attributes you intend to sort or filter on with `@indexed`.
 
    ```graphql
    type Product @table {
@@ -1912,7 +1993,7 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable.
+3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable; iterate the result with `for await`.
 
    ```javascript
    const query = {
@@ -1923,70 +2004,114 @@ Apply this rule when writing server-side Harper component code that reads from o
    }
    ```
 
-4. **Build `conditions`**: Each condition object supports the following properties:
+4. **Perform basic CRUD operations**: Use `create`, `patch`, and `get` for single-record operations.
+
+   ```javascript
+   const created = await Product.create({ name: 'Shirt', price: 9.5 });
+   await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
+   const record = await Product.get(created.id);
+   ```
+
+5. **Build `conditions` arrays**: Each condition object filters records. Nest conditions for boolean logic.
 
    | Property     | Description                                                                                                                                              |
    | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `attribute`  | Property name, or array for chained/joined properties (e.g. `['brand', 'name']`)                                                                         |
+   | `attribute`  | Property name, or array for chained/joined properties                                                                                                    |
    | `value`      | The value to match                                                                                                                                       |
    | `comparator` | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal` |
    | `conditions` | Nested conditions array                                                                                                                                  |
    | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
 
-5. **Apply `select` to shape results**: Pass an array of property names, a string for a single property, or nested objects for relationships.
-
    ```javascript
-   // Flat select
-   Product.search({ select: ['name', 'price'] });
-
-   // Nested relationship select
-   Book.get({ id: 42, select: ['id', 'title', { name: 'author', select: ['name'] }] });
+   Product.search({
+   	conditions: [
+   		{ attribute: 'price', comparator: 'less_than', value: 100 },
+   		{
+   			operator: 'or',
+   			conditions: [
+   				{ attribute: 'rating', comparator: 'greater_than', value: 4 },
+   				{ attribute: 'featured', value: true },
+   			],
+   		},
+   	],
+   });
    ```
 
-   Special `select` values: `$id`, `$updatedtime`, `$distance`.
+   For relationship traversal, pass an array as `attribute`:
 
-6. **Apply `sort`**: Harper uses an index to provide sort order.
+   ```javascript
+   Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
+   ```
 
-   | Property     | Description                                                |
-   | ------------ | ---------------------------------------------------------- |
-   | `attribute`  | Property name (or array for chained relationship property) |
-   | `descending` | Sort descending if `true` (default: `false`)               |
-   | `next`       | Secondary sort to resolve ties (same structure)            |
-   - If the sort `attribute` is `@indexed`, no condition is required.
-   - If the sort `attribute` is not indexed, at least one entry in `conditions` (on **any** attribute) is required.
-   - Sorting by a non-indexed attribute with zero conditions raises:
-     > `HdbError: <attribute> is not indexed and not combined with any other conditions`
-   - The bare `@primaryKey` is treated as not indexed for sort purposes. To iterate in primary-key order, add an open-ended condition:
+6. **Use `select` to shape returned records**: Pass an array of property names, a string for a single property, or nested objects for relationships.
 
-     ```javascript
-     Product.search({
-     	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
-     	sort: { attribute: 'id' },
-     });
-     ```
+   ```javascript
+   // Array of fields
+   Product.search({ select: ['name', 'price'] });
 
-   - Pass `allowFullScan: true` to permit an unconditional ordered scan, or omit `sort` entirely to iterate without an index requirement.
+   // Whole related record
+   const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
 
-7. **Paginate with `limit` and `offset`**:
+   // Partial related record
+   const book = await Book.get({
+   	id: 42,
+   	select: ['id', 'title', { name: 'author', select: ['name'] }],
+   });
+
+   // Deep nesting
+   // select: ['id', 'name', { name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] }]
+   ```
+
+   Special properties: `$id`, `$updatedtime`, `$distance`.
+
+7. **Paginate with `limit` and `offset`**: `limit` caps the number of records returned; `offset` skips records.
 
    ```javascript
    Product.search({ conditions: [...], limit: 20, offset: 40 });
    ```
 
-8. **Debug with `explain` and `enforceExecutionOrder`**:
-   - `explain: true` — returns conditions reordered as Harper will execute them.
-   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling Harper's automatic re-ordering.
+8. **Sort results with `sort`**: Provide `attribute`, optional `descending`, and optional `next` for tie-breaking.
 
-9. **Use `addTo` for concurrent-safe increments**: `addTo(property, value)` uses CRDT incrementation, safe across threads and nodes.
+   | Property     | Description                                  |
+   | ------------ | -------------------------------------------- |
+   | `attribute`  | Property name or array for chained property  |
+   | `descending` | Sort descending if `true` (default: `false`) |
+   | `next`       | Secondary sort (same structure)              |
+
+   Harper uses an index for sort order. The sort `attribute` must be `@indexed`, **or** at least one `conditions` entry must be present. Sorting by a non-indexed attribute with zero conditions raises:
+
+   > `HdbError: <attribute> is not indexed and not combined with any other conditions`
+
+   To iterate a whole table in primary-key order, add an open-ended condition:
 
    ```javascript
-   static async post(target, data) {
-     const record = await this.update(target.id);
-     record.addTo('quantity', -1);
-   }
+   Product.search({
+   	conditions: [{ attribute: 'id', comparator: 'greater_than', value: '' }],
+   	sort: { attribute: 'id' },
+   });
    ```
 
-10. **Wrap background work in `transaction()`**: Harper auto-starts transactions for HTTP handlers. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
+   Pass `allowFullScan: true` to permit an unconditional ordered scan. Omit `sort` entirely to iterate without an index requirement.
+
+9. **Debug with `explain` and `enforceExecutionOrder`**: Set `explain: true` to receive conditions reordered as Harper will execute them. Set `enforceExecutionOrder: true` to force conditions to run in the order supplied, disabling automatic re-ordering.
+
+10. **Mutate records with `update` and `addTo`**: `update` returns a mutable Resource instance; property assignments are written on commit. Use `addTo` for CRDT-safe numeric increments across threads and nodes.
+
+    ```javascript
+    const product = await Product.update(32);
+    product.status = 'active';
+    product.subtractFrom('quantity', 1);
+    product.save();
+    ```
+
+    ```javascript
+    static async post(target, data) {
+      const record = await this.update(target.id);
+      record.addTo('quantity', -1); // decrement safely across nodes
+    }
+    ```
+
+11. **Wrap background work in `transaction()`**: Harper auto-starts transactions for HTTP handlers. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
 
     ```javascript
     await transaction(async (txn) => {
@@ -1996,54 +2121,42 @@ Apply this rule when writing server-side Harper component code that reads from o
     });
     ```
 
+    - Always `await` the `transaction()` call and `catch` it.
+    - Guard against overlap when a job can outlast its interval (see example below).
+    - If called with a context that already has an active transaction, `transaction()` reuses it — safe to call defensively.
+
     The `txn` object exposes:
 
     | Member                | Type            | Description                                            |
     | --------------------- | --------------- | ------------------------------------------------------ |
     | `commit()`            | `() => Promise` | Commits the current transaction                        |
-    | `abort()`             | `() => void`    | Aborts the transaction and resets it                   |
+    | `abort()`             | `() => void`    | Aborts and resets the transaction                      |
     | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
-    | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
+    | `timestamp`           | `number`        | Timestamp for the current transaction                  |
 
-    On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
-
-11. **Understand atomicity**: Transactions span a single database. All tables within the same database share one transactional context — reads return a consistent snapshot and writes across multiple tables commit atomically. Cross-database operations get separate transactions with no cross-database atomicity guarantee.
-
-12. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
-
-    ```javascript
-    // vite.config
-    ssr: {
-    	external: ['harper'];
-    }
-    ```
+12. **Understand atomicity boundaries**: All tables within the same database share one transactional context — reads are consistent and writes are committed atomically. Tables in different databases each get their own transaction; there is no cross-database atomicity guarantee.
 
 #### Examples
 
-**Full CRUD flow:**
+##### Basic CRUD and search
 
 ```javascript
 import { tables } from 'harper';
 const { Product } = tables;
 
-// Create
 const created = await Product.create({ name: 'Shirt', price: 9.5 });
-
-// Patch
 await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
-
-// Get by primary key
 const record = await Product.get(created.id);
 
-// Search with conditions
-for await (const record of Product.search({
+const query = {
 	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
-})) {
-	// process record
+};
+for await (const record of Product.search(query)) {
+	console.log(record);
 }
 ```
 
-**Nested conditions with `or`:**
+##### Nested conditions with `select`, `sort`, `limit`, and `offset`
 
 ```javascript
 Product.search({
@@ -2057,16 +2170,14 @@ Product.search({
 			],
 		},
 	],
+	select: ['name', 'price'],
+	sort: { attribute: 'price', descending: true },
+	limit: 10,
+	offset: 0,
 });
 ```
 
-**Chained attribute reference (join):**
-
-```javascript
-Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
-```
-
-**Background job with `transaction()`:**
+##### Background job with `transaction()`
 
 ```javascript
 import { isMainThread } from 'node:worker_threads';
@@ -2076,7 +2187,7 @@ const { MyTable } = tables;
 if (isMainThread) {
 	let running = false;
 	setInterval(async () => {
-		if (running) return;
+		if (running) return; // the previous run has not committed yet
 		running = true;
 		try {
 			let data = await (await fetch('https://example.com/data')).json();
@@ -2094,7 +2205,7 @@ if (isMainThread) {
 }
 ```
 
-**SSR with Harper data:**
+##### SSR with Vite
 
 ```typescript
 import { tables } from 'harper';
@@ -2105,14 +2216,22 @@ export async function render(url: string): Promise<string> {
 }
 ```
 
+Keep `harper` external in `vite.config`:
+
+```javascript
+// vite.config
+ssr: {
+	external: ['harper'];
+}
+```
+
 #### Notes
 
-- `tables` and `databases` calls run in a trusted server-side context and do **not** automatically apply the target table's role permissions.
-- Programmatic `update`, `patch`, and `delete` calls operate directly on stored data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
-- If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — making it safe to call defensively.
-- Always `await` the `transaction()` call and `catch` errors when outside a request context; an unawaited call means a failed write is never observed.
-- Guard against timer overlap: if a job can outlast its interval, use a `running` flag to skip a tick rather than opening two transactions over the same rows.
-- CommonJS is also supported: `const { tables, Resource } = require('harper');`
+- `tables` and `databases` run in a trusted server-side context and do **not** automatically apply the target table's role permissions. Apply your own authorization controls.
+- Programmatic `update`, `patch`, and `delete` operate on live data and are not easily reversible. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- Selecting a relationship without an outer condition behaves as a **LEFT JOIN**; a top-level `conditions` entry on a related attribute behaves as an **INNER JOIN**.
+- `resetReadSnapshot()` on the `txn` object refreshes the read snapshot to the latest committed state mid-transaction.
+- For `atomicity`: all tables in the same database commit atomically together; cross-database operations have no atomicity guarantee.
 
 ### 3.4 TypeScript Type Stripping in Harper
 

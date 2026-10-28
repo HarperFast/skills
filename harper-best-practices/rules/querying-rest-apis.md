@@ -5,34 +5,34 @@ metadata:
   mode: generate
   sources:
     - reference/v5/rest/querying.md
-  sourceCommit: 2cfb81318f17e0aca2d600109e6ad813d2d0443e
-  inputHash: 25b9daabc0a28fd5
+  sourceCommit: bea4e62cb7efd809bb67e00cbda01a410c1177b1
+  inputHash: 0b9da6602db6e2ba
 ---
 
 # Querying REST APIs
 
-Instructions for the agent to filter, sort, select, and paginate records through Harper's URL-based REST query language.
+Instructions for the agent to filter, sort, paginate, and project records through Harper's URL-based query language on REST collection endpoints.
 
 ## When to Use
 
-Apply this rule whenever you need to construct or handle GET requests against Harper collection endpoints that require filtering by attribute value, comparison operators, sorting, field selection, or paginated results. This rule also covers type coercion syntax and relationship joins via dot notation. See [automatic-apis.md](automatic-apis.md) for how REST endpoints are generated from schemas.
+Apply this rule whenever building or modifying code that constructs GET requests against Harper REST collection paths and needs to filter by attribute value, apply comparison operators, sort results, paginate, or select specific properties. See [automatic-apis.md](automatic-apis.md) for how Harper exposes tables as REST endpoints in the first place.
 
 ## How It Works
 
-1. **Filter by attribute**: Add query parameters matching attribute names and values. The queried attribute must be indexed.
+1. **Filter by attribute value**: Add query parameters matching attribute names. The queried attribute must be indexed.
 
    ```
    GET /Product/?category=software
    GET /Product/?category=software&inStock=true
    ```
 
-   To filter for null values:
+   Query for null values with:
 
    ```
    GET /Product/?discount=null
    ```
 
-2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for range and pattern matching.
+2. **Apply FIQL comparison operators**: Use the operators below for range and string comparisons. The attribute must be indexed.
 
    | Operator             | Meaning                                |
    | -------------------- | -------------------------------------- |
@@ -67,7 +67,7 @@ Apply this rule whenever you need to construct or handle GET requests against Ha
    GET /Product/?price=gt=100&lt=200
    ```
 
-4. **Apply type conversion**: For FIQL comparators (`==`, `!=`, `=gt=`, etc.), Harper converts values automatically. Use explicit type prefixes to force a specific type.
+4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically or explicitly using type prefixes.
 
    | Syntax                                    | Behavior                                    |
    | ----------------------------------------- | ------------------------------------------- |
@@ -87,113 +87,135 @@ Apply this rule whenever you need to construct or handle GET requests against Ha
    GET /Product/?rating=5|featured=true
    ```
 
-6. **Group conditions**: Use parentheses or square brackets to control evaluation order. Prefer square brackets when building queries from user input, since standard URI encoding safely encodes `[` and `]`.
+6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
 
    ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
    GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
    ```
 
-   Build grouped queries in JavaScript:
+   Construct from JavaScript:
 
    ```javascript
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-7. **Select specific properties with `select()`**: Append `select()` as a query function separated by `&`.
+7. **Select specific properties with `select()`**: Include `select()` as a query function to control which properties are returned.
 
-   | Syntax                                 | Returns                                     |
-   | -------------------------------------- | ------------------------------------------- |
-   | `?select(property)`                    | Values of a single property directly        |
-   | `?select(property1,property2)`         | Objects with only the specified properties  |
-   | `?select([property1,property2])`       | Arrays of property values                   |
-   | `?select(property1,)`                  | Objects with a single specified property    |
-   | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties |
+   | Syntax                                 | Returns                                           |
+   | -------------------------------------- | ------------------------------------------------- |
+   | `?select(property)`                    | Values of a single property directly              |
+   | `?select(property1,property2)`         | Objects with only the specified properties        |
+   | `?select([property1,property2])`       | Arrays of property values                         |
+   | `?select(property1,)`                  | Objects with a single specified property          |
+   | `?select(property{subProp1,subProp2})` | Nested objects with specific sub-properties       |
+   | `?select(id,products[limit(1)])`       | Parents with a constrained relationship selection |
 
    ```
    GET /Product/?category=software&select(name)
    GET /Product/?brand.name=Microsoft&select(name,brand{name})
    ```
 
-8. **Limit results with `limit(end)` or `limit(start,end)`**: Append as a query function.
+8. **Paginate with `limit(end)`**: Return records in a zero-based window. `limit(end)` starts at zero; `limit(start,end)` returns at most `end - start` records.
 
    ```
    GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
    GET /Product/?rating=gt=3&limit(10,30)
    ```
 
-9. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. List multiple properties to break ties in order.
+9. **Sort with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
 
    ```
    GET /Product/?rating=gt=3&sort(+name)
    GET /Product/?sort(+rating,-price)
    ```
 
-10. **Paginate with a total count**: Use `limit(start,end)` for paging and send a `Prefer` request header to receive a total match count.
+10. **Request a total count for pagination**: Send a `Prefer` header on `GET` or `HEAD` requests. Counting requires a bounded `limit()` with page size no larger than 10,000 and window end no larger than 1,000,000.
 
     | `Prefer` value    | Meaning                                  |
     | ----------------- | ---------------------------------------- |
     | `count=exact`     | Exact count of matching records (opt-in) |
-    | `count=estimated` | Fast approximate count                   |
+    | `count=estimated` | Fast approximate estimate                |
 
     ```
     GET /Product/?category=software&limit(0,25)
     Prefer: count=exact
     ```
 
-    The server responds with:
+    Response headers:
 
     | Header               | Example           | Description                                            |
     | -------------------- | ----------------- | ------------------------------------------------------ |
-    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range out of total matching records  |
+    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range returned out of total matching |
     | `Range-Unit`         | `items`           | Unit used by `Content-Range`                           |
-    | `Preference-Applied` | `count=exact`     | Count mode the server applied (`exact` or `estimated`) |
+    | `Preference-Applied` | `count=exact`     | Count mode the server applied                          |
 
-    The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`).
-
-    Enable exact counts in the application's REST configuration:
+    Enable exact counts in REST configuration:
 
     ```yaml
     rest:
       exactCount: true
     ```
 
-    Without this, a `count=exact` request is served as an estimate.
+    Without `exactCount: true`, a `count=exact` request is served as an estimate. The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total is distinct from a request that asked for no count.
 
-11. **Query across relationships using dot syntax**: Define relationships in the schema with `@relationship`, then filter and select across them.
+11. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined with `@relationship` in the schema.
 
     ```
     GET /Product/?brand.name=Microsoft
     GET /Brand/?products.name=Keyboard
+    ```
+
+    Include relationship attributes in the response using `select()`:
+
+    ```
     GET /Product/?brand.name=Microsoft&select(name,brand{name})
     ```
 
-    Filtering on a related attribute produces INNER JOIN behavior. Selecting a relationship without filtering produces LEFT JOIN behavior — the property is omitted if the foreign key is null or references a non-existent record.
+12. **Filter and page nested relationships**: Use square brackets inside `select()` to apply conditions, sort, and pagination to each parent's related records. An outer relationship filter also narrows that relationship's nested results — do not repeat the outer filter inside `[...]`.
 
-12. **Access a specific property by URL**: Append the property name with dot syntax to the record ID.
+    ```
+    GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+    ```
+
+    Nested option reference:
+
+    | Nested option      | Behavior                                                        |
+    | ------------------ | --------------------------------------------------------------- |
+    | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups |
+    | `sort(price)`      | Order eligible children before pagination                       |
+    | `limit(end)`       | Return at most `end` children per parent                        |
+    | `limit(start,end)` | Skip `start` eligible children, return at most `end - start`    |
+    | `select(id,price)` | Project fields from returned children                           |
+
+13. **Access a specific property via URL**: Append the property name with dot syntax to the record id.
 
     ```
     GET /MyTable/123.propertyName
     ```
 
-    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors.
+    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors and take precedence over a property of the same name.
 
 ## Examples
 
-**Range filter with select and sort:**
+### Range filter with sort and limit
 
 ```
-GET /Product/?category=software&price=gt=100&price=lt=200&select(name,price)&sort(+price)
+GET /Product/?category=software&price=gt=100&price=lt=200&sort(+price)&limit(0,25)
 ```
 
-**Paginated request with exact count:**
+### Select with nested relationship projection
+
+```
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+```
+
+### Paginated count request
 
 ```
 GET /Product/?category=software&limit(0,25)
 Prefer: count=exact
 ```
-
-Response headers:
 
 ```
 HTTP/1.1 200 OK
@@ -202,27 +224,13 @@ Range-Unit: items
 Preference-Applied: count=exact
 ```
 
-**Relationship schema and join query:**
-
-```graphql
-type Product @table @export {
-	id: Long @primaryKey
-	name: String
-	brandId: Long @indexed
-	brand: Brand @relationship(from: "brandId")
-}
-type Brand @table @export {
-	id: Long @primaryKey
-	name: String
-	products: [Product] @relationship(to: "brandId")
-}
-```
+### Nested relationship filter with OR grouping, sort, and pagination
 
 ```
-GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
 ```
 
-**Many-to-many relationship:**
+### Many-to-many relationship query
 
 ```graphql
 type Product @table @export {
@@ -237,17 +245,21 @@ type Product @table @export {
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-**OR grouping with user-supplied tags:**
+### Stable paginated parent + child query
 
-```javascript
-let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
+```
+GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
 ```
 
 ## Notes
 
-- The queried attribute must be indexed for basic attribute filtering to execute. For multi-attribute queries, only one attribute needs to be indexed.
-- Null indexing requires indexes created after the feature was introduced. Rebuild existing indexes (remove and re-add) to support `name==null` queries.
-- `limit()` must be a non-negative integer no larger than **10,000**, and the requested window (offset + limit) no larger than **1,000,000**, for count headers to be returned.
-- A `HEAD` request with a `Prefer: count=exact` header returns count headers with no body — it saves bandwidth but still scans the matched set.
-- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers` automatically.
-- Operators `!=` and `=ct=` (contains) do not produce cardinality estimates; the total is reported as `*` when these are used with `count=exact`.
+- Queried attributes must be indexed for filtering to execute. Keep relationship lookup fields and outer filter fields indexed.
+- Null indexing requires indexes created or rebuilt after the feature was introduced; existing indexes must be removed and re-added.
+- `select()` brackets inside a relationship selection (e.g., `select(id,products[limit(1)])`) apply nested query options, not grouping logic.
+- Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN; an outer filter behaves as an INNER JOIN.
+- A nested condition narrows projected children but does not remove a parent from results; only an outer relationship filter removes parents.
+- Invalid nested bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
+- Nested filters require a table-backed relationship. Filters on plain JSON projections or custom non-table resources return HTTP 400.
+- The response status for paginated requests is always `200`; Harper does not use `206 Partial Content`.
+- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
+- Use a unique field as the final sort key (e.g., `sort(name,id)`) to ensure deterministic ordering when values are equal.

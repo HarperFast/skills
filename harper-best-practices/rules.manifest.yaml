@@ -138,6 +138,16 @@ rules:
     cross_links:
       - using-blob-datatype
 
+  - rule: concurrency-and-consistency
+    description: Use Harper's transactions, atomic operations, and record locks before adding optimistic concurrency, client coordination, or single-origin routing.
+    category: schema
+    priority: 1
+    order: 7
+    mode: synthesized
+    cross_links:
+      - programmatic-table-requests
+      - extending-tables
+
   # ===========================================================================
   # API & Communication (priority 2 — HIGH)
   # ===========================================================================

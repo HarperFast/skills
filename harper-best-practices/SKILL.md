@@ -1,7 +1,7 @@
 ---
 name: harper-best-practices
 description: Best practices for building Harper applications, covering schema definition,
-  automatic APIs, authentication, custom resources, and data handling.
+  automatic APIs, authentication, custom resources, data handling, and concurrency.
   Triggers on tasks involving Harper database design, API implementation,
   and deployment.
 license: Apache-2.0
@@ -22,10 +22,13 @@ Reference these guidelines when:
 - Implementing or extending REST/WebSocket APIs
 - Handling authentication and session management
 - Working with custom resources and extensions
+- Handling concurrent writes, record locks, optimistic concurrency, or consistency across requests and nodes
 - Optimizing data storage and retrieval (Blobs, Vector Indexing)
 - Deploying applications to Harper Fabric
 
 ## How It Works
+
+Before designing write coordination, read [Harper's concurrency controls](rules/concurrency-and-consistency.md). Start with Harper's transactions, atomic operations, and record locks before proposing client queues, version fields, retry loops, external locks, or single-origin routing.
 
 1. Review the requirements for the task (schema design, API needs, or infrastructure setup).
 2. Consult the relevant category under "Rule Categories by Priority" to understand the impact of your decisions.
@@ -59,6 +62,7 @@ See the concrete examples embedded in each rule subsection below (GraphQL schema
 - `vector-indexing` — How to enable and query vector indexes for similarity search in Harper.
 - `using-blob-datatype` — How to use the Blob data type for efficient binary storage in Harper.
 - `handling-binary-data` — How to store and serve binary data like images or audio in Harper.
+- `concurrency-and-consistency` — Use Harper's transactions, atomic operations, and record locks before adding optimistic concurrency, client coordination, or single-origin routing.
 
 ### 2. API & Communication (HIGH)
 

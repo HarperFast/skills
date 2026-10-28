@@ -40,17 +40,17 @@ type ExamplePerson @table @export {
 }
 ```
 
-### 1.2 Harper Schema Design and GraphQL Tooling
+### 1.2 Schema Design and GraphQL Tooling
 
-Instructions for the agent to follow when designing Harper database schemas using GraphQL type definitions, core directives, and tooling configuration.
+Instructions for the agent to follow when designing Harper schemas, applying core directives, and configuring GraphQL tooling.
 
 #### When to Use
 
-Apply this rule when creating or modifying Harper schema files, configuring the `graphqlSchema` plugin in `config.yaml`, or deciding which directives to apply to tables and fields. Use it whenever you need to define tables, primary keys, indexes, or export endpoints.
+Apply this rule when creating or modifying Harper schema files, configuring the `graphqlSchema` plugin in `config.yaml`, or deciding which directives to apply to tables and fields. Use it whenever a task involves defining tables, primary keys, indexes, or export behavior.
 
 #### How It Works
 
-1. **Create a schema file** using standard GraphQL type definitions with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
+1. **Define the schema file** using standard GraphQL type definitions with Harper-specific directives. Save it as a `.graphql` file (e.g., `schema.graphql`).
 
 2. **Register the schema** in the component's `config.yaml` using the `graphqlSchema` plugin:
 
@@ -61,7 +61,7 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
 
    Both plugins and applications can specify schemas.
 
-3. **Mark types as tables** with `@table`. The type name becomes the table name by default.
+3. **Mark tables with `@table`** to declare a GraphQL type as a Harper database table. The type name becomes the table name by default.
 
    ```graphql
    type Dog @table {
@@ -72,13 +72,38 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    }
    ```
 
-4. **Designate a primary key** with `@primaryKey` on exactly one field per type. Primary keys must be unique; duplicate inserts are rejected. If no primary key is provided on insert, Harper auto-generates one:
-   - `String` or `ID` → UUID string
-   - `Int`, `Long`, or `Any` → auto-incrementing integer
+   Pass optional arguments to `@table` to control behavior:
+
+   | Argument                 | Type      | Default                          | Description                                                                    |
+   | ------------------------ | --------- | -------------------------------- | ------------------------------------------------------------------------------ |
+   | `table`                  | `String`  | type name                        | Override the table name                                                        |
+   | `database`               | `String`  | `"data"`                         | Database to place the table in                                                 |
+   | `expiration`             | `Int`     | —                                | Seconds until a record goes stale                                              |
+   | `eviction`               | `Int`     | `0`                              | Additional seconds after `expiration` before physical removal                  |
+   | `scanInterval`           | `Int`     | `(expiration + eviction) / 4`    | Seconds between eviction scans                                                 |
+   | `replicate`              | `Boolean` | `true`                           | Enable replication of this table                                               |
+   | `replicaExpiration`      | `Float`   | `3600`                           | Seconds a replica fetched from another node is kept locally                    |
+   | `replicaRefreshFraction` | `Float`   | `0.5`                            | Fraction of `replicaExpiration` after which a read renews the replica lifetime |
+   | `audit`                  | `Boolean` | per `logging.auditLog`           | Enable the table's transaction log                                             |
+   | `cacheControl`           | `String`  | —                                | `Cache-Control` header on anonymous GET/HEAD 200/304 responses                 |
+   | `randomAccessFields`     | `Boolean` | per `storage.randomAccessFields` | Pin this table's record encoding                                               |
+
+4. **Designate a primary key with `@primaryKey`** on exactly one field per table. Primary keys must be unique; duplicate inserts are rejected.
+
+   ```graphql
+   type Product @table {
+   	id: Long @primaryKey
+   	name: String
+   }
+   ```
+
+   If no primary key is provided on insert, Harper auto-generates one:
+   - **UUID string** — when type is `String` or `ID`
+   - **Auto-incrementing integer** — when type is `Int`, `Long`, or `Any`
 
    Use `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
 
-5. **Add secondary indexes** with `@indexed` on any field you need to filter by in REST queries, SQL, or NoSQL operations.
+5. **Index fields with `@indexed`** to enable fast querying, filtering via REST, SQL, or NoSQL operations.
 
    ```graphql
    type Breed @table {
@@ -89,7 +114,7 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
 
    If the field value is an array, each element is individually indexed. Null values are indexed by default.
 
-6. **Expose tables as REST/MQTT endpoints** with `@export`. The optional `name` parameter sets the URL path segment; without it, the type name is used.
+6. **Expose tables externally with `@export`** to make them accessible via REST, MQTT, and other interfaces.
 
    ```graphql
    type MyTable @table @export(name: "my-table") {
@@ -97,29 +122,19 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    }
    ```
 
-   `@export` alone does not serve HTTP traffic — REST must also be enabled for the application via `rest: true` in `config.yaml` or Harper's built-in default.
+   The optional `name` parameter sets the URL path segment. Without `name`, the type name is used. `@export` alone does not serve HTTP traffic — REST must also be enabled for the application via `rest: true` in `config.yaml` or Harper's built-in default.
 
-7. **Configure `@table` arguments** as needed. All arguments are optional:
+   > `@export` is a routing directive, not access control. Omitting it returns 404 to callers but does not protect the data — the table remains accessible through the Operations API and SQL. Use RBAC role grants and `attribute_permissions` to restrict data access.
 
-   | Argument                 | Type      | Default                       | Description                                                                    |
-   | ------------------------ | --------- | ----------------------------- | ------------------------------------------------------------------------------ |
-   | `table`                  | `String`  | type name                     | Override the table name                                                        |
-   | `database`               | `String`  | `"data"`                      | Database to place the table in                                                 |
-   | `expiration`             | `Int`     | —                             | Seconds until a record goes stale                                              |
-   | `eviction`               | `Int`     | `0`                           | Additional seconds after `expiration` before physical removal                  |
-   | `scanInterval`           | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                                 |
-   | `replicate`              | `Boolean` | `true`                        | Enable replication of this table                                               |
-   | `replicaExpiration`      | `Float`   | `3600`                        | Seconds a replica fetched from another node is kept locally                    |
-   | `replicaRefreshFraction` | `Float`   | `0.5`                         | Fraction of `replicaExpiration` after which a read renews the replica lifetime |
-   | `cacheControl`           | `String`  | —                             | `Cache-Control` header value for anonymous GET/HEAD 200/304 responses          |
-   | `randomAccessFields`     | `Boolean` | `storage.randomAccessFields`  | Pin this table's record encoding                                               |
+7. **Apply additional type directives** as needed:
+   - `@sealed` — prevents records from including properties beyond those declared in the schema.
+   - `@hidden` — suppresses the type from MCP tool descriptors and the OpenAPI document. Does not restrict data access.
 
-8. **Apply additional field directives** where needed:
-   - `@createdTime` — auto-assigns Unix epoch milliseconds on record creation
-   - `@updatedTime` — auto-assigns Unix epoch milliseconds on each update
-   - `@expiresAt` — marks a field as the record's absolute expiration timestamp (Unix epoch milliseconds); authoritative over the table-level `expiration` default
-   - `@hidden` — suppresses the field from MCP tool descriptors and the OpenAPI document (not an access-control mechanism)
-   - `@sealed` (type directive) — prevents records from including properties beyond those declared in the type
+8. **Apply additional field directives** as needed:
+   - `@createdTime` — auto-assigns a Unix epoch millisecond timestamp on record creation.
+   - `@updatedTime` — auto-assigns a Unix epoch millisecond timestamp on each update.
+   - `@expiresAt` — marks a field as the record's absolute expiration time (Unix epoch milliseconds); overrides the table-level `expiration` default.
+   - `@hidden` (field) — suppresses the field from generated specs and MCP tool schemas; does not restrict data access.
 
 9. **Use `@embed`** to automatically compute an embedding vector for an attribute whenever the source field is written (requires `source` and `model` arguments; field type must be `[Float]`):
    ```graphql
@@ -129,11 +144,11 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    	embedding: [Float] @embed(source: "text", model: "default")
    }
    ```
-   The attribute is automatically indexed with an HNSW vector index and is immediately searchable by similarity. A failure to compute the embedding fails the write.
+   The attribute is automatically indexed with an HNSW vector index and is immediately searchable by similarity.
 
 #### Examples
 
-**Minimal two-table schema:**
+**Minimal schema with two tables:**
 
 ```graphql
 type Dog @table {
@@ -149,12 +164,13 @@ type Breed @table {
 }
 ```
 
-**Override table name and database:**
+**Table with overridden name and database:**
 
 ```graphql
-type Product @table(table: "products", database: "commerce") {
+type Product @table(table: "products", database: "commerce") @export {
 	id: Long @primaryKey
 	name: String
+	category: String @indexed
 	price: Float @indexed
 }
 ```
@@ -169,7 +185,7 @@ type WeatherCache @table(expiration: 300, eviction: 3300, scanInterval: 600) {
 }
 ```
 
-**Exported table with public cache control:**
+**Table with public cache-control for CDN caching:**
 
 ```graphql
 type Product @table(cacheControl: "public, max-age=60") @export {
@@ -179,7 +195,7 @@ type Product @table(cacheControl: "public, max-age=60") @export {
 }
 ```
 
-**Replica configuration for sharded tables:**
+**Table with replica settings for sharded data:**
 
 ```graphql
 # Keep fetched records for a day; a read after six hours renews them
@@ -189,7 +205,7 @@ type Order @table(replicaExpiration: 86400, replicaRefreshFraction: 0.25) {
 }
 ```
 
-**Sealed type with timestamps:**
+**Sealed table with timestamps:**
 
 ```graphql
 type StrictRecord @table @sealed {
@@ -200,7 +216,7 @@ type StrictRecord @table @sealed {
 }
 ```
 
-**Per-record expiration with `@expiresAt`:**
+**Session table with per-record expiration:**
 
 ```graphql
 type Session @table {
@@ -210,28 +226,22 @@ type Session @table {
 }
 ```
 
-**Random-access field encoding pinned at table creation:**
+**`config.yaml` registration:**
 
-```graphql
-type Reading @table(randomAccessFields: true) {
-	id: ID @primaryKey
-	sensorId: String @indexed
-	celsius: Float
-	recordedAt: Int
-}
+```yaml
+graphqlSchema:
+  files: 'schema.graphql'
 ```
 
 #### Notes
 
 - Schemas are flexible by default — records may include additional properties beyond those declared. Use `@sealed` to prevent this.
-- Use unique `database` names in plugins and applications to avoid table naming collisions, since all tables default to the `"data"` database.
+- When designing plugins or applications, use unique `database` names in `@table` to avoid table naming collisions, since all tables default to the `data` database.
 - Replication is enabled by default. Disabling replication (`replicate: false`) and re-enabling it later will not catch up on writes made while replication was disabled.
-- `@export` is a routing directive, not access control. Omitting it returns 404 to callers but does not protect the data from the Operations API or SQL. Use RBAC and role permissions for actual access control.
-- `@hidden` (on types or fields) is a metadata-visibility directive only — it suppresses entries from MCP tool descriptors and OpenAPI documents but does not restrict data access. Use `attribute_permissions` on roles for field-level access control.
-- `cacheControl` emits the header only on anonymous (unauthenticated) GET/HEAD `200`/`304` responses. Authenticated responses receive `Cache-Control: private, no-cache` regardless of the declaration. The header is never emitted on `401` responses.
-- `eviction` removes non-indexed record data but does not remove a record from its secondary indexes. Indexes remain functional for evicted records; Harper fetches the full record on demand when a query matches.
-- `scanInterval` is clock-aligned to the server's local timezone, not startup-aligned. The eviction schedule is deterministic across restarts.
-- A full-record `put` that omits an `@expiresAt` field clears it. A `patch` of other fields preserves it — session-renewal writes must re-include `expiresAt`.
+- `@hidden` (type or field) is a metadata-visibility directive only. It suppresses types or fields from generated API specs and MCP tool schemas but does not restrict data access. Use role grants and `attribute_permissions` for access control.
+- The `cacheControl` argument emits headers only on anonymous (unauthenticated) GET/HEAD 200/304 responses. Authenticated responses receive `Cache-Control: private, no-cache` regardless of the declaration. The value is never emitted on 401 responses.
+- `@expiresAt` takes an absolute Unix epoch millisecond timestamp, not a duration. A full-record `put` that omits the field clears it; a `patch` preserves it.
+- `randomAccessFields` on `@table` pins the table's encoding at creation time. Editing the argument later does not repin an existing table.
 
 ### 1.3 Defining Relationships Between Tables in Harper
 
@@ -1029,30 +1039,25 @@ export class InternalLog extends Resource {
 - Server-Sent Events subscriptions are served on the same paths, negotiated via `Accept: text/event-stream`; they are not affected by the `webSocket` option.
 - See [querying-rest-apis.md](querying-rest-apis.md) for full query syntax on collection endpoints and [real-time-apps.md](real-time-apps.md) for real-time subscription patterns.
 
-### 2.2 Querying REST APIs
+### 2.2 Querying Harper REST APIs
 
-Instructions for the agent to filter, sort, paginate, and project records through Harper's URL-based query language on REST collection endpoints.
+Instructions for the agent to filter, sort, select, and paginate records using Harper's URL-based query language on REST collection endpoints.
 
 #### When to Use
 
-Apply this rule whenever building or modifying code that constructs GET requests against Harper REST collection paths and needs to filter by attribute value, apply comparison operators, sort results, paginate, or select specific properties. See [automatic-apis.md](automatic-apis.md) for how Harper exposes tables as REST endpoints in the first place.
+Apply this rule whenever building or modifying REST requests against Harper collection paths that need attribute filtering, comparison operators, sorting, field selection, pagination, or relationship joins. This rule covers all query parameter construction for Harper's automatic REST APIs (see [automatic-apis.md](automatic-apis.md)).
 
 #### How It Works
 
-1. **Filter by attribute value**: Add query parameters matching attribute names. The queried attribute must be indexed.
+1. **Filter by attribute**: Add query parameters matching attribute name to value. The queried attribute must be indexed.
 
    ```
    GET /Product/?category=software
    GET /Product/?category=software&inStock=true
-   ```
-
-   Query for null values with:
-
-   ```
    GET /Product/?discount=null
    ```
 
-2. **Apply FIQL comparison operators**: Use the operators below for range and string comparisons. The attribute must be indexed.
+2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for range and string comparisons.
 
    | Operator             | Meaning                                |
    | -------------------- | -------------------------------------- |
@@ -1073,21 +1078,18 @@ Apply this rule whenever building or modifying code that constructs GET requests
    GET /Product/?price=le=20
    GET /Product/?name==Keyboard*
    GET /Product/?category=software&price=gt=100&price=lt=200
-   ```
-
-   For date fields, URL-encode colons as `%3A`:
-
-   ```
    GET /Product/?listDate=gt=2017-03-08T09%3A30%3A00.000Z
    ```
 
-3. **Chain conditions for range queries**: Omit the attribute name on the second condition to apply it to the same attribute. Only `gt`/`ge` combined with `lt`/`le` is supported.
+3. **Chain conditions for range queries**: Omit the attribute name on the second condition to apply it to the same attribute.
 
    ```
    GET /Product/?price=gt=100&lt=200
    ```
 
-4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically or explicitly using type prefixes.
+   Chaining supports `gt`/`ge` combined with `lt`/`le` only.
+
+4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically. Use explicit type prefixes when needed.
 
    | Syntax                                    | Behavior                                    |
    | ----------------------------------------- | ------------------------------------------- |
@@ -1107,7 +1109,7 @@ Apply this rule whenever building or modifying code that constructs GET requests
    GET /Product/?rating=5|featured=true
    ```
 
-6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input, since standard URI encoding safely encodes `[` and `]`.
+6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing queries from user input.
 
    ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
@@ -1120,7 +1122,7 @@ Apply this rule whenever building or modifying code that constructs GET requests
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-7. **Select specific properties with `select()`**: Include `select()` as a query function to control which properties are returned.
+7. **Select specific properties with `select()`**: Specify which properties to include in the response.
 
    | Syntax                                 | Returns                                           |
    | -------------------------------------- | ------------------------------------------------- |
@@ -1136,14 +1138,14 @@ Apply this rule whenever building or modifying code that constructs GET requests
    GET /Product/?brand.name=Microsoft&select(name,brand{name})
    ```
 
-8. **Paginate with `limit(end)`**: Return records in a zero-based window. `limit(end)` starts at zero; `limit(start,end)` returns at most `end - start` records.
+8. **Limit results with `limit(end)` or `limit(start,end)`**: Return records in a zero-based window from `start` (inclusive) to `end` (exclusive). `limit(end)` starts at zero.
 
    ```
    GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
    GET /Product/?rating=gt=3&limit(10,30)
    ```
 
-9. **Sort with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
+9. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
 
    ```
    GET /Product/?rating=gt=3&sort(+name)
@@ -1152,10 +1154,10 @@ Apply this rule whenever building or modifying code that constructs GET requests
 
 10. **Request a total count for pagination**: Send a `Prefer` header on `GET` or `HEAD` requests. Counting requires a bounded `limit()` with page size no larger than 10,000 and window end no larger than 1,000,000.
 
-    | `Prefer` value    | Meaning                                  |
-    | ----------------- | ---------------------------------------- |
-    | `count=exact`     | Exact count of matching records (opt-in) |
-    | `count=estimated` | Fast approximate estimate                |
+    | `Prefer` value    | Meaning                                                                                       |
+    | ----------------- | --------------------------------------------------------------------------------------------- |
+    | `count=exact`     | Exact number of matching records. Off by default; requires `exactCount: true` in REST config. |
+    | `count=estimated` | Fast approximate count. Does not require `exactCount`.                                        |
 
     ```
     GET /Product/?category=software&limit(0,25)
@@ -1164,11 +1166,12 @@ Apply this rule whenever building or modifying code that constructs GET requests
 
     Response headers:
 
-    | Header               | Example           | Description                                            |
-    | -------------------- | ----------------- | ------------------------------------------------------ |
-    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range returned out of total matching |
-    | `Range-Unit`         | `items`           | Unit used by `Content-Range`                           |
-    | `Preference-Applied` | `count=exact`     | Count mode the server applied                          |
+    ```
+    HTTP/1.1 200 OK
+    Content-Range: items 0-24/1234
+    Range-Unit: items
+    Preference-Applied: count=exact
+    ```
 
     Enable exact counts in REST configuration:
 
@@ -1177,44 +1180,37 @@ Apply this rule whenever building or modifying code that constructs GET requests
       exactCount: true
     ```
 
-    Without `exactCount: true`, a `count=exact` request is served as an estimate. The response status is always `200`. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total is distinct from a request that asked for no count.
+    - The response status for paginated requests is always `200`; Harper does not use `206 Partial Content`.
+    - A `HEAD` request with a `count` preference returns the count headers with no body.
+    - When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
+    - Without `exactCount: true`, a `count=exact` request is served as an estimate. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total (`.../*`) is distinct from a request that asked for no count.
 
-11. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined with `@relationship` in the schema.
+11. **Query across relationships**: Use dot-syntax on attributes defined with `@relationship` in the schema.
 
     ```
     GET /Product/?brand.name=Microsoft
     GET /Brand/?products.name=Keyboard
-    ```
-
-    Include relationship attributes in the response using `select()`:
-
-    ```
     GET /Product/?brand.name=Microsoft&select(name,brand{name})
     ```
 
-12. **Filter and page nested relationships**: Use square brackets inside `select()` to apply conditions, sort, and pagination to each parent's related records. An outer relationship filter also narrows that relationship's nested results — do not repeat the outer filter inside `[...]`.
+    Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN. An outer filter such as `products.price=ge=number:30` removes parents without a qualifying product and also narrows the selected products.
+
+12. **Filter and page nested relationships**: Use square brackets inside `select()` to apply conditions, sort, and pagination to each parent's related records.
 
     ```
-    GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+    GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
     ```
 
-    Nested option reference:
+    An outer relationship filter also narrows that relationship's nested results — do not repeat the outer filter inside `[...]` unless you want to narrow further.
 
     | Nested option      | Behavior                                                        |
     | ------------------ | --------------------------------------------------------------- |
     | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups |
     | `sort(price)`      | Order eligible children before pagination                       |
     | `limit(end)`       | Return at most `end` children per parent                        |
-    | `limit(start,end)` | Skip `start` eligible children, return at most `end - start`    |
+    | `limit(start,end)` | Skip `start` eligible children and return at most `end - start` |
     | `select(id,price)` | Project fields from returned children                           |
-
-13. **Access a specific property via URL**: Append the property name with dot syntax to the record id.
-
-    ```
-    GET /MyTable/123.propertyName
-    ```
-
-    This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors and take precedence over a property of the same name.
+    - Invalid nested bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
 
 #### Examples
 
@@ -1224,18 +1220,20 @@ Apply this rule whenever building or modifying code that constructs GET requests
 GET /Product/?category=software&price=gt=100&price=lt=200&sort(+price)&limit(0,25)
 ```
 
-##### Select with nested relationship projection
+##### Relationship join with nested selection
 
 ```
 GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
 ```
 
-##### Paginated count request
+##### Paginated request with exact count
 
 ```
 GET /Product/?category=software&limit(0,25)
 Prefer: count=exact
 ```
+
+Response:
 
 ```
 HTTP/1.1 200 OK
@@ -1244,13 +1242,21 @@ Range-Unit: items
 Preference-Applied: count=exact
 ```
 
-##### Nested relationship filter with OR grouping, sort, and pagination
+##### Nested relationship filter with OR, sort, and pagination
 
 ```
 GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
 ```
 
+##### Outer filter inheriting into nested selection
+
+```
+GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+```
+
 ##### Many-to-many relationship query
+
+Schema:
 
 ```graphql
 type Product @table @export {
@@ -1261,28 +1267,24 @@ type Product @table @export {
 }
 ```
 
+Query:
+
 ```
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-##### Stable paginated parent + child query
-
-```
-GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
-```
-
 #### Notes
 
-- Queried attributes must be indexed for filtering to execute. Keep relationship lookup fields and outer filter fields indexed.
-- Null indexing requires indexes created or rebuilt after the feature was introduced; existing indexes must be removed and re-added.
-- `select()` brackets inside a relationship selection (e.g., `select(id,products[limit(1)])`) apply nested query options, not grouping logic.
-- Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN; an outer filter behaves as an INNER JOIN.
-- A nested condition narrows projected children but does not remove a parent from results; only an outer relationship filter removes parents.
-- Invalid nested bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
-- Nested filters require a table-backed relationship. Filters on plain JSON projections or custom non-table resources return HTTP 400.
-- The response status for paginated requests is always `200`; Harper does not use `206 Partial Content`.
-- When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
-- Use a unique field as the final sort key (e.g., `sort(name,id)`) to ensure deterministic ordering when values are equal.
+- Queried attributes must be indexed for filtering to execute; only one attribute in a multi-attribute query needs to be indexed.
+- URL-encode colons in date values as `%3A` (e.g., `listDate=gt=2017-03-08T09%3A30%3A00.000Z`).
+- Square brackets are preferred over parentheses when constructing queries programmatically because standard URI encoding safely encodes `[` and `]`.
+- Brackets inside `select()` after a relationship name (e.g., `select(id,products[limit(1)])`) form a nested relationship query, not a grouping expression.
+- For full-text fields marked `@fullText`, use operators such as `=matches=`, `=matches_phrase=`, `=matches_prefix=`, `=matches_fuzzy=`, and their `=not_*=` negated forms. Full-text queries cannot provide an exact total count.
+- `limit(end)` and `limit(start,end)` inside a nested relationship selection apply per parent, not to the total result set.
+- Always add a unique field as the final sort key (e.g., `sort(name,id)`) to ensure deterministic ordering across pages.
+- Nested filters require a table-backed relationship; filters on plain JSON projections or full-text predicates inside a relationship selection return HTTP 400.
+- For streaming JSON-array responses, check for a terminal object shaped like `{ "error": "ErrorName: message" }` and treat the response as failed.
+- Access a specific property of a record using dot syntax on the record ID: `GET /MyTable/123.propertyName`. This only works for declared schema properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors and take precedence over a property of the same name.
 
 ### 2.3 Real-Time Apps with WebSockets and Pub/Sub
 
@@ -1954,16 +1956,16 @@ Instructions for the agent to interact with Harper tables programmatically using
 
 #### When to Use
 
-Apply this rule when writing server-side Harper code that reads or writes table data directly — for example, in custom resource methods, background jobs, timers, or SSR entry points. Use it whenever you need to query, filter, sort, paginate, or transactionally update records without going through the REST layer.
+Apply this rule when writing server-side Harper code that reads, writes, searches, or transactionally modifies table data through the `tables` object. Use it when building background jobs, SSR renderers, or any code that calls `search(`, `addTo`, `select`, `sort`, or `transaction()` directly rather than through REST endpoints.
 
 #### How It Works
 
-1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a property of `tables`. Each property is the table class implementing the Resource API.
+1. **Import `tables` (and other APIs) from `harper`**: Access every table defined in `schema.graphql` as a named property of `tables`. This is equivalent to `databases.data.<TableName>`.
 
    ```javascript
-   import { tables, transaction } from 'harper';
+   import { tables, Resource } from 'harper';
    const { Product } = tables;
-   // equivalent to: databases.data.Product
+   // same as: databases.data.Product
    ```
 
    CommonJS is also supported: `const { tables, Resource } = require('harper');`
@@ -1983,106 +1985,55 @@ Apply this rule when writing server-side Harper code that reads or writes table 
    }
    ```
 
-2. **Define your schema with `@table`**: Every type you want to access via `tables` must carry the `@table` directive. Mark attributes you intend to sort or filter on with `@indexed`.
+2. **Define your schema with `@table` (and `@indexed` where needed)**: Tables must be declared in `schema.graphql`. Mark attributes that will be used as sort keys or standalone condition attributes with `@indexed`.
 
    ```graphql
    type Product @table {
    	id: Long @primaryKey
    	name: String
-   	price: Float
+   	price: Float @indexed
    }
    ```
 
-3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable; iterate the result with `for await`.
+3. **Query records using `search(`**: Pass a Query object to `search()`. The query is an async iterable; iterate the result with `for await`. Use a `conditions` array to filter records. Each condition specifies `attribute`, `value`, and an optional `comparator`.
+
+   | Property     | Description                                                                                                                                                                         |
+   | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `attribute`  | Property name, or array for chained/joined properties                                                                                                                               |
+   | `value`      | The value to match                                                                                                                                                                  |
+   | `comparator` | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal`, or a full-text comparator |
+   | `conditions` | Nested conditions array                                                                                                                                                             |
+   | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                                                 |
 
    ```javascript
-   const query = {
+   for await (const record of Product.search({
    	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
-   };
-   for await (const record of Product.search(query)) {
+   })) {
    	// process record
    }
    ```
 
-4. **Perform basic CRUD operations**: Use `create`, `patch`, and `get` for single-record operations.
+4. **Use `select` to control which properties are returned**: Pass an array of property names, a string for a single property, or nested objects for relationships.
 
    ```javascript
-   const created = await Product.create({ name: 'Shirt', price: 9.5 });
-   await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
-   const record = await Product.get(created.id);
-   ```
-
-5. **Build `conditions` arrays**: Each condition object filters records. Nest conditions for boolean logic.
-
-   | Property     | Description                                                                                                                                              |
-   | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `attribute`  | Property name, or array for chained/joined properties                                                                                                    |
-   | `value`      | The value to match                                                                                                                                       |
-   | `comparator` | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal` |
-   | `conditions` | Nested conditions array                                                                                                                                  |
-   | `operator`   | `and` (default) or `or` for the nested `conditions`                                                                                                      |
-
-   ```javascript
-   Product.search({
-   	conditions: [
-   		{ attribute: 'price', comparator: 'less_than', value: 100 },
-   		{
-   			operator: 'or',
-   			conditions: [
-   				{ attribute: 'rating', comparator: 'greater_than', value: 4 },
-   				{ attribute: 'featured', value: true },
-   			],
-   		},
-   	],
-   });
-   ```
-
-   For relationship traversal, pass an array as `attribute`:
-
-   ```javascript
-   Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
-   ```
-
-6. **Use `select` to shape returned records**: Pass an array of property names, a string for a single property, or nested objects for relationships.
-
-   ```javascript
-   // Array of fields
-   Product.search({ select: ['name', 'price'] });
-
-   // Whole related record
-   const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
-
-   // Partial related record
    const book = await Book.get({
    	id: 42,
    	select: ['id', 'title', { name: 'author', select: ['name'] }],
    });
-
-   // Deep nesting
-   // select: ['id', 'name', { name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] }]
    ```
 
-   Special properties: `$id`, `$updatedtime`, `$distance`.
+   Special `select` properties:
+   - `$id` — returns the primary key regardless of its name
+   - `$updatedtime` — returns the last-updated timestamp
+   - `$distance` — returns computed vector distance when using a vector index
+   - `$score` — returns BM25 relevance score for full-text queries
+   - `$highlights` — returns full-text fragments and matching spans
 
-7. **Paginate with `limit` and `offset`**: `limit` caps the number of records returned; `offset` skips records.
-
-   ```javascript
-   Product.search({ conditions: [...], limit: 20, offset: 40 });
-   ```
-
-8. **Sort results with `sort`**: Provide `attribute`, optional `descending`, and optional `next` for tie-breaking.
-
-   | Property     | Description                                  |
-   | ------------ | -------------------------------------------- |
-   | `attribute`  | Property name or array for chained property  |
-   | `descending` | Sort descending if `true` (default: `false`) |
-   | `next`       | Secondary sort (same structure)              |
-
-   Harper uses an index for sort order. The sort `attribute` must be `@indexed`, **or** at least one `conditions` entry must be present. Sorting by a non-indexed attribute with zero conditions raises:
+5. **Use `sort` with an `@indexed` attribute or combine with `conditions`**: Harper requires either an `@indexed` sort attribute or at least one `conditions` entry when sorting. Sorting by a non-indexed attribute with zero conditions raises:
 
    > `HdbError: <attribute> is not indexed and not combined with any other conditions`
 
-   To iterate a whole table in primary-key order, add an open-ended condition:
+   Note: `@primaryKey` alone is treated as not indexed for sort purposes. To iterate a whole table in primary-key order, add an open-ended condition:
 
    ```javascript
    Product.search({
@@ -2091,50 +2042,59 @@ Apply this rule when writing server-side Harper code that reads or writes table 
    });
    ```
 
-   Pass `allowFullScan: true` to permit an unconditional ordered scan. Omit `sort` entirely to iterate without an index requirement.
+   `sort` object properties:
 
-9. **Debug with `explain` and `enforceExecutionOrder`**: Set `explain: true` to receive conditions reordered as Harper will execute them. Set `enforceExecutionOrder: true` to force conditions to run in the order supplied, disabling automatic re-ordering.
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
 
-10. **Mutate records with `update` and `addTo`**: `update` returns a mutable Resource instance; property assignments are written on commit. Use `addTo` for CRDT-safe numeric increments across threads and nodes.
+6. **Apply `limit` and `offset` for pagination**: Add these to the Query object to bound result sets.
 
-    ```javascript
-    const product = await Product.update(32);
-    product.status = 'active';
-    product.subtractFrom('quantity', 1);
-    product.save();
-    ```
+   ```javascript
+   Product.search({
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+   	limit: 20,
+   	offset: 40,
+   });
+   ```
 
-    ```javascript
-    static async post(target, data) {
-      const record = await this.update(target.id);
-      record.addTo('quantity', -1); // decrement safely across nodes
-    }
-    ```
+7. **Use `explain` and `enforceExecutionOrder` for debugging and optimization**:
+   - `explain: true` — returns conditions reordered as Harper will execute them.
+   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling Harper's automatic re-ordering.
 
-11. **Wrap background work in `transaction()`**: Harper auto-starts transactions for HTTP handlers. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
+8. **Use `addTo` for concurrent-safe numeric updates**: Increments or decrements a property using CRDT incrementation, safe across threads and nodes.
 
-    ```javascript
-    await transaction(async (txn) => {
-    	for (let item of data) {
-    		await MyTable.put(item, txn);
-    	}
-    });
-    ```
+   ```javascript
+   static async post(target, data) {
+     const record = await this.update(target.id);
+     record.addTo('quantity', -1); // decrement safely across nodes
+   }
+   ```
 
-    - Always `await` the `transaction()` call and `catch` it.
-    - Guard against overlap when a job can outlast its interval (see example below).
-    - If called with a context that already has an active transaction, `transaction()` reuses it — safe to call defensively.
+9. **Wrap background or timer work in `transaction()`**: HTTP handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural request context. Always `await` the call and `catch` errors.
 
-    The `txn` object exposes:
+   ```javascript
+   await transaction(async (txn) => {
+   	for (let item of data) {
+   		await MyTable.put(item, txn);
+   	}
+   });
+   ```
 
-    | Member                | Type            | Description                                            |
-    | --------------------- | --------------- | ------------------------------------------------------ |
-    | `commit()`            | `() => Promise` | Commits the current transaction                        |
-    | `abort()`             | `() => void`    | Aborts and resets the transaction                      |
-    | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
-    | `timestamp`           | `number`        | Timestamp for the current transaction                  |
+   The `txn` object exposes:
 
-12. **Understand atomicity boundaries**: All tables within the same database share one transactional context — reads are consistent and writes are committed atomically. Tables in different databases each get their own transaction; there is no cross-database atomicity guarantee.
+   | Member                | Type            | Description                                            |
+   | --------------------- | --------------- | ------------------------------------------------------ |
+   | `commit()`            | `() => Promise` | Commits the current transaction                        |
+   | `abort()`             | `() => void`    | Aborts the transaction and resets it                   |
+   | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
+   | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
+
+   On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
+
+10. **Understand atomicity boundaries**: All tables within the same database share a single transactional context — reads return a consistent snapshot and writes are committed atomically. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
 
 #### Examples
 
@@ -2144,19 +2104,25 @@ Apply this rule when writing server-side Harper code that reads or writes table 
 import { tables } from 'harper';
 const { Product } = tables;
 
+// Create
 const created = await Product.create({ name: 'Shirt', price: 9.5 });
+
+// Patch
 await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
+
+// Get by primary key
 const record = await Product.get(created.id);
 
+// Search with conditions
 const query = {
 	conditions: [{ attribute: 'price', comparator: 'less_than', value: 8.0 }],
 };
 for await (const record of Product.search(query)) {
-	console.log(record);
+	// process record
 }
 ```
 
-##### Nested conditions with `select`, `sort`, `limit`, and `offset`
+##### Nested conditions with `or`
 
 ```javascript
 Product.search({
@@ -2170,10 +2136,31 @@ Product.search({
 			],
 		},
 	],
-	select: ['name', 'price'],
-	sort: { attribute: 'price', descending: true },
-	limit: 10,
-	offset: 0,
+});
+```
+
+##### Chained attribute reference (join/relationship)
+
+```javascript
+Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
+```
+
+##### Selecting and constraining related records
+
+```javascript
+const brand = await Brand.get({
+	id: 42,
+	select: [
+		'id',
+		{
+			name: 'products',
+			conditions: [{ attribute: 'price', comparator: 'greater_than_equal', value: 30 }],
+			sort: { attribute: 'price' },
+			offset: 0,
+			limit: 1,
+			select: ['id', 'price'],
+		},
+	],
 });
 ```
 
@@ -2201,7 +2188,7 @@ if (isMainThread) {
 		} finally {
 			running = false;
 		}
-	}, 3600000);
+	}, 3600000); // every hour
 }
 ```
 
@@ -2216,10 +2203,9 @@ export async function render(url: string): Promise<string> {
 }
 ```
 
-Keep `harper` external in `vite.config`:
+Keep `harper` external in `vite.config` so it resolves to the runtime:
 
 ```javascript
-// vite.config
 ssr: {
 	external: ['harper'];
 }
@@ -2227,11 +2213,11 @@ ssr: {
 
 #### Notes
 
-- `tables` and `databases` run in a trusted server-side context and do **not** automatically apply the target table's role permissions. Apply your own authorization controls.
-- Programmatic `update`, `patch`, and `delete` operate on live data and are not easily reversible. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
-- Selecting a relationship without an outer condition behaves as a **LEFT JOIN**; a top-level `conditions` entry on a related attribute behaves as an **INNER JOIN**.
-- `resetReadSnapshot()` on the `txn` object refreshes the read snapshot to the latest committed state mid-transaction.
-- For `atomicity`: all tables in the same database commit atomically together; cross-database operations have no atomicity guarantee.
+- Calls through `tables` run in a trusted server-side context and do **not** automatically apply the target table's role permissions. Set `checkPermission: true` on the query and pass the authenticated `context` as the second argument when authorization is required.
+- `update`, `patch`, and `delete` operate directly on stored data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- Pass `allowFullScan: true` to permit an unconditional ordered scan without conditions. If order doesn't matter, omit `sort` entirely — `search({})` iterates without an index requirement.
+- If `transaction()` is called with a context that already has an active transaction, it reuses that transaction and executes the callback immediately — safe to call defensively.
+- Guard timer-based jobs against overlap: a timer fires on schedule regardless of whether the previous run has committed. Use a `running` flag to skip a tick when the previous run is still active.
 
 ### 3.4 TypeScript Type Stripping in Harper
 

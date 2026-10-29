@@ -48,22 +48,20 @@ Instructions for the agent to follow when designing Harper schemas, applying cor
 
 #### When to Use
 
-Apply this rule when creating or modifying Harper schema files, configuring the `graphqlSchema` plugin in `config.yaml`, or deciding which directives to apply to tables and fields. Use it whenever a task involves defining tables, primary keys, indexes, or export behavior.
+Apply this rule when creating or modifying Harper schema files, configuring `graphqlSchema` in `config.yaml`, or deciding which directives to apply to tables and fields. Use it whenever a task involves defining tables, primary keys, indexes, or export behavior.
 
 #### How It Works
 
-1. **Define the schema file** using standard GraphQL type definitions with Harper-specific directives. Save it as a `.graphql` file (e.g., `schema.graphql`).
-
-2. **Register the schema** in the component's `config.yaml` using the `graphqlSchema` plugin:
+1. **Load the schema via `graphqlSchema`**: In the component's `config.yaml`, point to the schema file:
 
    ```yaml
    graphqlSchema:
      files: 'schema.graphql'
    ```
 
-   Both plugins and applications can specify schemas.
+   Both plugins and applications can specify schemas. The schema ensures required tables exist on deployment, enforces types, controls indexing, and defines relationships.
 
-3. **Mark tables with `@table`** to declare a GraphQL type as a Harper database table. The type name becomes the table name by default.
+2. **Mark tables with `@table`**: Apply `@table` to every GraphQL type that should become a Harper database table. The type name becomes the table name by default.
 
    ```graphql
    type Dog @table {
@@ -74,23 +72,23 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    }
    ```
 
-   Pass optional arguments to `@table` to control behavior:
+   Use `@table` arguments to override defaults:
 
-   | Argument                 | Type      | Default                          | Description                                                                    |
-   | ------------------------ | --------- | -------------------------------- | ------------------------------------------------------------------------------ |
-   | `table`                  | `String`  | type name                        | Override the table name                                                        |
-   | `database`               | `String`  | `"data"`                         | Database to place the table in                                                 |
-   | `expiration`             | `Int`     | —                                | Seconds until a record goes stale                                              |
-   | `eviction`               | `Int`     | `0`                              | Additional seconds after `expiration` before physical removal                  |
-   | `scanInterval`           | `Int`     | `(expiration + eviction) / 4`    | Seconds between eviction scans                                                 |
-   | `replicate`              | `Boolean` | `true`                           | Enable replication of this table                                               |
-   | `replicaExpiration`      | `Float`   | `3600`                           | Seconds a replica fetched from another node is kept locally                    |
-   | `replicaRefreshFraction` | `Float`   | `0.5`                            | Fraction of `replicaExpiration` after which a read renews the replica lifetime |
-   | `audit`                  | `Boolean` | per `logging.auditLog`           | Enable the table's transaction log                                             |
-   | `cacheControl`           | `String`  | —                                | `Cache-Control` header on anonymous GET/HEAD 200/304 responses                 |
-   | `randomAccessFields`     | `Boolean` | per `storage.randomAccessFields` | Pin this table's record encoding                                               |
+   | Argument                 | Type      | Default                       | Description                                                                    |
+   | ------------------------ | --------- | ----------------------------- | ------------------------------------------------------------------------------ |
+   | `table`                  | `String`  | type name                     | Override the table name                                                        |
+   | `database`               | `String`  | `"data"`                      | Database to place the table in                                                 |
+   | `expiration`             | `Int`     | —                             | Seconds until a record goes stale                                              |
+   | `eviction`               | `Int`     | `0`                           | Additional seconds after `expiration` before physical removal                  |
+   | `scanInterval`           | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                                 |
+   | `replicate`              | `Boolean` | `true`                        | Enable replication of this table                                               |
+   | `replicaExpiration`      | `Float`   | `3600`                        | Seconds a record fetched from another node is kept as a local replica          |
+   | `replicaRefreshFraction` | `Float`   | `0.5`                         | Fraction of `replicaExpiration` after which a read renews the replica lifetime |
+   | `audit`                  | `Boolean` | `logging.auditLog`            | Enable the table's transaction log                                             |
+   | `cacheControl`           | `String`  | —                             | `Cache-Control` header for anonymous GET/HEAD 200/304 responses                |
+   | `randomAccessFields`     | `Boolean` | `storage.randomAccessFields`  | Pin this table's record encoding                                               |
 
-4. **Designate a primary key with `@primaryKey`** on exactly one field per table. Primary keys must be unique; duplicate inserts are rejected.
+3. **Designate a primary key with `@primaryKey`**: Apply `@primaryKey` to exactly one field per table. Primary keys must be unique; duplicate inserts are rejected.
 
    ```graphql
    type Product @table {
@@ -103,20 +101,21 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    - **UUID string** — when type is `String` or `ID`
    - **Auto-incrementing integer** — when type is `Int`, `Long`, or `Any`
 
-   Use `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
+   Prefer `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
 
-5. **Index fields with `@indexed`** to enable fast querying, filtering via REST, SQL, or NoSQL operations.
+4. **Index queryable fields with `@indexed`**: Apply `@indexed` to any field that must be filterable via REST queries, SQL, or NoSQL operations.
 
    ```graphql
-   type Breed @table {
+   type Product @table {
    	id: Long @primaryKey
-   	name: String @indexed
+   	category: String @indexed
+   	price: Float @indexed
    }
    ```
 
    If the field value is an array, each element is individually indexed. Null values are indexed by default.
 
-6. **Expose tables externally with `@export`** to make them accessible via REST, MQTT, and other interfaces.
+5. **Expose tables externally with `@export`**: Apply `@export` to make a table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment.
 
    ```graphql
    type MyTable @table @export(name: "my-table") {
@@ -124,19 +123,42 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    }
    ```
 
-   The optional `name` parameter sets the URL path segment. Without `name`, the type name is used. `@export` alone does not serve HTTP traffic — REST must also be enabled for the application via `rest: true` in `config.yaml` or Harper's built-in default.
+   `@export` alone does not serve HTTP traffic — REST must also be enabled for the application via `rest: true` in `config.yaml` or Harper's built-in default. `@export` is a routing directive, not access control: omitting it returns 404 to callers but the table remains accessible through the Operations API and SQL.
 
-   > `@export` is a routing directive, not access control. Omitting it returns 404 to callers but does not protect the data — the table remains accessible through the Operations API and SQL. Use RBAC role grants and `attribute_permissions` to restrict data access.
+6. **Prevent extra properties with `@sealed`** (when needed): Apply `@sealed` to reject records that include properties beyond those declared in the schema. By default, Harper allows additional properties.
 
-7. **Apply additional type directives** as needed:
-   - `@sealed` — prevents records from including properties beyond those declared in the schema.
-   - `@hidden` — suppresses the type from MCP tool descriptors and the OpenAPI document. Does not restrict data access.
+   ```graphql
+   type StrictRecord @table @sealed {
+   	id: Long @primaryKey
+   	name: String
+   }
+   ```
 
-8. **Apply additional field directives** as needed:
+7. **Use unique database names for plugins and applications**: All tables default to the `data` database. Specify a distinct `database` argument on `@table` to avoid naming collisions between components.
+
+8. **Apply timestamp and expiration field directives** where needed:
    - `@createdTime` — auto-assigns a Unix epoch millisecond timestamp on record creation.
    - `@updatedTime` — auto-assigns a Unix epoch millisecond timestamp on each update.
    - `@expiresAt` — marks a field as the record's absolute expiration time (Unix epoch milliseconds); overrides the table-level `expiration` default.
-   - `@hidden` (field) — suppresses the field from generated specs and MCP tool schemas; does not restrict data access.
+   - `@hidden` — suppresses the type or field from MCP tool descriptors and the OpenAPI document. Does not restrict data access.
+
+   ```graphql
+   type Event @table {
+   	id: Long @primaryKey
+   	createdAt: Long @createdTime
+   	updatedAt: Long @updatedTime
+   }
+
+   type Session @table {
+   	id: ID @primaryKey
+   	token: String
+   	expiresAt: Long @expiresAt
+   }
+   ```
+
+   Key `@expiresAt` behaviors:
+   - Takes an absolute Unix epoch millisecond timestamp, not a duration. A full-record `put` that omits the field clears it; a `patch` preserves it.
+   - A per-record value may extend or shorten a record's expiration relative to the table-level `expiration` default. When a record omits the field, the table default (if any) applies.
 
 9. **Use `@embed`** to automatically compute an embedding vector for an attribute whenever the source field is written (requires `source` and `model` arguments; field type must be `[Float]`):
    ```graphql
@@ -146,7 +168,7 @@ Apply this rule when creating or modifying Harper schema files, configuring the 
    	embedding: [Float] @embed(source: "text", model: "default")
    }
    ```
-   The attribute is automatically indexed with an HNSW vector index and is immediately searchable by similarity.
+   The attribute is automatically indexed with an HNSW vector index. A failure to compute the embedding fails the write. An update that does not touch the `source` field leaves the vector unchanged. Setting the `source` field to `null` sets the vector to `null`.
 
 #### Examples
 
@@ -166,17 +188,6 @@ type Breed @table {
 }
 ```
 
-**Table with overridden name and database:**
-
-```graphql
-type Product @table(table: "products", database: "commerce") @export {
-	id: Long @primaryKey
-	name: String
-	category: String @indexed
-	price: Float @indexed
-}
-```
-
 **Caching table with expiration, eviction, and scan tuning:**
 
 ```graphql
@@ -187,7 +198,7 @@ type WeatherCache @table(expiration: 300, eviction: 3300, scanInterval: 600) {
 }
 ```
 
-**Table with public cache-control for CDN caching:**
+**Exported table with public cache control:**
 
 ```graphql
 type Product @table(cacheControl: "public, max-age=60") @export {
@@ -197,7 +208,16 @@ type Product @table(cacheControl: "public, max-age=60") @export {
 }
 ```
 
-**Table with replica settings for sharded data:**
+**Table in a named database with expiration:**
+
+```graphql
+type Event @table(database: "analytics", expiration: 86400) {
+	id: Long @primaryKey
+	name: String @indexed
+}
+```
+
+**Replica lifetime tuning:**
 
 ```graphql
 # Keep fetched records for a day; a read after six hours renews them
@@ -207,28 +227,18 @@ type Order @table(replicaExpiration: 86400, replicaRefreshFraction: 0.25) {
 }
 ```
 
-**Sealed table with timestamps:**
+**Random-access field encoding pinned on the table:**
 
 ```graphql
-type StrictRecord @table @sealed {
-	id: Long @primaryKey
-	name: String
-	createdAt: Long @createdTime
-	updatedAt: Long @updatedTime
-}
-```
-
-**Session table with per-record expiration:**
-
-```graphql
-type Session @table {
+type Reading @table(randomAccessFields: true) {
 	id: ID @primaryKey
-	token: String
-	expiresAt: Long @expiresAt
+	sensorId: String @indexed
+	celsius: Float
+	recordedAt: Int
 }
 ```
 
-**`config.yaml` registration:**
+**`config.yaml` loading the schema:**
 
 ```yaml
 graphqlSchema:
@@ -237,13 +247,15 @@ graphqlSchema:
 
 #### Notes
 
-- Schemas are flexible by default — records may include additional properties beyond those declared. Use `@sealed` to prevent this.
-- When designing plugins or applications, use unique `database` names in `@table` to avoid table naming collisions, since all tables default to the `data` database.
-- Replication is enabled by default. Disabling replication (`replicate: false`) and re-enabling it later will not catch up on writes made while replication was disabled.
-- `@hidden` (type or field) is a metadata-visibility directive only. It suppresses types or fields from generated API specs and MCP tool schemas but does not restrict data access. Use role grants and `attribute_permissions` for access control.
-- The `cacheControl` argument emits headers only on anonymous (unauthenticated) GET/HEAD 200/304 responses. Authenticated responses receive `Cache-Control: private, no-cache` regardless of the declaration. The value is never emitted on 401 responses.
-- `@expiresAt` takes an absolute Unix epoch millisecond timestamp, not a duration. A full-record `put` that omits the field clears it; a `patch` preserves it.
-- `randomAccessFields` on `@table` pins the table's encoding at creation time. Editing the argument later does not repin an existing table.
+- Schemas are flexible by default — records may include additional properties. Use `@sealed` to prevent this.
+- `@export` is a routing directive, not an access control mechanism. Use RBAC and `attribute_permissions` to restrict data access.
+- `cacheControl` on `@table` only emits the header for anonymous (unauthenticated) GET/HEAD 200/304 responses. Authenticated responses always receive `Cache-Control: private, no-cache`.
+- `expiration`, `eviction`, and `scanInterval` work together: `expiration` marks a record stale, `eviction` controls physical removal, and `scanInterval` sets how often the sweep runs. Eviction scans are clock-aligned to the server's local timezone, not startup-aligned.
+- Eviction removes non-indexed record data but does not remove a record from its secondary indexes; indexes remain functional for evicted records.
+- `replicaExpiration` and `replicaRefreshFraction` apply only on the RocksDB engine. On LMDB, remote reads remain proxy reads regardless of these settings.
+- Disabling replication on a table (`replicate: false`) and re-enabling it later will not catch up on writes made while replication was disabled.
+- `randomAccessFields` on `@table` pins the encoding when the table is created. Editing the argument later does not repin an existing table.
+- `@hidden` is a metadata-visibility directive only — it does not restrict data access. Use `attribute_permissions` on roles for field-level access control.
 
 ### 1.3 Defining Relationships Between Tables in Harper
 

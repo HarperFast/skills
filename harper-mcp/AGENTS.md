@@ -6,15 +6,15 @@ Guidelines for exposing a Harper instance as a Model Context Protocol (MCP) serv
 
 ### 1.1 Enabling and Configuring Harper MCP Server Profiles
 
-Instructions for the agent to enable and configure Harper's MCP server profiles (`operations` and `application`) using the `mcp:` block in `harper-config.yaml`.
+Instructions for the agent to enable and configure Harper's MCP server profiles (`operations` and `application`) in `harper-config.yaml`.
 
 #### When to Use
 
-Apply this rule when adding MCP support to a Harper deployment so that LLM hosts (Claude Desktop, Cursor, Zed, custom agents) can discover and invoke Harper operations and resources. Use it when configuring rate limits, session lifecycle, allow/deny lists, or durable quota policies for either MCP profile. See [connecting-clients.md](connecting-clients.md) for wiring an MCP client to a running Harper instance.
+Apply this rule when adding MCP support to a Harper deployment so that LLM hosts (Claude Desktop, Cursor, Zed, custom agents) can discover and invoke Harper operations and resources. Use it when configuring rate limits, session lifecycle, allow/deny lists, or durable quota policies for either MCP profile. See [connecting-clients.md](connecting-clients.md) for wiring an MCP host to a running Harper instance.
 
 #### How It Works
 
-1. **Enable profiles via presence of their sub-block.** A profile is enabled by the **presence** of its sub-block under `mcp:` — there is no separate `enabled` flag. Add an empty map to enable a profile with all defaults:
+1. **Enable profiles via `presence`**: A profile is enabled by the **presence** of its sub-block under `mcp:` in `harper-config.yaml` — there is no separate `enabled` flag. Add an empty block for each profile you want active:
 
    ```yaml
    mcp:
@@ -22,17 +22,17 @@ Apply this rule when adding MCP support to a Harper deployment so that LLM hosts
      application: {}
    ```
 
-   - The `operations` profile mounts at `/mcp` on the **operations server** (default port `9925`).
-   - The `application` profile mounts at `/mcp` on the **application HTTP server** (default port `9926`).
+   - `mcp.operations` mounts at `/mcp` on the **operations server** (default port `9925`).
+   - `mcp.application` mounts at `/mcp` on the **application HTTP server** (default port `9926`).
 
-2. **Configure the operations profile (`mcp.operations`).** This profile wraps Harper's operation catalog.
+2. **Configure the operations profile** (`mcp.operations.*`):
 
-   | Key         | Type              | Default   | Purpose                                                                          |
-   | ----------- | ----------------- | --------- | -------------------------------------------------------------------------------- |
-   | `mountPath` | `string`          | `/mcp`    | URL path the endpoint mounts on                                                  |
-   | `allow`     | `array<string>`   | See below | Operations exposed as MCP tools (glob or literal); **replaces** the default list |
-   | `deny`      | `array<string>`   | `[]`      | Operations filtered out after `allow` is applied                                 |
-   | `maxTools`  | `integer` (min 1) | `200`     | Max tools per `tools/list` response page                                         |
+   | Key         | Type              | Default   | Purpose                                            |
+   | ----------- | ----------------- | --------- | -------------------------------------------------- |
+   | `mountPath` | `string`          | `/mcp`    | URL path for the endpoint                          |
+   | `allow`     | `array<string>`   | See below | Operations exposed as tools (replaces, not merges) |
+   | `deny`      | `array<string>`   | `[]`      | Operations filtered out after `allow` is applied   |
+   | `maxTools`  | `integer` (min 1) | `200`     | Max tools per `tools/list` page                    |
 
    Default `allow` list:
 
@@ -50,47 +50,47 @@ Apply this rule when adding MCP support to a Harper deployment so that LLM hosts
      - read_audit_log
    ```
 
-   Setting `allow` **replaces** the default — it does not merge. To expose destructive operations (e.g. `set_configuration`, `drop_table`), add them explicitly.
+   Setting `mcp.operations.allow` **replaces** the default list entirely — it does not merge. To expose destructive operations (e.g. `set_configuration`, `drop_table`), add them explicitly. Do not add `get_*` as a glob — it exposes `get_configuration` (which can return TLS/S3/auth secrets) and other sensitive operations.
 
-3. **Configure the application profile (`mcp.application`).** This profile walks your exported `Resource` classes and generates one MCP tool per implemented REST verb. It accepts all `mcp.operations.*` keys plus:
+3. **Configure the application profile** (`mcp.application.*`): Accepts all `mcp.operations.*` keys plus:
 
-   | Key                | Type              | Default | Purpose                                                            |
-   | ------------------ | ----------------- | ------- | ------------------------------------------------------------------ |
-   | `searchMaxResults` | `integer` (min 1) | `1000`  | Hard cap on records a `search_<resource>` tool can return per call |
+   | Key                | Type              | Default | Purpose                                                   |
+   | ------------------ | ----------------- | ------- | --------------------------------------------------------- |
+   | `searchMaxResults` | `integer` (min 1) | `1000`  | Hard cap on records returned by `search_<resource>` tools |
 
-4. **Set rate limits for each profile (`mcp.<profile>.rateLimit.*`).** Token-bucket limits apply per `(session, tool)` pair and per session overall. Exhausted buckets return `result.isError = true` with `kind: "rate_limited"` — not a JSON-RPC error. See [rate-limiting.md](rate-limiting.md) for broader context.
+4. **Set rate limits** (`mcp.<profile>.rateLimit.*`): Both profiles share the same rate-limit schema. Token-bucket limits apply per `(session, tool)` pair and per session overall. Exhausted buckets return `result.isError = true` with `kind: "rate_limited"` — not a JSON-RPC transport error. See [rate-limiting.md](rate-limiting.md) for broader context.
 
-   | Key                  | Type              | Default (operations)                | Default (application) | Purpose                                                           |
-   | -------------------- | ----------------- | ----------------------------------- | --------------------- | ----------------------------------------------------------------- |
-   | `perToolPerSecond`   | `number` (min 0)  | `10`                                | `25`                  | Sustained per-tool refill rate; `0` disables                      |
-   | `perToolBurst`       | `number` (min 0)  | `20`                                | `50`                  | Burst capacity of the per-tool bucket                             |
-   | `sessionConcurrency` | `integer` (min 0) | `25`                                | `50`                  | Max concurrent `tools/call` per session                           |
-   | `sessionPerSecond`   | `number` (min 0)  | `100`                               | `200`                 | Sustained per-session rate across all tools                       |
-   | `perClientPerSecond` | `number` (min 0)  | `0` (disabled)                      | `0` (disabled)        | Sustained rate keyed on client identity (5.2.0+)                  |
-   | `perClientBurst`     | `number` (min 0)  | `perClientPerSecond` floored at `1` | same                  | Burst capacity of the per-client bucket                           |
-   | `identityHeader`     | `string`          | unset (socket IP)                   | unset                 | Trusted header supplying client identity (e.g. `x-forwarded-for`) |
+   | Key                   | Type              | Default (operations / application)  | Purpose                                                           |
+   | --------------------- | ----------------- | ----------------------------------- | ----------------------------------------------------------------- |
+   | `perToolPerSecond`    | `number` (min 0)  | `10` / `25`                         | Sustained per-tool refill rate; `0` disables                      |
+   | `perToolBurst`        | `number` (min 0)  | `20` / `50`                         | Burst capacity per tool                                           |
+   | `sessionConcurrency`  | `integer` (min 0) | `25` / `50`                         | Max concurrent `tools/call` per session                           |
+   | `sessionPerSecond`    | `number` (min 0)  | `100` / `200`                       | Sustained per-session rate across all tools                       |
+   | `perClientPerSecond`  | `number` (min 0)  | `0` (disabled)                      | Sustained rate keyed on client identity (`5.2.0+`)                |
+   | `perClientBurst`      | `number` (min 0)  | `perClientPerSecond` floored at `1` | Burst capacity for per-client bucket                              |
+   | `initializePerSecond` | `number` (min 0)  | `10`                                | Sustained session-creation rate per client identity; `0` disables |
+   | `initializeBurst`     | `number` (min 1)  | `50`                                | Burst capacity for `initialize`                                   |
+   | `identityHeader`      | `string`          | unset (socket IP)                   | Trusted header supplying client identity (e.g. `x-forwarded-for`) |
+   - A denied `initialize` returns HTTP `429` with a `Retry-After` header and a JSON-RPC error body; no session is created.
+   - Only set `identityHeader` when the fronting proxy strips or replaces it on untrusted traffic.
 
-   `perClientPerSecond` (5.2.0+) survives session cycling. Only set `identityHeader` when a trusted proxy strips or replaces it on untrusted traffic — a client-controlled header bypasses per-client limits entirely.
+5. **Configure session lifecycle** (`mcp.session.*`):
 
-5. **Configure session lifecycle (`mcp.session.*`).** These settings apply to both profiles. A dropped session causes the next request bearing that session id to receive HTTP 404; the client is expected to re-`initialize`.
+   | Key                  | Type              | Default | Purpose                                                          |
+   | -------------------- | ----------------- | ------- | ---------------------------------------------------------------- |
+   | `idleTimeoutSeconds` | `integer` (min 1) | `1800`  | TTL for idle sessions in `system.mcp_session`                    |
+   | `allowClientDelete`  | `boolean`         | `false` | When `true`, accepts client `DELETE /mcp` to terminate a session |
 
-   | Key                  | Type              | Default | Purpose                                                                 |
-   | -------------------- | ----------------- | ------- | ----------------------------------------------------------------------- |
-   | `idleTimeoutSeconds` | `integer` (min 1) | `1800`  | Idle window before a session is TTL-evicted from `system.mcp_session`   |
-   | `allowClientDelete`  | `boolean`         | `false` | When `true`, accepts client-issued `DELETE /mcp` to terminate a session |
+6. **Register a durable quota handler** (optional, `5.2.0+`): Call `server.setMcpQuotaHandler(handler)` in a component to enforce durable per-identity quotas that survive rate-limit bypasses (e.g. session cycling). The handler runs **after** in-memory buckets admit the call. Return `true` to allow or `{ allowed: false, message?, retryAfterSeconds? }` to deny. A handler that throws **denies** the call (fail-closed). Pass `undefined` to `server.setMcpQuotaHandler` to clear a registered handler. The latest registration wins on component reload. Keep any backing table unexported (no `@export`) so it stays off every transport. Components can also publish their own content under author-chosen URIs with a static `mcpResources` array.
 
-6. **Register a durable quota handler (optional, 5.2.0+).** For cost control that survives restarts and session cycling, register a handler with `server.setMcpQuotaHandler`. The handler runs **after** in-memory buckets admit the call. Keep any backing table unexported (no `@export`). A handler that throws **denies** the call (fail-closed). The handler receives `{ identity, tool, user, profile, sessionId }` and must return `true` to allow or `{ allowed: false, message?, retryAfterSeconds? }` to deny.
-
-7. **Configure Origin validation for browser clients.** MCP validates the `Origin` header to defend against DNS-rebinding attacks. Validation reuses each profile's existing CORS config:
-   - No `Origin` header (e.g. `curl`) → always accepted.
+7. **Configure Origin validation for browser clients**: MCP validates the `Origin` header to prevent DNS-rebinding. Validation reuses each profile's existing CORS config:
    - CORS disabled or `*` allow-list → any `Origin` accepted.
    - CORS enabled with an explicit allow-list → `Origin` not in the list returns `403 Forbidden`.
-
-   For browser-exposed deployments, enable CORS with an explicit (non-`*`) allow-list on the relevant profile.
+   - No `Origin` header (e.g. `curl`) → always accepted.
 
 #### Examples
 
-**Minimal — both profiles on with all defaults:**
+**Minimal — both profiles on with defaults:**
 
 ```yaml
 mcp:
@@ -98,7 +98,7 @@ mcp:
   application: {}
 ```
 
-**Production deployment — locked-down operations profile, raised application throughput, graceful logout:**
+**Full deployment example** — locked-down operations allow list, custom rate limits, raised application throughput, lower session-creation rate, extended session TTL, and client-initiated session deletion:
 
 ```yaml
 mcp:
@@ -116,15 +116,17 @@ mcp:
     rateLimit:
       perToolPerSecond: 50
       perToolBurst: 100
+      initializePerSecond: 2
+      initializeBurst: 20
   session:
     idleTimeoutSeconds: 3600
     allowClientDelete: true
 ```
 
-**Durable quota handler backed by an internal table:**
+**Durable quota handler with an internal counter table:**
 
 ```graphql
-# schema.graphql — internal counter, no @export
+# schema.graphql — INTERNAL counter, no @export
 type QuotaCounter @table {
 	id: ID @primaryKey
 	used: Int
@@ -157,14 +159,12 @@ server.setMcpQuotaHandler(async ({ identity, tool, user, profile, sessionId }) =
 
 #### Notes
 
-- The `operations` profile mounts on port `9925`; the `application` profile mounts on port `9926`. These are the default ports — change `mountPath` only if `/mcp` collides with another route.
-- Setting `mcp.operations.allow` **replaces** the default list entirely. Do not add `get_*` as a glob — it exposes `get_configuration` (which can return TLS/S3/auth secrets) and other sensitive operations.
-- `perClientPerSecond` (5.2.0+) is disabled by default (`0`). Enable it to prevent session-cycling abuse.
-- The durable quota handler (5.2.0+) is fail-closed: a thrown error denies the call. Race-safety under concurrent workers is the handler's responsibility — use atomic read-modify-write for production counters.
-- Pass `undefined` to `server.setMcpQuotaHandler` to clear a registered handler. The latest registration wins on component reload.
-- Version notes: the transport and tool surface shipped across 5.1.x (complete protocol surface — prompts, resources, subscriptions, completions, cancellation, progress — in 5.1.10+). Custom content resources (`mcpResources`) are 5.1.18+. Per-client rate limiting (`perClientPerSecond`, `perClientBurst`, `identityHeader`) and the durable quota handler (`server.setMcpQuotaHandler`) are 5.2.0+. **Verify the version before relying on gated features.** Unsupported config keys (such as the `rateLimit.perClient*` security controls) are **accepted and silently ignored** by older versions — nothing errors, the feature just doesn't run. After a session is evicted, the client must re-`initialize` to establish a new session.
-- See [connecting-clients.md](connecting-clients.md) for how to connect MCP clients to these endpoints.
-- See [rate-limiting.md](rate-limiting.md) for broader rate-limiting context.
+- Port defaults: operations profile → `9925`; application profile → `9926`.
+- `perClientPerSecond` is available in `5.2.0+`. In-memory buckets are per-worker and do not survive restarts or sync across workers.
+- The `mcp.operations.allow` list also governs the built-in agent's available tools when `agent.enabled` is set — widening it affects agent behavior, not just MCP clients.
+- Denials from `setMcpQuotaHandler` surface as `kind: 'quota_exceeded'` in the tool result. The raw handler error is written to the server log only; clients receive a sanitized message.
+- To exclude a Resource from the MCP surface entirely, set `exportTypes.mcp = false` in its registration.
+- Any deployment exposing MCP to browsers beyond loopback should enable CORS with an explicit (non-`*`) allow-list to activate DNS-rebinding protection.
 
 ### 1.2 Connecting Clients
 
@@ -511,55 +511,122 @@ Public docs server: the two-entry declaration above plus `mcp.application.mountP
 
 ## 4. Operations & Security
 
-### 4.1 Rate Limiting
+### 4.1 Rate Limiting MCP Tool Calls
 
-In-memory token buckets that bound `tools/call` throughput per profile.
+Instructions for the agent to follow when configuring per-tool, per-session, and per-client-identity token-bucket rate limits on Harper MCP profiles.
 
 #### When to Use
 
-Use this skill when tuning MCP throughput, and **always** when a tool is exposed on a public or anonymous-accessible instance — the default limits alone do not stop session-cycling abuse.
+Apply this rule when configuring `mcp.<profile>.rateLimit.*` keys to throttle `tools/call` invocations. Use it when you need to protect a worker from runaway sessions, prevent session-cycling abuse via per-client buckets, or control the rate of session creation via `initialize` limits.
 
 #### How It Works
 
-Four session-scoped limits ship with sensible defaults (per profile, configurable under `mcp.<profile>.rateLimit.*`):
+1. **Understand the bucket model**: Harper maintains two token buckets per `tools/call` invocation — one per `(session, tool)` pair and one per session across all tools. When either bucket is exhausted, `tools/call` returns `result.isError = true` with `kind: "rate_limited"` (not a JSON-RPC error), so the LLM can read the message and back off without tearing down the transport.
 
-- `perToolPerSecond` / `perToolBurst` — sustained rate and burst per (session, tool).
-- `sessionConcurrency` — max in-flight calls per session.
-- `sessionPerSecond` — sustained rate per session across all tools.
+2. **Set per-tool sustained rate and burst**: Configure how fast the per-tool bucket refills and how many back-to-back calls a single tool can absorb.
 
-Limit hits return an `isError` tool result with `kind: 'rate_limited'` and a `scope` field (not a JSON-RPC error), so the calling LLM can see and back off.
+   ```yaml
+   mcp.<profile>.rateLimit.perToolPerSecond: 10
+   mcp.<profile>.rateLimit.perToolBurst: 20
+   ```
 
-**Session buckets are evadable by anonymous clients**: `initialize → call → drop session → repeat` gets fresh buckets every loop. Two additions close that (5.2.0+):
+   Set `perToolPerSecond` to `0` to disable per-tool throttling. Every numeric key accepts a quoted number (`"0.5"`) or a plain number.
 
-- `perClientPerSecond` / `perClientBurst` (default off) — a bucket keyed on **client identity** rather than session, surviving the cycling loop. Burst defaults to the sustained rate, floored at one whole token (a fractional rate like `0.1` = "6/minute" still admits its first call). Denials report `scope: 'per_client'`.
-- `identityHeader` — identity defaults to the client socket IP; deployments behind a reverse proxy can name a trusted header (typically `x-forwarded-for`, first value wins). **Only set this when the proxy strips or replaces the header on untrusted traffic** — a client-controlled identity header lets callers mint fresh identities per request and bypass the limit; Harper logs a startup warning when it is configured.
+3. **Set per-session concurrency and sustained rate**: Limit how many `tools/call` invocations a session may have in flight at once, and cap the aggregate rate across all tools in that session.
 
-All bucket state is in-memory per worker: it resets on restart and is not shared across workers. For durable, restart-surviving limits, see the [Durable Quotas](durable-quotas.md) skill.
+   ```yaml
+   mcp.<profile>.rateLimit.sessionConcurrency: 25
+   mcp.<profile>.rateLimit.sessionPerSecond: 100
+   ```
 
-On Harper versions before 5.2.0 the `perClient*`/`identityHeader` keys are **accepted and silently ignored** — verify `serverInfo.version` and prove a denial once before trusting the limit (see [Enabling MCP](enabling-mcp.md)).
+   Exceeding `sessionConcurrency` returns `kind: "rate_limited"` with `scope: "concurrency"`. `sessionPerSecond` catches sessions that spread calls across many distinct tools to dodge `perTool*` limits.
+
+4. **Enable per-client identity buckets with `perClientPerSecond`**: Session-scoped buckets can be evaded by a client that cycles sessions (`initialize` → call → drop → repeat). The client bucket survives that loop.
+
+   ```yaml
+   mcp.<profile>.rateLimit.perClientPerSecond: 10
+   mcp.<profile>.rateLimit.perClientBurst: 10
+   ```
+
+   Denials surface as an `isError` tool result with `kind: 'rate_limited'`, `scope: 'per_client'`. `perClientPerSecond` defaults to `0` (disabled). `perClientBurst` defaults to the `perClientPerSecond` value floored at `1` — a fractional rate like `0.1` (6 per minute) still yields `perClientBurst: 1` so the bucket can admit at least one call.
+
+5. **Control session creation rate with `initializePerSecond`**: Unlike `perClientPerSecond`, this limit is **on by default** (`10`). A denied `initialize` returns HTTP `429` with a `Retry-After` header — not a tool result with `kind: "rate_limited"`.
+
+   ```yaml
+   mcp.<profile>.rateLimit.initializePerSecond: 10
+   mcp.<profile>.rateLimit.initializeBurst: 50
+   ```
+
+   `Retry-After` is `ceil(1 / initializePerSecond)` seconds. Set `initializePerSecond` to `0` to disable. The denied response body is:
+
+   ```json
+   {
+   	"jsonrpc": "2.0",
+   	"id": 1,
+   	"error": {
+   		"code": -32600,
+   		"message": "MCP initialize rate limit reached; back off and try again"
+   	}
+   }
+   ```
+
+6. **Configure `identityHeader` for reverse-proxy deployments**: When every socket IP is the proxy's IP, set `identityHeader` to the name of a trusted header whose first (client-most) value supplies the real client identity. Typically `x-forwarded-for`.
+
+   ```yaml
+   mcp.<profile>.rateLimit.identityHeader: 'x-forwarded-for'
+   ```
+
+   **Only set this when the fronting proxy strips or replaces the header on untrusted traffic.** A client-controlled identity header lets callers mint fresh identities per request and bypass per-client limits entirely. Harper logs a startup warning when this key is configured.
+
+   Harper canonicalizes the identity before counting:
+   - An IPv4 address with a port, and an IPv4-mapped IPv6 address (`::ffff:192.0.2.1`), count as the plain IPv4 address.
+   - Any other IPv6 address counts as its `/64`.
+   - A request with no identity shares one bucket per profile instead of going unthrottled.
+   - Past 100,000 tracked identities per profile and worker, new identities also share that bucket.
+
+7. **Understand in-memory state limits**: All bucket state is in-memory per worker. It does not survive a restart and is not shared across workers. For durable quotas that persist across restarts and workers, see [durable-quotas.md](durable-quotas.md).
 
 #### Examples
 
-Public docs server with a cost-bearing `answer` tool — bound instantaneous abuse:
+Full rate-limit configuration for a profile:
 
 ```yaml
-mcp:
-  application:
-    mountPath: /mcp
-    rateLimit:
-      perClientPerSecond: 0.5 # 30/minute sustained per client
-      perClientBurst: 5
+mcp.operations.rateLimit.perToolPerSecond: 10
+mcp.operations.rateLimit.perToolBurst: 20
+mcp.operations.rateLimit.sessionConcurrency: 25
+mcp.operations.rateLimit.sessionPerSecond: 100
+mcp.operations.rateLimit.perClientPerSecond: 5
+mcp.operations.rateLimit.perClientBurst: 10
+mcp.operations.rateLimit.initializePerSecond: 10
+mcp.operations.rateLimit.initializeBurst: 50
+mcp.operations.rateLimit.identityHeader: 'x-forwarded-for'
 ```
 
-Behind a proxy that manages `X-Forwarded-For` correctly:
+Fractional per-client rate (6 calls per minute) with default burst:
 
 ```yaml
-mcp:
-  application:
-    rateLimit:
-      identityHeader: x-forwarded-for
-      perClientPerSecond: 0.5
+mcp.application.rateLimit.perClientPerSecond: '0.1'
+# perClientBurst defaults to 1 (floored from 0.1)
 ```
+
+#### Notes
+
+| Key                   | Type            | Default (operations / application)  |
+| --------------------- | --------------- | ----------------------------------- |
+| `perToolPerSecond`    | number (min 0)  | `10` / `25`                         |
+| `perToolBurst`        | number (min 0)  | `20` / `50`                         |
+| `sessionConcurrency`  | integer (min 0) | `25` / `50`                         |
+| `sessionPerSecond`    | number (min 0)  | `100` / `200`                       |
+| `perClientPerSecond`  | number (min 0)  | `0` (disabled)                      |
+| `perClientBurst`      | number (min 0)  | `perClientPerSecond` floored at `1` |
+| `initializePerSecond` | number (min 0)  | `10`                                |
+| `initializeBurst`     | number (min 1)  | `50`                                |
+| `identityHeader`      | string          | unset (socket IP)                   |
+
+- The `initialize` limit is the only one that rejects with HTTP `429`; all other exhausted buckets return an `isError` tool result with `kind: "rate_limited"`.
+- On the application profile, a client spreading connections across HTTP worker threads gets the configured rate and burst once per worker; a client reusing one connection stays on one worker.
+- The operations profile is served by the main thread only, so it admits exactly the configured figure.
+- For quotas that survive restarts and are shared across workers, see [durable-quotas.md](durable-quotas.md).
 
 ### 4.2 Durable Quotas
 

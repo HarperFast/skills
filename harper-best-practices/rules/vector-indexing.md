@@ -5,8 +5,8 @@ metadata:
   mode: generate
   sources:
     - reference/v5/database/schema.md#Vector Indexing
-  sourceCommit: d4cbc1a7dd400462e4a3243f944b3a75d89b29ca
-  inputHash: 1dae788bc850ea90
+  sourceCommit: 1b103f864df3a0d8444297c00e752c29c2e7e82b
+  inputHash: 8f9270223df41d20
 ---
 
 # Vector Indexing
@@ -49,7 +49,7 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-4. **Apply a function predicate during traversal** using `vectorFilter` (JavaScript API only). The function receives each candidate record and must return a synchronous boolean. It must be side-effect free and fast:
+4. **Apply a function predicate** using `vectorFilter` (JavaScript API only) for predicates not expressible as conditions. The function receives each candidate record and must return a synchronous boolean. Records are frozen:
 
    ```javascript
    let results = Document.search(
@@ -76,7 +76,7 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-6. **Include computed distance in results** by adding `$distance` to `select`. Works with both `sort`-based and threshold queries:
+6. **Include computed distance** in results by adding `$distance` to `select`. Works with both `sort`-based ranking and threshold queries:
 
    ```javascript
    let results = Document.search({
@@ -95,7 +95,10 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-8. **Tune filtered traversal** with `ef` and `filterExpansion` when a `vectorFilter` is very selective. The visit budget is `ef * filterExpansion` nodes (`filterExpansion` defaults to `24`):
+   - `distance` — overrides the index distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+   - `ef` — overrides the search exploration budget. Higher values improve recall at the cost of latency.
+
+8. **Tune filtered traversal** when a `vectorFilter` is very selective. Filtered traversal is bounded by `ef * filterExpansion` nodes visited. Raise either knob to trade latency for recall:
 
    ```javascript
    let results = Document.search(
@@ -108,48 +111,89 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    );
    ```
 
-9. **Enforce row-level access control** using `rowFilter` on search and subscription targets (JavaScript API only). Attach it in an operation override. For vector queries, `rowFilter` participates in HNSW traversal so callers receive the k nearest _matching_ records:
+9. **Configure HNSW index parameters** in the schema directive. Use the parameter table below to choose values:
 
-   ```javascript
-   function canReadReport(record, context) {
-   	const user = context.user;
-   	if (user?.role?.permission?.super_user) return true;
-   	return user?.username != null && record.ownerId != null && record.ownerId === user.username;
-   }
-
-   export class Reports extends tables.Reports {
-   	search(target) {
-   		target.rowFilter = canReadReport;
-   		return super.search(target);
-   	}
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float]
+   		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
    }
    ```
 
-### HNSW Index Parameters
+   | Parameter              | Default           | Description                                                                                      |
+   | ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+   | `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                  |
+   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance |
+   | `M`                    | `16`              | Preferred connections per graph layer                                                            |
+   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)       |
+   | `mL`                   | computed from `M` | Normalization factor for level generation                                                        |
+   | `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size                        |
+   | `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                        |
+   | `filterExpansion`      | `24`              | Visit-budget multiplier for filtered search: visits at most `ef * filterExpansion` nodes         |
 
-Configure parameters directly on `@indexed(type: "HNSW", ...)`:
+   > Use `efConstructionSearch` (not `efSearchConstruction`). Changing `efConstructionSearch` on an existing index does not trigger a rebuild. Changing structural parameters (`distance`, `M`, `efConstruction`, `quantization`) does rebuild the index.
 
-| Parameter              | Default           | Description                                                                                      |
-| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
-| `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                  |
-| `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance |
-| `M`                    | `16`              | Preferred connections per graph layer                                                            |
-| `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)       |
-| `mL`                   | computed from `M` | Normalization factor for level generation                                                        |
-| `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size                        |
-| `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                        |
-| `filterExpansion`      | `24`              | Visit-budget multiplier for filtered search: visits at most `ef * filterExpansion` nodes         |
+10. **Enable vector quantization** with `quantization: "int8"` to reduce index size and memory usage. Graph navigation uses quantized distances; nearest-neighbor `sort` queries are re-ranked against full-precision vectors for exact results:
 
-Per-query `sort` descriptor options:
-
-| Option     | Values                                    | Description                                            |
-| ---------- | ----------------------------------------- | ------------------------------------------------------ |
-| `distance` | `"cosine"`, `"euclidean"`, `"dotProduct"` | Overrides the index's distance function for this query |
-| `ef`       | integer                                   | Overrides the search exploration budget for this query |
+    ```graphql
+    type Document @table {
+    	id: Long @primaryKey
+    	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
+    }
+    ```
 
 ## Examples
 
-**Index with custom HNSW parameters:**
+### Basic nearest-neighbor search
+
+```graphql
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float] @indexed(type: "HNSW")
+}
+```
+
+```javascript
+let results = Document.search({
+	sort: { attribute: 'textEmbeddings', target: searchVector },
+	limit: 5,
+});
+```
+
+### Filtered vector search with row-level access control
+
+```javascript
+function canReadReport(record, context) {
+	const user = context.user;
+	if (user?.role?.permission?.super_user) return true;
+	return user?.username != null && record.ownerId != null && record.ownerId === user.username;
+}
+
+export class Reports extends tables.Reports {
+	get(target) {
+		const context = this.getContext();
+		if (target.isCollection) {
+			target.rowFilter = canReadReport;
+		} else if (!canReadReport(this, context)) {
+			return new Response(null, { status: 404 });
+		}
+		return super.get(target);
+	}
+
+	search(target) {
+		target.rowFilter = canReadReport;
+		return super.search(target);
+	}
+
+	subscribe(request) {
+		request.rowFilter = canReadReport;
+		return super.subscribe(request);
+	}
+}
+```
+
+### Custom HNSW parameters with cosine distance
 
 ```graphql
 type Document @table {
@@ -159,45 +203,10 @@ type Document @table {
 }
 ```
 
-**Index with int8 quantization:**
-
-```graphql
-type Document @table {
-	id: Long @primaryKey
-	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
-}
-```
-
-**Nearest-neighbor search with distance included:**
-
-```javascript
-let results = Document.search({
-	select: ['name', '$distance'],
-	sort: { attribute: 'textEmbeddings', target: searchVector },
-	limit: 5,
-});
-```
-
-**Filtered traversal with tuned budget:**
-
-```javascript
-let results = Document.search(
-	{
-		sort: { attribute: 'textEmbeddings', target: searchVector, ef: 200, filterExpansion: 40 },
-		vectorFilter: (record) => record.category === 'rare',
-		limit: 10,
-	},
-	context,
-);
-```
-
 ## Notes
 
-- `vectorFilter` and `rowFilter` are available from the JavaScript API only; they cannot be set through REST or QUERY request data.
-- `vectorFilter` functions must be synchronous, side-effect free, and fast — they can run once per candidate record visited during traversal; verdicts are memoized per query. Records passed to them are frozen.
-- `rowFilter` does not apply to a direct primary-key `get`.
-- Changing `efConstructionSearch` on an existing index does not trigger a rebuild. Structural parameters (`distance`, `M`, `efConstruction`, `quantization`) do rebuild the index when changed.
-- With `quantization: "int8"`, nearest-neighbor `sort` queries re-rank results against full-precision vectors, restoring exact ordering and exact `$distance` values. Distance-threshold (`lt`/`le`) queries filter on the approximate distance.
-- The correct parameter name is `efConstruction` (seeds the construction budget) and `efConstructionSearch` (controls search budget). The name `efSearchConstruction` is a previous documentation error.
-- When no `ef` is passed and `efConstructionSearch` (or `efConstruction`) is not explicitly set, the search budget auto-scales with index size.
-- `cosine` is the default distance function when `distance` is not specified.
+- `vectorFilter` is available from the JavaScript API only — it cannot be expressed in a REST query string. It must be synchronous, side-effect free, and fast. Verdicts are memoized per query.
+- `rowFilter` is also JavaScript API only. It participates in HNSW traversal so callers receive the k nearest _matching_ records. It does not apply to direct primary-key `get` calls. Prefer indexed query conditions for predicates that can be expressed declaratively.
+- When a query passes no `ef` and the index does not explicitly configure `efConstructionSearch` (or `efConstruction`), the search budget auto-scales with index size.
+- Distance-threshold (`lt`/`le`) queries with `quantization: "int8"` filter on approximate distance, not re-ranked full-precision distance.
+- `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.

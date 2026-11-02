@@ -1,0 +1,15 @@
+# Rules manifest for the harper-architecture skill.
+#
+# Declarative source of truth for rule taxonomy and generation mode.
+# See docs/plans-archive/docs-driven-skills.md for the schema.
+#
+# The skill's main content lives in SKILL.md. The one rule here is a worked
+# example with no single docs source, so it is `mode: synthesized`.
+
+rules:
+  - rule: one-component-example
+    description: A worked example of a product catalog with caching, uploads, vector search, live updates, auth, and a frontend built as one Harper component instead of seven services.
+    category: architecture
+    priority: 1
+    order: 1
+    mode: synthesized

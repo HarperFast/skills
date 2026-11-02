@@ -31,6 +31,8 @@ const CATEGORY_IMPACT = {
 	security: 'HIGH',
 	// harper-local-dev categories
 	instances: 'HIGH',
+	// harper-architecture categories
+	architecture: 'MEDIUM',
 };
 
 // URL-path prefix convention for each category.
@@ -46,6 +48,8 @@ const CATEGORY_PREFIX = {
 	security: 'ops-',
 	// harper-local-dev categories
 	instances: 'dev-',
+	// harper-architecture categories
+	architecture: 'arch-',
 };
 
 // Produce the "Rule Categories by Priority" table + "Quick Reference" grouped

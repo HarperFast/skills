@@ -2513,13 +2513,13 @@ await fetch('http://localhost:9926/JokeCache/1', {
 
 ### 4.1 Deploying to Harper Fabric
 
-Instructions for the agent to deploy a Harper application to Harper Fabric using the CLI, verify certification, and roll back using a previous release's `deployment_id`.
+Instructions for the agent to deploy a Harper application to Harper Fabric using the CLI, verify release certification, and roll back by activating a previous release's `deployment_id`.
 
 **Instead of:** Docker Compose stacks; deploying several services separately. Use this rule rather than adding that service. See `harper-architecture`.
 
 #### When to Use
 
-Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, checking that a rolling deploy was certified on every node, or rolling back to a previous release by activating a stored `deployment_id`. See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) for cluster setup, and [deploying-from-ci.md](deploying-from-ci.md) for GitHub Actions workflows.
+Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, checking whether a rolling deploy was certified on each node, or restoring a previous release without rebuilding. Also apply it when provisioning credentials for private-source deploys or staging a build for later activation.
 
 #### How It Works
 
@@ -2530,24 +2530,23 @@ Apply this rule when deploying a Harper application to a remote Harper Fabric cl
    # Provide cluster username and password when prompted
    ```
 
-   For CI/CD pipelines, use workload identity (OIDC) or a refresh token from `harper login --for-ci` instead of a password. See [deploying-from-ci.md](deploying-from-ci.md) for a complete GitHub Actions workflow. For a one-off command, `auth_username=` and `auth_password=` are also available as dedicated parameters (not recommended for production).
+   For CI/CD pipelines, use workload identity (OIDC) or a refresh token from `harper login --for-ci` instead of a password. See [deploying-from-ci.md](deploying-from-ci.md) for a complete GitHub Actions workflow. For a one-off command, `auth_username=` and `auth_password=` are also available as dedicated parameters (not recommended for production); they take precedence over environment variables and saved login tokens.
 
-2. **Deploy the application**: Run `harper deploy` with the required parameters. A bare `target` host defaults to `https://<host>:9925`. Use `restart=rolling` for a staggered, zero-downtime restart across the cluster. Pass `replicated=false` to deploy only to the node you called. Pass `json=true` to print the result as JSON.
+2. **Deploy the application**: Run `harper deploy` with the required parameters. A bare `target` host defaults to `https://<host>:9925`. Use `restart=rolling` for a staggered, zero-downtime restart across the cluster. Pass `replicated=false` to deploy to the called node only. Pass `json=true` to print output as JSON instead of the default YAML.
 
    ```bash
    harper deploy \
      project=<name> \
      package=<package> \
      target=<remote> \
-     restart=rolling \
+     restart=true \
      replicated=true
    ```
 
-3. **Choose a package source**: The `package` parameter accepts any valid npm dependency value.
+3. **Choose a package source**: The `package` field accepts any valid npm dependency value. Omit it to upload the current directory.
 
-   | Format             | Example                                                                                       |
+   | Source             | Example                                                                                       |
    | ------------------ | --------------------------------------------------------------------------------------------- |
-   | Current directory  | Omit `package`                                                                                |
    | npm package        | `package="@harperdb/status-check"`                                                            |
    | GitHub (public)    | `package="HarperFast/status-check"` or `package="https://github.com/HarperFast/status-check"` |
    | Private repo (SSH) | `package="git+ssh://git@github.com:HarperDB/secret-app.git"`                                  |
@@ -2555,27 +2554,65 @@ Apply this rule when deploying a Harper application to a remote Harper Fabric cl
 
    For git tags, use the `semver` directive: `HarperFast/application-template#semver:v1.0.0`. For an SSH-based private repo, register the key with `add_ssh_key` first.
 
-4. **Provision credentials for private repositories**: Run `harper deploy setup=true` once per component and source. (With `provider=github-actions`, it sets up GitHub Actions OIDC deploys instead.) This requires `super_user` privileges and is interactive:
+4. **Provision credentials for private repositories**: Run `harper deploy setup=true` once per component and source. (With `provider=github-actions`, it sets up GitHub Actions OIDC deploys instead.) This requires `super_user` privileges and is interactive — run it with an administrative credential rather than the CI identity it provisions for.
 
    ```bash
    harper deploy setup=true
    ```
 
-   This flow:
+   The command:
    - Fetches the cluster's public key with `get_secrets_public_key`.
    - Encrypts the token locally into an `enc:v1:` envelope.
-   - Stores only the ciphertext with `set_secret`, scoped to the component, never in the global `processEnv` tier.
+   - Stores only the ciphertext with `set_secret` in the component-scoped tier.
    - Grants the component permission to resolve it with `grant_secret`.
 
-   Prefer a `fine-grained` PAT with **Contents: Read-only** on that one repository. Avoid the `gh` CLI session token, which typically carries `read:org`, `gist`, and `workflow` scopes across your whole account.
+   When prompted, prefer a **fine-grained** personal access token with **Contents: Read-only** on the specific repository. Avoid the `gh` CLI session token, which carries `read:org`, `gist`, `workflow`, and `repo` scopes across your whole account.
 
-   Then deploy using the sealed credential:
+   Then deploy with `credential=true`:
 
    ```bash
-   harper deploy by_ref=true credential=true restart=rolling replicated=true
+   harper deploy by_ref=true credential=true restart=true replicated=true
    ```
 
-5. **Stage a release to make live later**: `activate=false` (`activate: false` in the operation) builds and installs the release on each node without making it live, so the slow, fallible part happens when you choose and the cut-over is quick. Cannot be combined with `restart`.
+5. **Check release certification**: A deploy with `restart=true` or `restart=rolling` runs a canary worker that loads the new release before rolling it out. The deploy response includes a `certification` field:
+
+   | `certification` | Meaning                                                                                                                                                                         |
+   | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `certified`     | Canary loaded the release; rollout proceeded.                                                                                                                                   |
+   | `uncertified`   | The rollout went on unchecked: the component ran nothing as it loaded (`loadComponent: dev-only`, an absent `if-installed` component, or safe mode), or no worker was replaced. |
+   | `unavailable`   | Deploy restarted unchecked (no worker loads the component, `isolated` setting changed, already live, or `package: file:<dir>` source).                                          |
+   | `not-requested` | The deploy did not restart.                                                                                                                                                     |
+   - **A rejected release fails the deploy.** If the canary throws while loading the component, exits, or doesn't report within a minute, the deploy fails with `400`. The release it replaced is made live again, and nothing is replicated to other nodes. The error response includes `certification` as an object with `status: "rejected"` or `status: "interrupted"` for a restart that stopped before the canary decided.
+   - **A release with nothing to go back to fails closed.** A rejected first deploy, or one whose previous release was not kept, stays on disk, but no worker on that node loads it, even after Harper restarts. `get_status` reports the component as failed and says why. Deploy a fixed release, or activate the same `deployment_id` again with `restart` once the cause is fixed.
+   - Another deploy or `drop_component` of the component on that node is refused with `409` until the rollout has finished.
+
+6. **Activate a staged build**: Make a staged build live using its `deployment_id`. Pass `restart` here, not on the stage step. Takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host` — those are rejected rather than ignored.
+
+   ```json
+   {
+   	"operation": "deploy_component",
+   	"project": "my-app",
+   	"deployment_id": "a3f8c2d1-..."
+   }
+   ```
+
+   - A `404` response means the id never existed on that node, was pruned, or the release was replaced and not kept. A `409` means the build exists but cannot be activated (e.g., belongs to another component, or files changed after staging).
+   - Activating the release that is already live succeeds and changes nothing — retries are safe.
+
+7. **Deploy by reference for a reproducible source**: `by_ref=true` sends a pinned git reference instead of uploading the working directory, and the cluster fetches and builds that exact commit. It resolves the repository's `origin` remote and the current commit, then deploys `package=git+https://github.com/<owner>/<repo>.git#<full commit SHA>`.
+
+   ```bash
+   harper deploy by_ref=true restart=true replicated=true
+   harper deploy ref=v1.2.0 restart=true replicated=true
+   harper deploy ref=9f8c2a1 restart=true replicated=true
+   ```
+
+   - Tags and branches are resolved to a full commit SHA before the deploy is sent. A `ref` that cannot be resolved stops the deploy — run `git fetch` and retry, or pass a full commit SHA. A full commit SHA is accepted directly with no resolution.
+   - Any other `ref` must name something a clone can fetch: `refs/heads/*` or `refs/tags/*`, or a bare branch or tag name. A qualified ref outside those, such as `refs/pull/123/head`, is rejected up front.
+   - On a GitHub Actions `pull_request` run, `by_ref` deploys the pull request's head commit. If the event payload isn't readable, the deploy stops; pass the commit explicitly.
+   - Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
+
+8. **Stage a build for later activation**: Pass `activate=false` (`activate: false` in the operation) to build and install without making the release live. `activate: false` cannot be combined with `restart`.
 
    ```json
    {
@@ -2586,145 +2623,93 @@ Apply this rule when deploying a Harper application to a remote Harper Fabric cl
    }
    ```
 
-   The response includes a `deployment_id` naming the staged artifact. Staged builds and replaced releases together count against `deployment.stagingRetention.maxCount` (default `5`). Each kept release is a full installed copy of the component, `node_modules` included, so budget disk for it. `0` keeps no replaced release. `file:` directory sources (`package: file:<dir>`) cannot be staged and are not kept as rollback targets.
-
-6. **Activate a staged build**: Make a staged build live using its `deployment_id`. Pass `restart` here, not on the stage step. Takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host` — those are rejected rather than ignored.
-
-   ```json
-   {
-   	"operation": "deploy_component",
-   	"project": "my-app",
-   	"deployment_id": "a3f8c2d1-...",
-   	"restart": true
-   }
-   ```
-
-   - A `404` response means the id never existed on that node, was pruned, or the release was replaced and not kept. A `409` means the build exists but cannot be activated (e.g., belongs to another component, or files changed after staging).
-   - Activating the release that is already live succeeds and changes nothing — retries are safe.
-
-7. **Deploy by reference for a reproducible source**: `by_ref=true` sends a pinned git reference instead of uploading the working directory, and the cluster fetches and builds that exact commit. It resolves the repository's `origin` remote and the current commit, then deploys `package=git+https://github.com/<owner>/<repo>.git#<full commit SHA>`.
-
-   ```bash
-   harper deploy by_ref=true restart=rolling replicated=true
-   ```
-
-   Deploy a specific tag or commit with `ref`:
-
-   ```bash
-   harper deploy ref=v1.2.0 restart=rolling replicated=true
-   harper deploy ref=9f8c2a1 restart=rolling replicated=true
-   ```
-
-   - Tags and branches are resolved to a full commit SHA before the deploy is sent. A `ref` that cannot be resolved stops the deploy — run `git fetch` and retry, or pass a full commit SHA.
-   - Any other `ref` must name something a clone can fetch: `refs/heads/*` or `refs/tags/*`, or a bare branch or tag name. A qualified ref outside those, such as `refs/pull/123/head`, is rejected up front.
-   - Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
-   - On a GitHub Actions `pull_request` run, `by_ref` deploys the pull request's head commit. If the event payload isn't readable, the deploy stops; pass the commit explicitly.
-
-8. **Roll back to a previous release**: Use `list_deployments` to find the `deployment_id` of the release to restore, then activate it with `restart`. This swaps in the exact installed release with no fetch, rebuild, or reinstall.
-
-   ```bash
-   harper deploy project=<name> deployment_id=<id> restart=true
-   ```
-
-   The release it replaces is kept in turn, so you can go forward again the same way.
+   The response includes a `deployment_id` naming the staged artifact. Staged builds and replaced releases together count against `deployment.stagingRetention.maxCount` (default `5`). Each kept release is a full installed copy of the component, `node_modules` included. `file:` directory sources (`package: file:<dir>`) cannot be staged.
 
 9. **Wait for a rolling deploy to finish**: A `deploy_component` with `"restart": "rolling"` returns a `restartJobId`. Poll it with `get_job` to learn whether every node took the release.
 
    ```json
-   { "operation": "get_job", "id": "4a982782-929a-4507-8794-26dae1132def" }
+   { "operation": "get_job", "id": "<restartJobId>" }
    ```
 
    `get_job` returns status `COMPLETE`, `IN_PROGRESS`, or `ERROR`. It answers only on the node that ran the job — any other node returns an empty array.
 
-10. **Check certification after a rolling deploy**: A deploy with `restart=rolling` certifies the release on each node using a canary worker before rolling it out. The response includes a `certification` field:
+10. **Roll back to a previous release**: Use `list_deployments` to find the target `deployment_id`, then activate it with no rebuild or reinstall.
 
-    | `certification` | Meaning                                                                                                                                                                         |
-    | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | `certified`     | The canary loaded the release; rollout proceeded.                                                                                                                               |
-    | `uncertified`   | The rollout went on unchecked: the component ran nothing as it loaded (`loadComponent: dev-only`, an absent `if-installed` component, or safe mode), or no worker was replaced. |
-    | `unavailable`   | Deploy restarted unchecked (no worker loads the component, `isolated` setting changed, already live, or `package: file:<dir>` source).                                          |
-    | `not-requested` | The deploy did not restart.                                                                                                                                                     |
-    - **A rejected release fails the deploy.** If the canary throws while loading the component, exits, or doesn't report within a minute, the deploy fails with `400`. The release it replaced is made live again, and nothing is replicated to other nodes. The error carries `certification` as an object with `status` set to `rejected`, or `interrupted` for a restart that stopped before the canary decided.
-    - **A release with nothing to go back to fails closed.** A rejected first deploy, or one whose previous release was not kept, stays on disk, but no worker on that node loads it, even after Harper restarts. `get_status` reports the component as failed and says why. Deploy a fixed release, or activate the same `deployment_id` again with `restart` once the cause is fixed.
-    - Another deploy or `drop_component` of the component on that node is refused with `409` until the rollout has finished.
-    - A rolling deploy's record reads `rolling_out` until the job has visited every node; filter `list_deployments` without `status` and check each record's `status` for a finished value (`success`, `partial`, `failed`, `staged`). `completed_at` alone does not confirm a finished state.
-    - `list_deployments` returns records newest first. Filter by `project` and `status`; omit `limit` to return every matching record. A deploy in progress reads `pending`, or `loading`, until its `completed_at` is set.
+    ```json
+    {
+    	"operation": "list_deployments",
+    	"project": "my-app",
+    	"limit": 10
+    }
+    ```
+
+    ```json
+    {
+    	"operation": "deploy_component",
+    	"project": "my-app",
+    	"deployment_id": "<previous-deployment-id>",
+    	"restart": true
+    }
+    ```
+
+    - A rolling deploy's record reads `rolling_out` until the job has visited every node; filter `list_deployments` without `status` and check each record's `status` for a finished value (`success`, `partial`, `failed`, `staged`). `completed_at` alone does not confirm a record is finished, since a `rolling_out` record already has it.
+    - A deploy in progress reads `pending`, or `loading` once its release has started loading.
 
 #### Examples
 
-##### Standard rolling deploy to a cluster
+##### Full rolling deploy from a git tag
 
 ```bash
 # Authenticate once
 harper login https://my-cluster.harperdbcloud.com
 
-# Deploy with rolling restart
+# Deploy a pinned tag with rolling restart
 harper deploy \
   project=my-app \
-  package="HarperFast/my-app#semver:v2.1.0" \
+  ref=v1.2.0 \
   target=https://my-cluster.harperdbcloud.com \
   restart=rolling \
   replicated=true
 ```
 
-##### Deploy by reference with a private repo
+##### Stage a build, then activate it
 
 ```bash
-# Provision credential once (requires super_user)
-harper deploy setup=true
-
-# Deploy pinned to current HEAD, authenticating the clone
+# Stage without making live
 harper deploy \
-  by_ref=true \
-  credential=true \
-  restart=rolling \
+  project=my-app \
+  package="@my-org/my-app@1.2.3" \
+  activate=false \
+  target=https://my-cluster.harperdbcloud.com \
   replicated=true
 ```
 
-##### Stage a build, then activate in a maintenance window
+```bash
+# Later: activate by deployment_id with restart
+harper deploy \
+  project=my-app \
+  deployment_id=a3f8c2d1-... \
+  restart=true \
+  target=https://my-cluster.harperdbcloud.com
+```
+
+##### Roll back to a previous release
+
+```json
+{
+	"operation": "list_deployments",
+	"project": "my-app",
+	"limit": 10
+}
+```
+
+Then activate the target `deployment_id`:
 
 ```json
 {
 	"operation": "deploy_component",
 	"project": "my-app",
-	"package": "npm:@my-org/my-app@1.2.3",
-	"activate": false
-}
-```
-
-Response:
-
-```json
-{
-	"deployment_id": "a3f8c2d1-...",
-	"message": "Staged: my-app. Deploy it with deploy_component deployment_id=a3f8c2d1-..."
-}
-```
-
-Activate later:
-
-```json
-{
-	"operation": "deploy_component",
-	"project": "my-app",
-	"deployment_id": "a3f8c2d1-...",
-	"restart": true
-}
-```
-
-##### Roll back using list_deployments
-
-```json
-{ "operation": "list_deployments", "project": "my-app", "status": "success", "limit": 20 }
-```
-
-Then activate the target release:
-
-```json
-{
-	"operation": "deploy_component",
-	"project": "my-app",
-	"deployment_id": "<id of the deployment you want back>",
+	"deployment_id": "<previous-deployment-id>",
 	"restart": true
 }
 ```
@@ -2732,10 +2717,8 @@ Then activate the target release:
 ##### Check rolling deploy job status
 
 ```json
-{ "operation": "get_job", "id": "4a982782-929a-4507-8794-26dae1132def" }
+{ "operation": "get_job", "id": "<restartJobId>" }
 ```
-
-Returns `COMPLETE`, `IN_PROGRESS`, or `ERROR`. The `restartJobId` from the deploy response is the id to query.
 
 ##### Certification rejection response
 
@@ -2757,124 +2740,115 @@ Returns `COMPLETE`, `IN_PROGRESS`, or `ERROR`. The `restartJobId` from the deplo
 
 #### Notes
 
-- `harper login` stores a token; use `harper login --for-ci` to get a refresh token for non-OIDC pipelines. See [deploying-from-ci.md](deploying-from-ci.md) for GitHub Actions OIDC setup.
+- `harper login` stores a token; subsequent `harper deploy` commands to the same target need no credentials.
+- `restart=rolling` waits for every node to take a certified release unless `certification` is `unavailable`. Pass `wait=false` to exit after the receiving node takes the release. Pass `wait_timeout=<ms>` to cap the wait per node (default: ten minutes per node).
 - `replicated=false` deploys to the called node only. On Harper Pro and Fabric, omitting this deploys to every node.
-- `restart=rolling` cannot be combined with `activate=false`.
-- `deployment_id` activation takes no build inputs — passing `package`, `by_ref`, or install options is rejected.
-- `deployment.stagingRetention.maxCount` (default `5`) caps staged builds and kept replaced releases together per component. Oldest are pruned at the next deploy or startup.
-- `file:` directory sources (`package: file:<dir>`) cannot be staged or kept for rollback.
-- `get_job` on a `restartJobId` answers only on the node that received the deploy; any other node returns an empty array.
+- `get_job` answers only on the node that ran the job — `system.hdb_job` is not replicated. For a rolling deploy, that is the node that received the deploy.
 - A deploy-only role that waits for rolling deploys must include `get_job` (and `get_deployment` for certified rolling deploys) in its `operations` allowlist.
-- The `enc:v1:` envelope is the only form of the token that ever leaves your machine or travels over the operations API — the plaintext never does.
-- `super_user` is required to run `harper deploy setup=true`.
-- `not-requested` in `certification` means the deploy completed without a restart; no canary check was performed.
-- A rejected release with no previous release to restore **fails closed**: no worker loads it, even after Harper restarts.
+- `stagingRetention.maxCount` (default `5`) caps staged builds and kept replaced releases combined per component. Oldest are pruned at the next deploy or startup.
+- The `enc:v1:` envelope for sealed credentials is stored scoped to the component, never in the global `processEnv` tier. Requires Harper Pro or Fabric for secrets custody.
+- See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) for cluster setup before deploying.
+- See [deploying-from-ci.md](deploying-from-ci.md) for GitHub Actions OIDC-based deploys with no stored credential.
 
 ### 4.2 Deploying a Harper Application from GitHub Actions with OIDC
 
-Instructions for the agent to configure OIDC trusted publishing so a GitHub Actions workflow can deploy to Harper with no stored credential, using `harper deploy setup=true provider=github-actions` and hand-written policies for tag-triggered releases.
+Instructions for the agent to configure OIDC trusted publishing so a GitHub Actions workflow can deploy to Harper with no stored credential.
 
 #### When to Use
 
-Apply this rule when wiring up a GitHub Actions workflow to deploy a Harper application without storing a `HARPER_CLI_REFRESH_TOKEN` or any other durable credential in CI. Use it for both the one-command branch-deploy setup and the manual policy approach required for tag-triggered releases.
+Apply this rule when wiring up a GitHub Actions workflow to deploy a Harper application without storing a `HARPER_CLI_REFRESH_TOKEN` or any other durable credential in CI. Use it when setting up a new pipeline, rotating access, or diagnosing a rejected OIDC exchange.
 
 #### How It Works
 
-##### One-Command Setup (Branch Deploys)
+##### One-command setup (branch-triggered deploys)
 
-1. **Run setup once** from the project's checkout, signed in as a `super_user`:
+Run once from the project checkout, signed in as a `super_user`:
 
-   ```bash
-   harper deploy setup=true provider=github-actions project=my-app
-   ```
+```bash
+harper login https://my-cluster.example.com:9925
+harper deploy setup=true provider=github-actions project=my-app
+```
 
-   If your workflow file is not `.github/workflows/deploy.yaml`, pass its path explicitly with `workflow=`; otherwise the policy pins `deploy.yaml` and runs of your workflow cannot match it:
+If your workflow file is not `.github/workflows/deploy.yaml`, pass `workflow=`:
 
-   ```bash
-   harper deploy setup=true provider=github-actions project=my-app workflow=.github/workflows/deploy.yml
-   ```
+```bash
+harper deploy setup=true provider=github-actions project=my-app workflow=.github/workflows/deploy.yml
+```
 
-2. **Understand what setup does** — it performs these steps in order:
-   - Resolves the GitHub repository from the checkout's `origin` remote (or `repo=<owner>/<name>`), fetching its numeric id and canonical spelling. For a private repository without `gh`, pass `repository_id=<id>` explicitly.
-   - Validates the workflow file: it must be able to run on `main` (or `branch=`), have a job in the `production` environment (or `environment=`), and grant `id-token: write`. A workflow that can never match stops setup before anything is written. Conditions setup cannot decide are reported as not verified.
-   - Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus the trust policy `github-actions-<project>`.
-   - Reads the policy back and compares it claim by claim with what was written.
-   - Sets the repository's `HARPER_CLI_TARGET` variable via `gh` if one does not already exist.
+The command:
 
-3. **Handle idempotency**: setup only creates — running it again leaves the cluster and variable unchanged. A role, user, or policy that already exists but differs stops setup before writing. To replace a policy, drop it first:
+1. Resolves the GitHub repository's numeric id and canonical name from the `origin` remote (or `repo=<owner>/<name>`). Pass `repository_id=<id>` explicitly for private repos without `gh`. Look up the id with `gh api repos/my-org/my-app --jq .id`.
+2. Validates the workflow file: it must be reachable on `main` (or `branch=`), have a job in the `production` environment (or `environment=`), and grant `permissions: id-token: write`. Checks that cannot be decided (branch patterns, scheduled triggers, reusable workflows) are reported as not verified.
+3. Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus a trust policy named `github-actions-<project>`.
+4. Reads the policy back and compares it claim by claim with what it intended to write.
+5. Sets the repository's `HARPER_CLI_TARGET` variable via `gh`. If the variable already points to a different cluster, setup prints the command to change it and exits non-zero.
 
-   ```bash
-   harper drop_oidc_trust id=github-actions-<project>
-   ```
+Setup only creates — it never overwrites. To replace a policy, drop it first:
 
-   Then run setup again.
+```bash
+harper drop_oidc_trust id=github-actions-<project>
+```
 
-4. **Revoke access when needed**:
-   - Drop the trust policy to stop new runs: `harper drop_oidc_trust id=github-actions-<project>`
-   - Deactivate the user to also invalidate already-issued tokens (valid up to one hour): `harper alter_user username=<project>-ci-deploy active=false`
+Then run setup again.
 
 ---
 
-##### Manual Setup (Tag-Triggered Releases)
+##### Manual setup (tag-triggered deploys)
 
-A workflow that deploys on tags needs a policy written by hand because the tag is part of `workflow_ref` and is unknown when the policy is written. See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for cluster-level context.
+Tag-triggered workflows cannot pin `workflow_ref` because the tag is unknown at policy-write time. Create the role, user, and policy by hand.
 
-1. **Log in as `super_user`**:
+**1. Create a deploy-only role and user:**
 
-   ```bash
-   harper login https://my-cluster.example.com:9925
-   ```
+```bash
+harper add_role role=ci_deploy permission='{"operations":["deploy_component","get_job","get_deployment","registration_info"]}'
+harper add_user username=ci-deploy role=ci_deploy active=true password="$(openssl rand -base64 32)"
+```
 
-2. **Create a deploy-only role and user**:
+- `deploy_component` — the deploy itself.
+- `get_deployment` — required for `harper deploy restart=rolling` to wait on every node; without it that wait fails with `403`.
+- `get_job` — required for the wait-step polling loop; without it the wait step fails with `403`.
+- `registration_info` — version check before upload; omitting it logs a refused operation on every run.
+- `restart_service` is not needed: Harper starts the rolling restart's job itself. The password is required to create the user but a GitHub Actions pipeline never uses it, so this command discards it.
 
-   ```bash
-   harper add_role role=ci_deploy permission='{"operations":["deploy_component","get_job","get_deployment","registration_info"]}'
-   harper add_user username=ci-deploy role=ci_deploy active=true password="$(openssl rand -base64 32)"
-   ```
+**2. Add a trust policy pinned to the workflow file and environment:**
 
-   - `deploy_component` — the deploy itself.
-   - `get_deployment` — required for `harper deploy restart=rolling` to wait on every node; without it that wait fails with `403`.
-   - `get_job` — what the wait step polls when the deploy did not wait itself; without it the wait step fails with `403`.
-   - `registration_info` — version check `harper deploy` makes before uploading; without it the deploy still works but the cluster logs a refused operation on every run.
-   - `restart_service` is not needed: Harper starts the rolling restart's job itself. The password is required to create the user but a GitHub Actions pipeline never uses it, so this command discards it.
+```bash
+harper add_oidc_trust \
+  id=my-app-release \
+  issuer=https://token.actions.githubusercontent.com \
+  audience=https://my-cluster.example.com:9925/ \
+  user=ci-deploy \
+  claims='{"repository_id":"67890","workflow_path":"my-org/my-app/.github/workflows/deploy.yml","environment":"production"}'
+```
 
-3. **Add a trust policy** pinning `repository_id`, `workflow_path`, and `environment` (not `workflow_ref`, since the tag is unknown):
+Key claim fields:
 
-   ```bash
-   harper add_oidc_trust \
-     id=my-app-release \
-     issuer=https://token.actions.githubusercontent.com \
-     audience=https://my-cluster.example.com:9925/ \
-     user=ci-deploy \
-     claims='{"repository_id":"67890","workflow_path":"my-org/my-app/.github/workflows/deploy.yml","environment":"production"}'
-   ```
+| Claim           | Purpose                                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `repository_id` | Immutable repository pin; survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.                      |
+| `workflow_path` | Pins the workflow file; derived from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`. |
+| `environment`   | Ref gate; without it any branch push can mint a token.                                                                  |
 
-   - `repository_id` is immutable and survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.
-   - `workflow_path` is derived from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`.
-   - `environment` gates the ref. Without it, anyone who can push a branch could mint a token.
-   - `audience` must be the exact target URL with its port and a **trailing slash**.
-   - A workflow that deploys on a push to `main` can pin `workflow_ref` (`my-org/my-app/.github/workflows/deploy.yml@refs/heads/main`) instead, which gates the ref by itself.
+- `audience` must be the exact target URL with its port and a **trailing slash**.
+- In the GitHub repository's **Settings → Environments → production**, set **Deployment branches and tags** to the `v*` tag pattern.
+- A workflow that deploys on a push to `main` can pin `workflow_ref` (`my-org/my-app/.github/workflows/deploy.yml@refs/heads/main`) instead, which gates the ref by itself.
 
-4. **Configure the GitHub environment**: in **Settings → Environments → production**, set **Deployment branches and tags** to the `v*` tag pattern. Add required reviewers if a release needs approval.
+**3. Store the target as a repository variable (not a secret):**
 
-5. **Store the target as a repository variable** (not a secret — it is not sensitive):
-
-   ```bash
-   gh variable set HARPER_CLI_TARGET --repo my-org/my-app --body https://my-cluster.example.com:9925/
-   ```
+```bash
+gh variable set HARPER_CLI_TARGET --repo my-org/my-app --body https://my-cluster.example.com:9925/
+```
 
 ---
 
-##### How OIDC Authentication Works in the Workflow
+##### How OIDC authentication works in the workflow
 
-A job with `id-token: write` asks GitHub for an identity token. The Harper CLI trades it for a one-hour operation token when all four conditions hold:
+Every `harper` command in a job authenticates through the trust policy automatically when all four conditions hold:
 
-1. The job declares `permissions: id-token: write`.
-2. `HARPER_CLI_TARGET` equals the policy's `audience` (URL with port and trailing slash).
-3. The run matches the policy's claims: `repository_id`, `workflow_path`/`workflow_ref`, and `environment`.
-4. **Nothing else is configured to authenticate.** `auth_username=`/`auth_password=`, credentials in the target URL, `HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_REFRESH_TOKEN` or `HARPER_CLI_OPERATION_TOKEN`, and a saved `harper login` all outrank the exchange.
-
-Nothing in the workflow names the policy. Every `harper` command in the job (`harper deploy`, `harper get_job`, etc.) authenticates through it automatically.
+1. **The job declares `permissions: id-token: write`.**
+2. **`HARPER_CLI_TARGET` is the policy's `audience`.** The CLI requests its token for the target it connects to, so the target must be the URL the policy names, with its port and trailing slash. It is not sensitive, so use `vars.HARPER_CLI_TARGET` rather than a secret.
+3. **The run matches the policy's claims**: its `repository_id`, `workflow_path`/`workflow_ref`, and `environment`.
+4. **Nothing else is configured to authenticate.** `auth_username=`/`auth_password=`, credentials in the target URL, `HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_REFRESH_TOKEN` or `HARPER_CLI_OPERATION_TOKEN`, and a saved `harper login` all outrank the OIDC exchange.
 
 The exchange runs only when GitHub sets `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which it does for a job that declares `permissions: id-token: write`. Without them, the CLI falls through to its other credential sources rather than reporting a failure.
 
@@ -2885,87 +2859,20 @@ Requesting a GitHub Actions identity token for https://my-instance.harperdb.io:9
 Authenticated as 'ci-deploy' via OIDC trust policy 'my-app-prod'.
 ```
 
-To diagnose a rejected exchange, use `list_oidc_trust` and check the instance's `oidc-trust` log. The server does not report which check failed.
+Diagnose a rejected exchange with `list_oidc_trust` and the instance's `oidc-trust` log. The server does not report which check failed.
 
 ---
 
-##### Policy Specificity for GitHub Actions
+##### Revoking access
 
-For `https://token.actions.githubusercontent.com`, a policy must satisfy all three of these:
-
-| Requirement            | Satisfied by one of                                                      | Left open otherwise                             |
-| ---------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
-| **Pin the repository** | `repository_id`, `repository`                                            | Any repository                                  |
-| **Pin the workflow**   | `workflow_ref`, `workflow_path`, `job_workflow_ref`, `job_workflow_path` | Any workflow in that repository                 |
-| **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
-
-Additional constraints:
-
-- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
-- `repository_id` is preferred over `repository` because it is immutable.
-- A tag-triggered release cannot pin `workflow_ref` since the tag is unknown when the policy is written — pin `workflow_path` and gate on `environment` instead.
-
----
-
-##### Diagnosing and Managing Policies
-
-- **List all policies** (including disabled ones) — `super_user` only:
-
-  ```bash
-  harper list_oidc_trust
-  ```
-
-  `list_oidc_trust` returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, and optionally `invalid_reason`. Check `invalid_reason` first when diagnosing a rejected exchange — it is set when the policy is malformed or its user was deleted or deactivated after the policy was written.
-
-- **Drop a policy** — stops future exchanges; does not revoke already-issued tokens:
-
-  ```bash
-  harper drop_oidc_trust id=my-app-release
-  ```
-
-  To also stop tokens already in circulation, deactivate the user with `harper alter_user`.
-
----
-
-##### Durable Credentials for Private Sources
-
-Skip this section if your repository is public or your package is on a public registry.
-
-Harper keeps the credential (encrypted, in the secrets store) with the component's configuration so that later installs — a new node joining the cluster, a reinstall after a restore — can fetch the package again. Use a durable token, not the workflow's ephemeral `GITHUB_TOKEN`.
-
-- For a private repository (git-tag deploys): a fine-grained personal access token with **Contents: read-only** permission scoped to the application repository.
-- For GitHub Packages: a token with the `read:packages` scope.
-
-Store it in Harper once from your machine:
-
-```bash
-# For a private repository:
-harper deploy setup=true provider=github project=my-app
-
-# For GitHub Packages:
-harper deploy setup=true provider=npm project=my-app registry=https://npm.pkg.github.com scope=@my-org
-```
-
-The name is derived from the component and the host: `deploy.my-app.git.github.com` for the repository, and `deploy.my-app.npm.pkg.github.com` for GitHub Packages. Reference it by that name in the workflow — the token never appears in your pipeline.
-
----
-
-##### Checking the Deployment Record
-
-`deploy.json` carries a `deployment_id`. Read the deployment record with:
-
-```bash
-harper get_deployment deployment_id="$(jq -r .deployment_id deploy.json)" json=true
-```
-
-- Go back to a previous release by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. To deploy a release that is no longer kept, re-run the deploy with its tag or version.
-- Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
+- **Stop future runs:** `harper drop_oidc_trust id=github-actions-<project>`
+- **Also invalidate tokens already issued:** `harper alter_user username=<project>-ci-deploy active=false` — a minted JWT is valid for one hour; dropping the policy alone does not revoke it.
 
 #### Examples
 
 ##### Path A: Deploy a Tagged Release (`v1.2.3`) from the Repository
 
-Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit even if the tag is moved later. If this repository needs a build step to be runnable, stop — don't reach for `install_allow_scripts`. Use Path B instead.
+Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit even if the tag is moved later. If this repository needs a build step to be runnable, do not reach for `install_allow_scripts` — use Path B instead.
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -3014,24 +2921,22 @@ jobs:
           exit 1
 ```
 
-For a private repository, add `credential=true` to the deploy command to attach the `deploy.my-app.git.github.com` reference.
+For a private repository, add `credential=true` to the deploy command.
 
 Key details:
 
 - **No secrets.** `HARPER_CLI_TARGET` is the only thing the workflow is given. `id-token: write` lets the CLI request an identity token, and `environment: production` puts the `environment` claim the trust policy requires into it.
-- **`persist-credentials: false`** keeps the job's `GITHUB_TOKEN` out of `.git/config`, where `actions/checkout` otherwise leaves it for every later step.
+- **`persist-credentials: false`** keeps the job's `GITHUB_TOKEN` out of `.git/config`, where `actions/checkout` otherwise leaves it for every later step. From v6 it saves the token in a file under `$RUNNER_TEMP` rather than in `.git/config`, which `harper deploy` uploads with the checkout, but later steps can still read it.
+- **`npm install --global harper@^5.3`** pins the CLI's major version; 5.3 is the minimum that supports OIDC authentication.
 - **`replicated` isn't needed.** On Harper Fabric and Harper Pro, a deploy goes to every node unless you pass `replicated=false`. Each node fetches and installs the package itself.
-- **`restart=rolling`** restarts nodes one at a time so the cluster keeps serving throughout. Use `restart=true` for a single-node or dev instance.
+- **`restart=rolling`** restarts nodes one at a time. `restart=true` deploys to every node at once.
+- **`json=true`** prints the deploy's result as JSON on stdout; progress and authentication messages go to stderr.
 - **`certification`**: on v5.4.0 and later, `restart=rolling` loads the release in a canary worker on each node before that node serves it, so a release that fails to load is rejected. The `certification` field in the deploy result reflects whether this ran.
-- **`load-balanced` clusters**: the rolling restart job lives on one node. `get_job` polls through a load-balanced URL may reach a node that did not receive the deploy and return an empty list. If your load balancer routes that way, use one node's own URL for both the deploy and the wait, and as the trust policy's `audience`.
-- **`.[0].status`** is the field the wait step reads from `get_job` output to determine `COMPLETE`, `ERROR`, or still running.
-- **`restartJobId`** is the field in `deploy.json` the wait step uses to identify the rolling restart job to poll.
+- **The job lives on one node.** Harper does not replicate jobs. Through a **load-balanced** cluster URL, at least one `get_job` poll must reach the node that received the deploy. If your load balancer routes polls to a different node, use one node's direct URL for both the deploy and the wait, and as the trust policy's `audience`. See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for multi-node deployment considerations.
 
 ---
 
-##### Path B: Build in CI, Publish to GitHub Packages, Deploy the Artifact
-
-The flow: push a tag → CI builds and tests → `npm publish` to GitHub Packages → `harper deploy` installs the published version from the registry.
+##### Path B — Build in CI, publish to GitHub Packages, deploy the artifact
 
 Give `package.json` a scoped name and `"publishConfig": { "registry": "https://npm.pkg.github.com" }`:
 
@@ -3045,6 +2950,8 @@ Give `package.json` a scoped name and `"publishConfig": { "registry": "https://n
 ```
 
 The deploy installs the version the tag names, and `npm publish` publishes the version in `package.json`, so they must agree: `npm version 1.2.3` sets one and creates the other as `v1.2.3`.
+
+For GitHub Packages, store a durable token with the `read:packages` scope in Harper once with `harper deploy setup=true provider=npm project=my-app registry=https://npm.pkg.github.com scope=@my-org`. The name is derived from the component and the host: `deploy.my-app.git.github.com` for the repository, and `deploy.my-app.npm.pkg.github.com` for GitHub Packages. Reference it by that name in the workflow — the token never appears in your pipeline. The workflow's ephemeral `GITHUB_TOKEN` is right for publishing and `npm ci` inside the job, but installs that happen after the workflow ends need the durable token.
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -3116,34 +3023,41 @@ jobs:
           exit 1
 ```
 
-The workflow has two jobs so the job that can request an identity token runs none of your code:
+The two-job structure is intentional: only `deploy` holds `id-token: write` and `environment: production`, so only its token carries the `environment` claim the trust policy requires. The `publish` job runs all repository code and cannot request an identity token.
 
-- **`publish`** installs, builds, tests, and publishes with `contents: read` and `packages: write` only. It cannot request an identity token.
-- **`deploy`** runs once `publish` has finished (`needs: publish`), holds the `production` environment and `id-token: write`, installs only the Harper CLI, then deploys the published version.
+---
 
-Note the two credentials play different roles:
+##### Checking the deployment record
 
-- **Publishing** and installing private `@my-org` dependencies with `npm ci` use the workflow's ephemeral `GITHUB_TOKEN`. Both happen entirely inside the `publish` job, so an ephemeral token is exactly right.
-- **Installing on Harper nodes** uses the durable `read:packages` token stored as `deploy.my-app.npm.pkg.github.com` — because installs can happen long after this workflow ends.
+```bash
+harper get_deployment deployment_id="$(jq -r .deployment_id deploy.json)" json=true
+```
+
+`list_oidc_trust` returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, and optionally `invalid_reason`. Check `invalid_reason` first when diagnosing a rejected exchange — it is set when the policy cannot authenticate anyone because it is malformed or because the named user was deleted or deactivated:
+
+```bash
+harper list_oidc_trust
+```
+
+- Go back to a previous release by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. To deploy a release that is no longer kept, re-run the deploy with its tag or version.
+- Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
 
 #### Notes
 
-- **`id-token: write`** must appear on the specific job that runs `harper` commands. Every step in that job can request an identity token — run none of the repository's code in it.
-- **`vars.HARPER_CLI_TARGET`** is a repository variable, not a secret. The URL is not sensitive.
-- **`HARPER_CLI_REFRESH_TOKEN`** and any other configured credential outrank the OIDC exchange. Remove stored credentials from the workflow before enabling OIDC.
-- **`npm install --global harper@^5.3`** pins the CLI's major version. 5.3 is the first CLI that authenticates with the identity token.
-- **`runs-on: ubuntu-latest`** is required for the wait-step shell logic shown above.
-- **`push:` / `tags: ['v*']`** triggers the workflow on version tags.
-- **`jobs:`** structure matters for security: separate `publish` and `deploy` jobs so the job with `id-token: write` runs none of the repository's build code.
-- **`add_oidc_trust`** replaces a policy with the same `id`. Setup checks just before writing, but a policy created by another `super_user` in that moment would still be overwritten.
-- **`deploy_component`** in the role allows deploying any component on the cluster, not only the named project. Access control comes down to who can merge to the branch or push a matching tag.
-- **`token.actions.githubusercontent.com`** is the required `issuer` value for GitHub Actions OIDC policies.
-- **`environment: production`** on the job puts the `environment` claim into the identity token. Without it the token carries no environment claim and cannot match a policy that requires one.
-- **`Deployment branches and tags`**: set this in **Settings → Environments → production** to `v*` to restrict which tags can deploy.
-- **`alter_user`** deactivates a user and stops already-issued tokens from authorizing further operations. Use it alongside `drop_oidc_trust` when responding to a suspected compromise.
-- **`invalid_reason`** on a `list_oidc_trust` entry means the policy cannot authenticate anyone — check it first when diagnosing a rejected exchange.
-- **`github-actions-<project>`** is the trust policy id setup creates.
-- **`<project>-ci-deploy`** is the user name setup creates. It can deploy any component on the cluster.
+- `audience` in `add_oidc_trust` must exactly match `HARPER_CLI_TARGET`: the full URL with port and **trailing slash**. A mismatch silently prevents the exchange.
+- `HARPER_CLI_REFRESH_TOKEN` and any other configured credential outrank the OIDC exchange. Remove stored credentials from the runner before enabling OIDC.
+- The `<project>-ci-deploy` user can deploy **any component** on the cluster, not only the named project. Access control comes down to who can merge to the protected branch or push a `v*` tag.
+- Policy specificity for `token.actions.githubusercontent.com` requires all three: pin the repository (`repository_id`), pin the workflow (`workflow_ref`, `workflow_path`, `job_workflow_ref`, or `job_workflow_path`), and gate the ref (`workflow_ref`, `ref`, or `environment`).
+
+  | Requirement            | Satisfied by one of                                                      | Left open otherwise                             |
+  | ---------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+  | **Pin the repository** | `repository_id`, `repository`                                            | Any repository                                  |
+  | **Pin the workflow**   | `workflow_ref`, `workflow_path`, `job_workflow_ref`, `job_workflow_path` | Any workflow in that repository                 |
+  | **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
+
+- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
+- `repository_id` is immutable and survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.
+- `drop_oidc_trust` stops future exchanges but does not revoke tokens already issued. Follow it with `alter_user username=<project>-ci-deploy active=false` when responding to a suspected compromise.
 
 ### 4.3 Creating a Harper Fabric Account and Cluster
 
@@ -3646,11 +3560,11 @@ loadEnv:
 
 ### 4.8 v5 Upgrade: Breaking Changes and Migration Guide
 
-Instructions for the agent to follow when migrating a Harper application to v5, covering all breaking changes and required code updates.
+Instructions for the agent to apply when migrating a Harper application to v5, covering all breaking changes and required code updates.
 
 #### When to Use
 
-Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors after upgrading, or when reviewing application code for v5 compatibility. Every breaking change listed here must be addressed before the application will behave correctly under v5.
+Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors related to module loading, transactions, record access, or process spawning after a v5 upgrade, or when scaffolding new v5-compatible application code.
 
 #### How It Works
 
@@ -3660,12 +3574,12 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    import { tables } from 'harper';
    ```
 
-2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to compile native binaries), set `allowInstallScripts` in your deployment options.
+2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to install native binaries), set `allowInstallScripts` in your deployment options.
 
-3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned object. Replace it with `loadedFromSource` on the `RequestTarget`:
+3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned record. Use a `RequestTarget` and check `loadedFromSource` on the target instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    if (record.wasLoadedFromSource()) {
    	// record was loaded from origin (not cache)
@@ -3673,8 +3587,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    ```
 
    ```javascript
-   // After
-   import { getContext } from 'harper';
+   // After (v5):
    const target = new RequestTarget();
    target.id = id;
    const record = await Table.get(target);
@@ -3683,34 +3596,23 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   The record objects do have `getUpdatedTime` and `getExpiresAt` methods available.
+   The record objects still expose `getUpdatedTime` and `getExpiresAt` methods.
 
-4. **Handle frozen records**: The record object returned by `Table.get` is frozen — you cannot mutate it directly. Copy it before modifying:
+4. **Handle frozen records**: Records returned by `Table.get` are frozen — you cannot mutate them directly. Spread into a new object instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    record.property = 'changed';
    ```
 
    ```javascript
-   // After
+   // After (v5):
    let record = await Table.get(id);
    record = { ...record, property: 'changed' };
    ```
 
-5. **Register allowed spawn commands via `allowedSpawnCommands`**: `spawn` and `execFile` may only launch executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml`. Only the first token of the command is matched. `exec` is not usable through the substituted module, and `execSync` always throws.
-
-   ```yaml
-   applications:
-     allowedSpawnCommands:
-       - npm
-       - node
-   ```
-
-   Additionally, `spawn`, `execFile`, and `fork` now require a `name` property in the `options` argument to prevent process multiplication across threads.
-
-6. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other calls now automatically inherit the current transaction. Code that previously omitted context to bypass a transaction will no longer work as expected. Explicitly commit the transaction or wrap calls in a new transaction to read updated data:
+5. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other table calls now automatically inherit the current transaction. If your code previously omitted context to bypass a transaction and read the latest data, that workaround no longer works. Explicitly commit the transaction and/or wrap reads in a new transaction using `getContext` and `transaction` from `'harper'`.
 
    ```javascript
    import { setTimeout as delay } from 'node:timers/promises';
@@ -3727,47 +3629,45 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   Use `getContext` (exported from `'harper'`) to access the current transaction anywhere without passing context explicitly.
-
-7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
-
-8. **Handle response `headers`**: If you return an object from a REST method with a `headers` property, Harper v5 will use it as the response headers. Ensure any object you return that incidentally has a `headers` property is intentional.
-
-9. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. Control this with the `moduleLoader` setting:
-
-   | Value                | Behavior                                         |
-   | -------------------- | ------------------------------------------------ |
-   | `vm-current-context` | Default. Shares intrinsics with Harper.          |
-   | `vm`                 | Separate context and intrinsics per application. |
-   | `native`             | Standard `import()`, no application context.     |
-   | `compartment`        | SES Compartments; advanced and heavier.          |
-
-   The default (`vm-current-context`) avoids `instanceof` failures for values crossing the application/Harper boundary. Choose `vm` only if you need separate per-application intrinsics. Use `native` if the VM loader causes compatibility problems you cannot otherwise resolve.
-
-   To disable the VM loader entirely and restore pre-v5 behavior:
+6. **Register allowed spawn commands**: Spawning child processes via `node:child_process` is now restricted. Only executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml` may be spawned. Additionally, `spawn`, `execFile`, and `fork` require a `name` property in the `options` argument to prevent process multiplication across threads. `exec` is not usable through the substituted module, and `execSync` always throws.
 
    ```yaml
    applications:
-     moduleLoader: native
+     allowedSpawnCommands:
+       - npm
+       - node
    ```
 
-   Note: `logger` and per-app `config` are not available in `native` mode.
+7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
 
-   If the goal is only to fix package compatibility while keeping application context for first-party code, `dependencyLoader: native` is a narrower option — it uses native loading only for npm packages while keeping the VM loader for application source files.
+8. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. The default mode is `vm-current-context`, which shares JavaScript intrinsics (`Object`, `Array`, `Promise`, etc.) with Harper to avoid `instanceof` and identity-check failures across the application/Harper boundary.
 
-10. **Handle intrinsic `lockdown`**: The default `lockdown` mode (`freeze-after-load`) freezes JavaScript intrinsics (`Object`, `Array`, `Promise`, `Map`, `Set`, etc.) after all application code loads. Any code or dependency that modifies intrinsic prototypes at runtime will throw a `TypeError`. If a dependency requires a temporary workaround, set:
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+     moduleLoader: vm-current-context # vm-current-context (default) | vm | native | compartment
+     dependencyLoader: auto # auto (default) | app | native
+     allowedDirectory: app # app (default) | any
+   ```
 
-    ```yaml
-    applications:
-      lockdown: none
-    ```
+   - Use `vm` only if you need separate per-application intrinsics.
+   - Use `native` to restore pre-v5 behavior (standard `import()`), but note that application-specific context (tagged `logger`, per-app `config`) will not be available.
+   - Use `dependencyLoader: native` to apply native loading only to npm packages while keeping the VM loader for first-party source files.
 
-11. **Check `allowedDirectory` in production**: In production, applications can only load modules from within their own directory tree (`allowedDirectory: app`). If your application loads files from outside its directory, set:
+9. **Configure `lockdown`**: The default `lockdown: seal-after-load` seals intrinsic prototypes (`Object`, `Array`, `Promise`, `Map`, `Set`, and others) after all components load, blocking prototype pollution. Before v5.4.0 the default was `freeze-after-load`, which froze the intrinsics instead. If a dependency mutates an intrinsic prototype at runtime and throws a `TypeError`, set `lockdown: none` as a temporary workaround.
 
-    ```yaml
-    applications:
-      allowedDirectory: any
-    ```
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+   ```
+
+   An in-place upgrade from v4 retains the existing config file, which has no `lockdown` value — Harper will not lock intrinsics until you explicitly add the key.
+
+10. **Check `allowedDirectory` in production**: In production, `allowedDirectory: app` is the default, restricting module loading to the application's own directory tree. If your application loads modules from outside its directory, set `allowedDirectory: any`. This restriction does not apply in dev mode.
+
+11. **Update response objects**: If a REST method returns an object with a `headers` property, Harper v5 will use it as the response headers. Ensure any object with a `headers` property returned from a REST method is intentional.
+
+12. **Use `getContext` instead of passing context explicitly**: Context no longer needs to be threaded through every call. Access it via `getContext` exported from `'harper'`. Prefer `static` methods on Resources/Tables for endpoints and access request information from the `target` argument or via `getContext`.
 
 #### Examples
 
@@ -3775,7 +3675,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
 
 ```yaml
 applications:
-  lockdown: freeze-after-load
+  lockdown: seal-after-load
   moduleLoader: vm-current-context
   dependencyLoader: auto
   allowedDirectory: app
@@ -3784,15 +3684,18 @@ applications:
     - node
 ```
 
-##### Updated import and context access
+##### Disabling the VM loader entirely
 
-```javascript
-import { tables, getContext, transaction } from 'harper';
+```yaml
+applications:
+  moduleLoader: native
 ```
 
-##### Checking `loadedFromSource` after `Table.get`
+##### Checking `loadedFromSource` and using `getContext`
 
 ```javascript
+import { getContext, transaction } from 'harper';
+
 const target = new RequestTarget();
 target.id = id;
 const record = await Table.get(target);
@@ -3801,7 +3704,7 @@ if (target.loadedFromSource) {
 }
 ```
 
-##### Copying a frozen record before mutation
+##### Spreading a frozen record
 
 ```javascript
 let record = await Table.get(id);
@@ -3810,11 +3713,11 @@ record = { ...record, property: 'changed' };
 
 #### Notes
 
-- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available in `native` mode.
-- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `vm-current-context` (the default) to avoid this.
-- `import()` behavior depends on the `moduleLoader` setting. In `native` mode, standard Node.js `import()` is used with no application context.
-- Automatic context tracking simplifies code but requires explicit `commit()` or new `transaction()` calls when you need to observe data written within the same transaction.
-- Use `getContext` from `'harper'` rather than passing context manually through every call — this is the recommended pattern in v5.
+- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available with `moduleLoader: native`.
+- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `moduleLoader: vm-current-context` (the default) to avoid this.
+- `import()` behavior depends on the selected `moduleLoader`. With `native`, it behaves as standard Node.js `import()` with no application context.
+- The `exec` function from `node:child_process` is not usable through the substituted module in v5; `execSync` always throws.
+- Record objects returned by `Table.get` expose `getUpdatedTime` and `getExpiresAt` even though they are frozen plain objects.
 
 ### 4.9 Delegating to the Built-in Agent
 

@@ -28,26 +28,25 @@ metadata:
       Actions
     - reference/v5/operations-api/operations.md#`list_oidc_trust`
     - reference/v5/operations-api/operations.md#`drop_oidc_trust`
-  sourceCommit: 62139d5475bb9993c3aa6bc8d23420ea7610f739
-  inputHash: 4c8540f0a9990f14
+  sourceCommit: 6cd8a2ea6372924486aac46a5d96ba00c10eff07
+  inputHash: e56285cb04eaf135
 ---
 
 # Deploying a Harper Application from GitHub Actions with OIDC
 
-Instructions for the agent to configure OIDC trusted publishing so a GitHub Actions workflow can deploy to Harper with no stored credential.
+Instructions for the agent to follow when setting up and executing Harper deployments from GitHub Actions using OIDC trusted publishing, so no Harper credential is stored in CI.
 
 ## When to Use
 
-Apply this rule when wiring up a GitHub Actions workflow to deploy a Harper application without storing a `HARPER_CLI_REFRESH_TOKEN` or any other durable credential in CI. Use it when setting up a new pipeline, rotating access, or diagnosing a rejected OIDC exchange.
+Apply this rule when wiring a GitHub Actions workflow to deploy a Harper application without storing a `HARPER_CLI_REFRESH_TOKEN` or any other durable Harper credential in CI. Use it when running `harper deploy setup=true provider=github-actions` for the first time, when writing or debugging a deploy workflow, or when managing OIDC trust policies on the cluster.
 
 ## How It Works
 
-### One-command setup (branch-triggered deploys)
+### 1. One-command cluster setup (branch-triggered deploys)
 
-Run once from the project checkout, signed in as a `super_user`:
+Run once from the project's checkout, signed in as a `super_user` (`harper login`):
 
 ```bash
-harper login https://my-cluster.example.com:9925
 harper deploy setup=true provider=github-actions project=my-app
 ```
 
@@ -57,42 +56,50 @@ If your workflow file is not `.github/workflows/deploy.yaml`, pass `workflow=`:
 harper deploy setup=true provider=github-actions project=my-app workflow=.github/workflows/deploy.yml
 ```
 
-The command:
+The command does the following automatically:
 
-1. Resolves the GitHub repository's numeric id and canonical name from the `origin` remote (or `repo=<owner>/<name>`). Pass `repository_id=<id>` explicitly for private repos without `gh`. Look up the id with `gh api repos/my-org/my-app --jq .id`.
-2. Validates the workflow file: it must be reachable on `main` (or `branch=`), have a job in the `production` environment (or `environment=`), and grant `permissions: id-token: write`. Checks that cannot be decided (branch patterns, scheduled triggers, reusable workflows) are reported as not verified.
-3. Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus a trust policy named `github-actions-<project>`.
-4. Reads the policy back and compares it claim by claim with what it intended to write.
-5. Sets the repository's `HARPER_CLI_TARGET` variable via `gh`. If the variable already points to a different cluster, setup prints the command to change it and exits non-zero.
+1. Resolves the GitHub repository from the `origin` remote (or `repo=<owner>/<name>`), fetching its numeric id and canonical name. For a private repository without `gh`, pass `repository_id=<id>` explicitly.
+2. Validates the workflow file: it must be able to run on `main` (or `branch=`), have a job in the `production` environment (or `environment=`), and declare `permissions: id-token: write`. Checks that cannot be decided (branch patterns, scheduled triggers, reusable workflows) are reported as not verified.
+3. Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus a trust policy named `github-actions-<project>`. The policy's `audience` is the target URL with its port and a trailing slash.
+4. Reads the policy back and compares it claim by claim with what was written.
+5. Sets the repository's `HARPER_CLI_TARGET` variable via `gh` if one does not already exist.
 
-Setup only creates — it never overwrites. To replace a policy, drop it first:
+Setup only creates — it never overwrites. Re-running it leaves the cluster and variable unchanged. A role, user, or policy that already exists but differs stops setup before writing anything.
+
+To replace a policy, drop it first then re-run setup:
 
 ```bash
 harper drop_oidc_trust id=github-actions-<project>
+harper deploy setup=true provider=github-actions project=my-app
 ```
 
-Then run setup again.
+To revoke pipeline access:
 
----
+```bash
+harper drop_oidc_trust id=github-actions-<project>
+harper alter_user username=<project>-ci-deploy active=false
+```
 
-### Manual setup (tag-triggered deploys)
+`drop_oidc_trust` stops new exchanges. `alter_user active=false` also invalidates tokens already issued (which last one hour).
 
-Tag-triggered workflows cannot pin `workflow_ref` because the tag is unknown at policy-write time. Create the role, user, and policy by hand.
+### 2. Manual setup (tag-triggered deploys)
 
-**1. Create a deploy-only role and user:**
+A workflow that deploys on version tags cannot use `provider=github-actions` setup because the tag is unknown when the policy is written. Create the role, user, and policy by hand.
+
+**Create a deploy-only role and user:**
 
 ```bash
 harper add_role role=ci_deploy permission='{"operations":["deploy_component","get_job","get_deployment","registration_info"]}'
 harper add_user username=ci-deploy role=ci_deploy active=true password="$(openssl rand -base64 32)"
 ```
 
-- `deploy_component` — the deploy itself.
+- `deploy_component` is the deploy itself.
 - `get_deployment` — required for `harper deploy restart=rolling` to wait on every node; without it that wait fails with `403`.
-- `get_job` — required for the wait-step polling loop; without it the wait step fails with `403`.
-- `registration_info` — version check before upload; omitting it logs a refused operation on every run.
+- `get_job` is what the wait step polls when the deploy did not wait itself. Without it the wait step fails with `403`.
+- `registration_info` returns only Harper's version, which `harper deploy` checks before it uploads.
 - `restart_service` is not needed: Harper starts the rolling restart's job itself. The password is required to create the user but a GitHub Actions pipeline never uses it, so this command discards it.
 
-**2. Add a trust policy pinned to the workflow file and environment:**
+**Add a trust policy pinned to the workflow file and `production` environment:**
 
 ```bash
 harper add_oidc_trust \
@@ -103,36 +110,40 @@ harper add_oidc_trust \
   claims='{"repository_id":"67890","workflow_path":"my-org/my-app/.github/workflows/deploy.yml","environment":"production"}'
 ```
 
-Key claim fields:
+Key claim decisions:
 
-| Claim           | Purpose                                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `repository_id` | Immutable repository pin; survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.                      |
-| `workflow_path` | Pins the workflow file; derived from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`. |
-| `environment`   | Ref gate; without it any branch push can mint a token.                                                                  |
+| Claim           | Purpose                       | Notes                                                                                               |
+| --------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `repository_id` | Pins the repository immutably | Survives renames; look up with `gh api repos/my-org/my-app --jq .id`                                |
+| `workflow_path` | Pins the workflow file        | Derived from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`      |
+| `environment`   | Gates the ref                 | Without it, anyone who can push a branch can mint a token                                           |
+| `workflow_ref`  | Pins workflow + ref together  | Use for branch-triggered deploys, e.g. `my-org/my-app/.github/workflows/deploy.yml@refs/heads/main` |
 
-- `audience` must be the exact target URL with its port and a **trailing slash**.
-- In the GitHub repository's **Settings → Environments → production**, set **Deployment branches and tags** to the `v*` tag pattern.
 - A workflow that deploys on a push to `main` can pin `workflow_ref` (`my-org/my-app/.github/workflows/deploy.yml@refs/heads/main`) instead, which gates the ref by itself.
+- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
 
-**3. Store the target as a repository variable (not a secret):**
+The `audience` must be the exact target URL with its port and a trailing slash.
+
+**Configure the `production` environment in GitHub:** go to Settings → Environments → production, set **Deployment branches and tags** to the `v*` tag pattern, and add required reviewers if a release needs approval.
+
+**Store the target as a repository variable (not a secret):**
 
 ```bash
 gh variable set HARPER_CLI_TARGET --repo my-org/my-app --body https://my-cluster.example.com:9925/
 ```
 
----
+### 3. How OIDC authentication works in the workflow
 
-### How OIDC authentication works in the workflow
+A job with `id-token: write` requests a GitHub identity token. The Harper CLI trades it for a one-hour operation token when all four conditions hold:
 
-Every `harper` command in a job authenticates through the trust policy automatically when all four conditions hold:
-
-1. **The job declares `permissions: id-token: write`.**
-2. **`HARPER_CLI_TARGET` is the policy's `audience`.** The CLI requests its token for the target it connects to, so the target must be the URL the policy names, with its port and trailing slash. It is not sensitive, so use `vars.HARPER_CLI_TARGET` rather than a secret.
-3. **The run matches the policy's claims**: its `repository_id`, `workflow_path`/`workflow_ref`, and `environment`.
+1. The job declares `permissions: id-token: write`.
+2. `HARPER_CLI_TARGET` equals the policy's `audience` (with port and trailing slash).
+3. The run matches the policy's claims (repository, workflow, environment).
 4. **Nothing else is configured to authenticate.** `auth_username=`/`auth_password=`, credentials in the target URL, `HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_REFRESH_TOKEN` or `HARPER_CLI_OPERATION_TOKEN`, and a saved `harper login` all outrank the OIDC exchange.
 
 The exchange runs only when GitHub sets `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which it does for a job that declares `permissions: id-token: write`. Without them, the CLI falls through to its other credential sources rather than reporting a failure.
+
+Nothing in the workflow names the policy. Every `harper` command in the job (`harper deploy`, `harper get_job`, etc.) authenticates through it automatically.
 
 On success the CLI prints to stderr:
 
@@ -141,20 +152,33 @@ Requesting a GitHub Actions identity token for https://my-instance.harperdb.io:9
 Authenticated as 'ci-deploy' via OIDC trust policy 'my-app-prod'.
 ```
 
-Diagnose a rejected exchange with `list_oidc_trust` and the instance's `oidc-trust` log. The server does not report which check failed.
+Diagnose a rejected exchange with `list_oidc_trust` and the instance's `oidc-trust` log — the server does not report which check failed.
 
----
+### 4. Manage and audit trust policies
 
-### Revoking access
+**List all policies (including disabled ones) — `super_user` only:**
 
-- **Stop future runs:** `harper drop_oidc_trust id=github-actions-<project>`
-- **Also invalidate tokens already issued:** `harper alter_user username=<project>-ci-deploy active=false` — a minted JWT is valid for one hour; dropping the policy alone does not revoke it.
+```bash
+harper list_oidc_trust
+```
+
+Returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, `exchangeable`, and `invalid_reason` when applicable.
+
+Check `invalid_reason` first when diagnosing a rejected exchange. It is set when the policy is malformed or when the user it names was deleted or deactivated. When two exchangeable policies can match the same token but give it a different user or operations, both carry `invalid_reason` naming the rival. Resolve by dropping or disabling one, or giving them non-overlapping claims.
+
+**Drop a policy — `super_user` only:**
+
+```bash
+harper drop_oidc_trust id=my-app-prod
+```
+
+Fails with `404` if no policy has that `id`. Does not revoke tokens already issued — those remain valid for up to one hour. To stop an already-issued token, also run `alter_user`.
 
 ## Examples
 
 ### Path A: Deploy a Tagged Release (`v1.2.3`) from the Repository
 
-Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit even if the tag is moved later. If this repository needs a build step to be runnable, do not reach for `install_allow_scripts` — use Path B instead.
+Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit even if the tag is moved later. If your repository needs a build step to be runnable, use Path B instead — don't reach for `install_allow_scripts`.
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -203,22 +227,25 @@ jobs:
           exit 1
 ```
 
-For a private repository, add `credential=true` to the deploy command.
+For a private repository, add `credential=true` to the deploy command. It attaches the `deploy.my-app.git.github.com` reference created with `harper deploy setup=true`.
 
 Key details:
 
 - **No secrets.** `HARPER_CLI_TARGET` is the only thing the workflow is given. `id-token: write` lets the CLI request an identity token, and `environment: production` puts the `environment` claim the trust policy requires into it.
 - **`persist-credentials: false`** keeps the job's `GITHUB_TOKEN` out of `.git/config`, where `actions/checkout` otherwise leaves it for every later step. From v6 it saves the token in a file under `$RUNNER_TEMP` rather than in `.git/config`, which `harper deploy` uploads with the checkout, but later steps can still read it.
-- **`npm install --global harper@^5.3`** pins the CLI's major version; 5.3 is the minimum that supports OIDC authentication.
+- **`harper@^5.3`** pins the CLI's major version. 5.3 is the first CLI that authenticates with the identity token.
+- **`by_ref=true`** deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`). Pass `ref=<sha>` to deploy a different commit.
 - **`replicated` isn't needed.** On Harper Fabric and Harper Pro, a deploy goes to every node unless you pass `replicated=false`. Each node fetches and installs the package itself.
-- **`restart=rolling`** restarts nodes one at a time. `restart=true` deploys to every node at once.
-- **`json=true`** prints the deploy's result as JSON on stdout; progress and authentication messages go to stderr.
-- **`certification`**: on v5.4.0 and later, `restart=rolling` loads the release in a canary worker on each node before that node serves it, so a release that fails to load is rejected. The `certification` field in the deploy result reflects whether this ran.
-- **The job lives on one node.** Harper does not replicate jobs. Through a **load-balanced** cluster URL, at least one `get_job` poll must reach the node that received the deploy. If your load balancer routes polls to a different node, use one node's direct URL for both the deploy and the wait, and as the trust policy's `audience`. See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for multi-node deployment considerations.
+- **`restart=rolling`** restarts nodes one at a time. `restart=true` deploys to every node at once; each node replaces its workers a few at a time while the others keep serving.
+- **`json=true`** prints the deploy's result as JSON on stdout. Progress and authentication messages go to stderr.
+- **`certification`**: on v5.4.0 and later, `restart=rolling` loads the release in a canary worker on each node before that node serves it, so a release that fails to load is rejected. The `certification` field in the deploy result reflects this; when it is `unavailable`, the certified wait path is skipped.
+- **`restartJobId`**: present in `deploy.json` when the deploy started a rolling restart job but did not wait for it itself. The wait step polls this id with `get_job` and checks `.[0].status` for `COMPLETE`, `ERROR`, or `MISSING`.
+- **The job lives on one node.** Harper does not replicate jobs, so only the node that received the deploy knows the rolling job. Through a load-balanced cluster URL, at least one poll must reach that node. If your load balancer routes polls to a different node than the deploy, use one node's own URL for both the deploy and the wait, and as the trust policy's `audience`.
+- Go back to a previous release by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
 
----
+### Path B: Build in CI, Publish to GitHub Packages, Deploy the Artifact
 
-### Path B — Build in CI, publish to GitHub Packages, deploy the artifact
+The flow: push a tag → CI builds and tests → `npm publish` to GitHub Packages → `harper deploy` installs the published version from the registry.
 
 Give `package.json` a scoped name and `"publishConfig": { "registry": "https://npm.pkg.github.com" }`:
 
@@ -231,9 +258,9 @@ Give `package.json` a scoped name and `"publishConfig": { "registry": "https://n
 }
 ```
 
-The deploy installs the version the tag names, and `npm publish` publishes the version in `package.json`, so they must agree: `npm version 1.2.3` sets one and creates the other as `v1.2.3`.
+For GitHub Packages, store a durable token with the `read:packages` scope in Harper once with `harper deploy setup=true provider=npm project=my-app registry=https://npm.pkg.github.com scope=@my-org`. The name is derived from the component and the host — for `my-app` it is `deploy.my-app.npm.pkg.github.com`. The deploy step references it by that name, so the token never appears in the pipeline.
 
-For GitHub Packages, store a durable token with the `read:packages` scope in Harper once with `harper deploy setup=true provider=npm project=my-app registry=https://npm.pkg.github.com scope=@my-org`. The name is derived from the component and the host: `deploy.my-app.git.github.com` for the repository, and `deploy.my-app.npm.pkg.github.com` for GitHub Packages. Reference it by that name in the workflow — the token never appears in your pipeline. The workflow's ephemeral `GITHUB_TOKEN` is right for publishing and `npm ci` inside the job, but installs that happen after the workflow ends need the durable token.
+The deploy installs the version the tag names, and `npm publish` publishes the version in `package.json`, so they must agree: `npm version 1.2.3` sets one and creates the other as `v1.2.3`.
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -305,38 +332,26 @@ jobs:
           exit 1
 ```
 
-The two-job structure is intentional: only `deploy` holds `id-token: write` and `environment: production`, so only its token carries the `environment` claim the trust policy requires. The `publish` job runs all repository code and cannot request an identity token.
+Split into two jobs so the job with `id-token: write` runs none of the repository's build code:
 
----
+- **`publish`** installs, builds, tests, and publishes with `contents: read` and `packages: write` only. It cannot request an identity token.
+- **`deploy`** runs once `publish` has finished (`needs: publish`), holds `environment: production` and `id-token: write`, installs only the Harper CLI, and deploys the published version. Only this job names the environment, so only its token carries the `environment` claim the policy requires.
 
-### Checking the deployment record
+### Check the deployment record
 
 ```bash
 harper get_deployment deployment_id="$(jq -r .deployment_id deploy.json)" json=true
 ```
 
-`list_oidc_trust` returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, and optionally `invalid_reason`. Check `invalid_reason` first when diagnosing a rejected exchange — it is set when the policy cannot authenticate anyone because it is malformed or because the named user was deleted or deactivated:
-
-```bash
-harper list_oidc_trust
-```
-
-- Go back to a previous release by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. To deploy a release that is no longer kept, re-run the deploy with its tag or version.
-- Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
+Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
 
 ## Notes
 
-- `audience` in `add_oidc_trust` must exactly match `HARPER_CLI_TARGET`: the full URL with port and **trailing slash**. A mismatch silently prevents the exchange.
-- `HARPER_CLI_REFRESH_TOKEN` and any other configured credential outrank the OIDC exchange. Remove stored credentials from the runner before enabling OIDC.
-- The `<project>-ci-deploy` user can deploy **any component** on the cluster, not only the named project. Access control comes down to who can merge to the protected branch or push a `v*` tag.
-- Policy specificity for `token.actions.githubusercontent.com` requires all three: pin the repository (`repository_id`), pin the workflow (`workflow_ref`, `workflow_path`, `job_workflow_ref`, or `job_workflow_path`), and gate the ref (`workflow_ref`, `ref`, or `environment`).
+- **`trailing slash`**: the `audience` in the trust policy and `HARPER_CLI_TARGET` must be the full URL with port and trailing slash, e.g. `https://my-cluster.example.com:9925/`.
+- **`HARPER_CLI_REFRESH_TOKEN`**: if this or any other credential (`HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_OPERATION_TOKEN`, `auth_username=`/`auth_password=`, credentials in the target URL, or a saved `harper login`) is present, it outranks the OIDC exchange. Remove it from the workflow before enabling OIDC.
+- **`drop_oidc_trust` does not revoke already-issued tokens.** Tokens are stateless JWTs valid for one hour. To stop a token already in circulation, also run `harper alter_user username=<project>-ci-deploy active=false`.
+- **`invalid_reason`** on a policy from `list_oidc_trust` is the fastest explanation for a rejected exchange — the exchange itself does not report which check failed. Also check the instance's `oidc-trust` log.
+- **`load-balanced` clusters**: Harper does not replicate jobs. Only the node that received the deploy knows the rolling job. Routing that sends `get_job` polls to a different node than the deploy causes the wait step to report the job was not on the node that answered, even when the rollout succeeded.
+- **Policy specificity for `token.actions.githubusercontent.com`**: every policy must pin the repository (`repository_id`), pin the workflow (`workflow_ref`, `workflow_path`, `job_workflow_ref`, or `job_workflow_path`), and gate the ref (`workflow_ref`, `ref`, or `environment`). A policy missing any of these is rejected as not specific enough; its `invalid_reason` says why.
 
-  | Requirement            | Satisfied by one of                                                      | Left open otherwise                             |
-  | ---------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
-  | **Pin the repository** | `repository_id`, `repository`                                            | Any repository                                  |
-  | **Pin the workflow**   | `workflow_ref`, `workflow_path`, `job_workflow_ref`, `job_workflow_path` | Any workflow in that repository                 |
-  | **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
-
-- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
-- `repository_id` is immutable and survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.
-- `drop_oidc_trust` stops future exchanges but does not revoke tokens already issued. Follow it with `alter_user username=<project>-ci-deploy active=false` when responding to a suspected compromise.
+See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for cluster-level deployment configuration on Harper Fabric.

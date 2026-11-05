@@ -7,17 +7,17 @@ metadata:
   mode: generate
   sources:
     - release-notes/v5-lincoln/v5-migration.md
-  sourceCommit: 2cfb81318f17e0aca2d600109e6ad813d2d0443e
-  inputHash: 66ca7a9e265d006e
+  sourceCommit: 62139d5475bb9993c3aa6bc8d23420ea7610f739
+  inputHash: 141693224b082d1c
 ---
 
 # v5 Upgrade: Breaking Changes and Migration Guide
 
-Instructions for the agent to follow when migrating a Harper application to v5, covering all breaking changes and required code updates.
+Instructions for the agent to apply when migrating a Harper application to v5, covering all breaking changes and required code updates.
 
 ## When to Use
 
-Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors after upgrading, or when reviewing application code for v5 compatibility. Every breaking change listed here must be addressed before the application will behave correctly under v5.
+Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors related to module loading, transactions, record access, or process spawning after a v5 upgrade, or when scaffolding new v5-compatible application code.
 
 ## How It Works
 
@@ -27,12 +27,12 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    import { tables } from 'harper';
    ```
 
-2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to compile native binaries), set `allowInstallScripts` in your deployment options.
+2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to install native binaries), set `allowInstallScripts` in your deployment options.
 
-3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned object. Replace it with `loadedFromSource` on the `RequestTarget`:
+3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned record. Use a `RequestTarget` and check `loadedFromSource` on the target instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    if (record.wasLoadedFromSource()) {
    	// record was loaded from origin (not cache)
@@ -40,8 +40,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    ```
 
    ```javascript
-   // After
-   import { getContext } from 'harper';
+   // After (v5):
    const target = new RequestTarget();
    target.id = id;
    const record = await Table.get(target);
@@ -50,34 +49,23 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   The record objects do have `getUpdatedTime` and `getExpiresAt` methods available.
+   The record objects still expose `getUpdatedTime` and `getExpiresAt` methods.
 
-4. **Handle frozen records**: The record object returned by `Table.get` is frozen — you cannot mutate it directly. Copy it before modifying:
+4. **Handle frozen records**: Records returned by `Table.get` are frozen — you cannot mutate them directly. Spread into a new object instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    record.property = 'changed';
    ```
 
    ```javascript
-   // After
+   // After (v5):
    let record = await Table.get(id);
    record = { ...record, property: 'changed' };
    ```
 
-5. **Register allowed spawn commands via `allowedSpawnCommands`**: `spawn` and `execFile` may only launch executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml`. Only the first token of the command is matched. `exec` is not usable through the substituted module, and `execSync` always throws.
-
-   ```yaml
-   applications:
-     allowedSpawnCommands:
-       - npm
-       - node
-   ```
-
-   Additionally, `spawn`, `execFile`, and `fork` now require a `name` property in the `options` argument to prevent process multiplication across threads.
-
-6. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other calls now automatically inherit the current transaction. Code that previously omitted context to bypass a transaction will no longer work as expected. Explicitly commit the transaction or wrap calls in a new transaction to read updated data:
+5. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other table calls now automatically inherit the current transaction. If your code previously omitted context to bypass a transaction and read the latest data, that workaround no longer works. Explicitly commit the transaction and/or wrap reads in a new transaction using `getContext` and `transaction` from `'harper'`.
 
    ```javascript
    import { setTimeout as delay } from 'node:timers/promises';
@@ -94,47 +82,45 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   Use `getContext` (exported from `'harper'`) to access the current transaction anywhere without passing context explicitly.
-
-7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
-
-8. **Handle response `headers`**: If you return an object from a REST method with a `headers` property, Harper v5 will use it as the response headers. Ensure any object you return that incidentally has a `headers` property is intentional.
-
-9. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. Control this with the `moduleLoader` setting:
-
-   | Value                | Behavior                                         |
-   | -------------------- | ------------------------------------------------ |
-   | `vm-current-context` | Default. Shares intrinsics with Harper.          |
-   | `vm`                 | Separate context and intrinsics per application. |
-   | `native`             | Standard `import()`, no application context.     |
-   | `compartment`        | SES Compartments; advanced and heavier.          |
-
-   The default (`vm-current-context`) avoids `instanceof` failures for values crossing the application/Harper boundary. Choose `vm` only if you need separate per-application intrinsics. Use `native` if the VM loader causes compatibility problems you cannot otherwise resolve.
-
-   To disable the VM loader entirely and restore pre-v5 behavior:
+6. **Register allowed spawn commands**: Spawning child processes via `node:child_process` is now restricted. Only executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml` may be spawned. Additionally, `spawn`, `execFile`, and `fork` require a `name` property in the `options` argument to prevent process multiplication across threads. `exec` is not usable through the substituted module, and `execSync` always throws.
 
    ```yaml
    applications:
-     moduleLoader: native
+     allowedSpawnCommands:
+       - npm
+       - node
    ```
 
-   Note: `logger` and per-app `config` are not available in `native` mode.
+7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
 
-   If the goal is only to fix package compatibility while keeping application context for first-party code, `dependencyLoader: native` is a narrower option — it uses native loading only for npm packages while keeping the VM loader for application source files.
+8. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. The default mode is `vm-current-context`, which shares JavaScript intrinsics (`Object`, `Array`, `Promise`, etc.) with Harper to avoid `instanceof` and identity-check failures across the application/Harper boundary.
 
-10. **Handle intrinsic `lockdown`**: The default `lockdown` mode (`freeze-after-load`) freezes JavaScript intrinsics (`Object`, `Array`, `Promise`, `Map`, `Set`, etc.) after all application code loads. Any code or dependency that modifies intrinsic prototypes at runtime will throw a `TypeError`. If a dependency requires a temporary workaround, set:
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+     moduleLoader: vm-current-context # vm-current-context (default) | vm | native | compartment
+     dependencyLoader: auto # auto (default) | app | native
+     allowedDirectory: app # app (default) | any
+   ```
 
-    ```yaml
-    applications:
-      lockdown: none
-    ```
+   - Use `vm` only if you need separate per-application intrinsics.
+   - Use `native` to restore pre-v5 behavior (standard `import()`), but note that application-specific context (tagged `logger`, per-app `config`) will not be available.
+   - Use `dependencyLoader: native` to apply native loading only to npm packages while keeping the VM loader for first-party source files.
 
-11. **Check `allowedDirectory` in production**: In production, applications can only load modules from within their own directory tree (`allowedDirectory: app`). If your application loads files from outside its directory, set:
+9. **Configure `lockdown`**: The default `lockdown: seal-after-load` seals intrinsic prototypes (`Object`, `Array`, `Promise`, `Map`, `Set`, and others) after all components load, blocking prototype pollution. Before v5.4.0 the default was `freeze-after-load`, which froze the intrinsics instead. If a dependency mutates an intrinsic prototype at runtime and throws a `TypeError`, set `lockdown: none` as a temporary workaround.
 
-    ```yaml
-    applications:
-      allowedDirectory: any
-    ```
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+   ```
+
+   An in-place upgrade from v4 retains the existing config file, which has no `lockdown` value — Harper will not lock intrinsics until you explicitly add the key.
+
+10. **Check `allowedDirectory` in production**: In production, `allowedDirectory: app` is the default, restricting module loading to the application's own directory tree. If your application loads modules from outside its directory, set `allowedDirectory: any`. This restriction does not apply in dev mode.
+
+11. **Update response objects**: If a REST method returns an object with a `headers` property, Harper v5 will use it as the response headers. Ensure any object with a `headers` property returned from a REST method is intentional.
+
+12. **Use `getContext` instead of passing context explicitly**: Context no longer needs to be threaded through every call. Access it via `getContext` exported from `'harper'`. Prefer `static` methods on Resources/Tables for endpoints and access request information from the `target` argument or via `getContext`.
 
 ## Examples
 
@@ -142,7 +128,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
 
 ```yaml
 applications:
-  lockdown: freeze-after-load
+  lockdown: seal-after-load
   moduleLoader: vm-current-context
   dependencyLoader: auto
   allowedDirectory: app
@@ -151,15 +137,18 @@ applications:
     - node
 ```
 
-### Updated import and context access
+### Disabling the VM loader entirely
 
-```javascript
-import { tables, getContext, transaction } from 'harper';
+```yaml
+applications:
+  moduleLoader: native
 ```
 
-### Checking `loadedFromSource` after `Table.get`
+### Checking `loadedFromSource` and using `getContext`
 
 ```javascript
+import { getContext, transaction } from 'harper';
+
 const target = new RequestTarget();
 target.id = id;
 const record = await Table.get(target);
@@ -168,7 +157,7 @@ if (target.loadedFromSource) {
 }
 ```
 
-### Copying a frozen record before mutation
+### Spreading a frozen record
 
 ```javascript
 let record = await Table.get(id);
@@ -177,8 +166,8 @@ record = { ...record, property: 'changed' };
 
 ## Notes
 
-- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available in `native` mode.
-- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `vm-current-context` (the default) to avoid this.
-- `import()` behavior depends on the `moduleLoader` setting. In `native` mode, standard Node.js `import()` is used with no application context.
-- Automatic context tracking simplifies code but requires explicit `commit()` or new `transaction()` calls when you need to observe data written within the same transaction.
-- Use `getContext` from `'harper'` rather than passing context manually through every call — this is the recommended pattern in v5.
+- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available with `moduleLoader: native`.
+- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `moduleLoader: vm-current-context` (the default) to avoid this.
+- `import()` behavior depends on the selected `moduleLoader`. With `native`, it behaves as standard Node.js `import()` with no application context.
+- The `exec` function from `node:child_process` is not usable through the substituted module in v5; `execSync` always throws.
+- Record objects returned by `Table.get` expose `getUpdatedTime` and `getExpiresAt` even though they are frozen plain objects.

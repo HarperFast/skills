@@ -7,8 +7,8 @@ metadata:
     - reference/v5/resources/overview.md#Custom External Data Source
     - reference/v5/resources/overview.md#Exporting Resources as Endpoints
     - reference/v5/components/javascript-environment.md#Module Formats
-  sourceCommit: e73e5efb2823cc52caf7a6458d67fbcff3bbff2c
-  inputHash: b2f8749a92d64168
+  sourceCommit: 6cd8a2ea6372924486aac46a5d96ba00c10eff07
+  inputHash: 01f0a9c7088b116a
 ---
 
 # Custom Resources
@@ -19,23 +19,23 @@ Instructions for the agent to follow when defining custom REST endpoints with Ja
 
 ## When to Use
 
-Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when you need fine-grained control over URL shape and path parameters.
+Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a standard table-backed resource.
 
 ## How It Works
 
-1. **Import `Resource` from the `harper` package**: Always import explicitly rather than relying on globals.
+1. **Import `Resource` from `harper`**: Pull in the base class before extending it.
 
    ```javascript
    import { tables, Resource } from 'harper';
    ```
 
-   CommonJS alternative:
+   CommonJS is also supported:
 
    ```javascript
    const { tables, Resource } = require('harper');
    ```
 
-2. **Define a class that `extends Resource`**: Use `export class` so Harper exposes it as an endpoint. Implement HTTP methods as `static` methods on the class.
+2. **Define a class that `extends Resource`**: Declare HTTP handler methods as `static` methods matching the HTTP verb (`get`, `put`, `post`, etc.). Each method receives a `target` object representing the request.
 
    ```javascript
    export class CustomEndpoint extends Resource {
@@ -47,7 +47,7 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    }
    ```
 
-3. **Use `static` async methods to call external services**: Each HTTP verb maps to a `static` method of the same lowercase name.
+3. **Wrap external APIs** by making the `static` methods `async` and using `fetch` or any other async call inside them.
 
    ```javascript
    export class MyExternalData extends Resource {
@@ -63,13 +63,16 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    		});
    	}
    }
+
+   // Use as a cache source for a local table
+   tables.MyCache.sourcedFrom(MyExternalData);
    ```
 
-4. **Control the URL by choosing the export form**: The shape of the export determines the resulting URL path.
+4. **Control the URL by choosing an export form**: The shape of the export determines the resulting endpoint URL.
 
    | Export form                                 | URL             | Notes                                                           |
    | ------------------------------------------- | --------------- | --------------------------------------------------------------- |
-   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment; case-sensitive.            |
+   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment. Case-sensitive.            |
    | `export const Bar = { Foo };`               | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
    | `export const bar = { 'foo-baz': Foo };`    | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
    | `export { Foo as '/widget/:id' }`           | `/widget/:id`   | Rename the export to set the path directly.                     |
@@ -78,7 +81,7 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
 
    URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
 
-5. **Declare dynamic path segments with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
+5. **Declare dynamic path segments** using `static path` on the class. Use `:name` for a single segment and `*name` as a catch-all for the rest of the path. Matched values are bound onto `target.<name>`.
 
    ```javascript
    export class Widget extends Resource {
@@ -98,26 +101,36 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    }
    ```
 
-   - A leading `/` in `static path` makes the path root-relative (top-level), independent of the file's location.
-   - A leading `./` or bare name resolves relative to the component directory.
-   - A bare `*` (no name) binds under `target.wildcard`. A wildcard must be the final segment.
+   - A bare `*` (no name) binds under `target.wildcard`.
+   - A wildcard must be the final segment of the path.
+   - A leading `/` makes the path root-relative (top-level), independent of the file's location.
+   - A leading `./` or a bare name resolves relative to the component directory.
    - `static path` takes precedence over the export name.
-   - Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats `:param`, which beats `*`, compared left to right.
 
-6. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the resource class.
+6. **Understand resolution order**: Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats a `:param`, which beats a `*` wildcard, compared left to right.
 
+7. **Register programmatically** using `server.resources.set(` when the path must be determined at runtime rather than statically.
    ```javascript
    server.resources.set('my-path', Foo);
    ```
 
-7. **Optionally use a resource as a cache source for a local table**: Call `sourcedFrom` on the target table.
-   ```javascript
-   tables.MyCache.sourcedFrom(MyExternalData);
-   ```
-
 ## Examples
 
-**Custom endpoint with external API wrapping:**
+**Custom endpoint with a fixed path:**
+
+```javascript
+import { Resource } from 'harper';
+
+export class CustomEndpoint extends Resource {
+	static get(target) {
+		return {
+			data: doSomething(),
+		};
+	}
+}
+```
+
+**External API wrapper used as a cache source:**
 
 ```javascript
 import { tables, Resource } from 'harper';
@@ -136,7 +149,6 @@ export class MyExternalData extends Resource {
 	}
 }
 
-// Use as a cache source for a local table
 tables.MyCache.sourcedFrom(MyExternalData);
 ```
 
@@ -146,18 +158,9 @@ tables.MyCache.sourcedFrom(MyExternalData);
 import { Resource } from 'harper';
 
 export class Widget extends Resource {
-	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
 	static path = '/widget/:id/action/:action';
 	static get(target) {
 		return { id: target.id, action: target.action };
-	}
-}
-
-export class Files extends Resource {
-	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
-	static path = '/files/*rest';
-	static get(target) {
-		return { path: target.rest };
 	}
 }
 ```
@@ -165,20 +168,12 @@ export class Files extends Resource {
 **Programmatic registration:**
 
 ```javascript
-import { Resource } from 'harper';
-
-export class Foo extends Resource {
-	static get(target) {
-		return { ok: true };
-	}
-}
-
 server.resources.set('my-path', Foo);
 ```
 
 ## Notes
 
-- Avoid conflicting exports between the schema and the JavaScript implementation when a resource `extends` an existing table.
-- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
+- Do not create conflicting exports between a schema definition and a JavaScript implementation when a resource extends an existing table.
+- Parameterized routes surface in the generated OpenAPI document as templated paths (e.g., `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
 - When bundling for SSR with a tool like Vite, keep `harper` external so it resolves to the runtime: `ssr: { external: ['harper'] }`.
-- For components in their own directory, run `npm link harper` to ensure typings match the running installation.
+- Run `npm link harper` in a component's own directory to ensure typings match the running installation. All installed components have `harper` automatically linked.

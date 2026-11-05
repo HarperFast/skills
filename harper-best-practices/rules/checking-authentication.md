@@ -19,8 +19,8 @@ metadata:
     - reference/v5/security/jwt-authentication.md#Token Expiry Configuration
     - reference/v5/security/jwt-authentication.md#When to Use JWT Auth
     - reference/v5/security/jwt-authentication.md#Security Notes
-  sourceCommit: 9e6ecf87dd25bb488ad44dc2876ca6439ccd682e
-  inputHash: 1837f39fdfe06fac
+  sourceCommit: 9628b6ae7649c6f6ba4d65465e83cf75d7a9b2bd
+  inputHash: e8b7023b3a3ba2b5
 ---
 
 # Checking Authentication
@@ -31,250 +31,248 @@ Instructions for the agent to handle user authentication, sessions, and JWT toke
 
 ## When to Use
 
-Apply this rule when implementing login/logout flows, reading the current authenticated user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Resource must gate behavior on identity or credentials. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.
+Apply this rule when implementing sign-in/sign-out flows, reading the current authenticated user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Resource must inspect, establish, or delegate authentication state. See [custom-resources.md](custom-resources.md) for the broader Resource authoring context.
 
 ## How It Works
 
-### 1. Reading the Current Authenticated User
+### Reading the Current User
 
-**In an instance method**, call `getCurrentUser()` to get the user associated with the current request, or `undefined` if unauthenticated. The returned object exposes `username`, `role`, and `role.permission` flags.
+1. **Use `getCurrentUser()` in instance methods**: Call `getCurrentUser()` on a Resource instance to get the current authenticated user, or `undefined` if no user is authenticated. The returned object exposes `username`, `role`, and `role.permission` flags.
 
-**In a static verb**, read the user from the `context` argument instead — `context.user`:
+2. **Use `context.user` in static verbs**: Static verbs receive the context as a trailing argument. Read the current authenticated user from `context?.user`:
 
-```javascript
-static async get(_target, context) {
-    const user = context?.user;
-    if (!user) return new Response(null, { status: 401 });
-    return { username: user.username, role: user.role };
-}
-```
+   ```javascript
+   static async get(_target, context) {
+     const user = context?.user;
+     if (!user) return new Response(null, { status: 401 });
+     return { username: user.username, role: user.role };
+   }
+   ```
 
-### 2. Reading the Full Context
+3. **Use `getContext()` for dual-path static methods**: `getContext()` is a Resource instance method. For static methods that must work both via HTTP and direct server-side calls, import `getContext()` from the `harper` module. Static verbs receive context as the trailing argument — `(target, context)` for `get`/`delete`, `(target, data, context)` for `put`/`patch`/`post`.
 
-**In an instance method**, call `getContext()` to retrieve the current context, which includes:
+4. **Access HTTP-specific context properties**: When triggered by HTTP, the context is the `Request` object with additional properties. Use these to read request metadata or set response headers:
 
-- `user` — User object with username, role, and authorization information
-- `transaction` — The current transaction
+   | Property          | Description                                                                      |
+   | ----------------- | -------------------------------------------------------------------------------- |
+   | `url`             | Full local path including query string                                           |
+   | `method`          | HTTP method                                                                      |
+   | `headers`         | Request headers (`context.headers.get(name)`)                                    |
+   | `responseHeaders` | Response headers (`context.responseHeaders.set(name, value)`)                    |
+   | `pathname`        | Path without query string                                                        |
+   | `host`            | Host from the `Host` header                                                      |
+   | `ip`              | Client IP address                                                                |
+   | `body`            | Raw Node.js `Readable` stream (if a request body exists)                         |
+   | `data`            | Promise resolving to the deserialized request body                               |
+   | `lastModified`    | Controls `ETag`/`Last-Modified` response header                                  |
+   | `requestContext`  | (Source resources only) Context of the upstream resource making the data request |
+   | `transaction`     | Current transaction                                                              |
 
-**In a static verb**, the context is the trailing argument:
+   When triggered by HTTP, the context also exposes `url`, `method`, `headers`, `responseHeaders`, `pathname`, `host`, `ip`, `body`, `data`, `lastModified`, and `requestContext`.
 
-- `(target, context)` for `get`/`delete`
-- `(target, data, context)` for `put`/`patch`/`post`
+### Session-Based Login and Logout
 
-When triggered by HTTP, the context also exposes `url`, `method`, `headers`, `responseHeaders`, `pathname`, `host`, `ip`, `body`, `data`, `lastModified`, and `requestContext`.
+5. **Enable sessions in config**: Set `authentication.enableSessions: true` in `harperdb-config.yaml` before using `context.login` or `context.session`.
 
-### 3. Handling Sessions and Login
+6. **Implement sign-in with `context.login`**: Call `context.login(username, password)` in a static `post` verb. It verifies credentials and establishes the session cookie on success:
 
-Enable sessions in `harper-config.yaml`:
+   ```javascript
+   export class SignIn extends Resource {
+   	static async post(_target, data, context) {
+   		const { username, password } = (await data) ?? {};
+   		try {
+   			await context.login(username, password);
+   		} catch {
+   			return new Response('Invalid credentials', { status: 403 });
+   		}
+   		return new Response('Logged in', { status: 200 });
+   	}
+   }
+   ```
 
-```yaml
-authentication:
-  enableSessions: true
-```
+7. **Implement sign-out by clearing the session user**: Use `context.session.update({ user: null })` — `update` is the session's only mutator. Test `context?.session?.user` to detect an established session, because `context.session` is an empty object (not `undefined`) when sessions are enabled and no session cookie is present:
 
-Use `context.login` in a static `post` verb to verify credentials and establish a session cookie:
+   ```javascript
+   export class SignOut extends Resource {
+   	static async post(_target, _data, context) {
+   		if (!context?.session?.user) return new Response(null, { status: 401 });
+   		await context.session.update({ user: null });
+   		return new Response('Logged out', { status: 200 });
+   	}
+   }
+   ```
 
-```javascript
-export class SignIn extends Resource {
-	static async post(_target, data, context) {
-		const { username, password } = (await data) ?? {};
-		try {
-			await context.login(username, password);
-		} catch {
-			return new Response('Invalid credentials', { status: 403 });
-		}
-		return new Response('Logged in', { status: 200 });
-	}
-}
+   Cookie-based sessions are intended for browser clients. For non-browser clients, use JWT issuance.
 
-export class SignOut extends Resource {
-	static async post(_target, _data, context) {
-		if (!context?.session?.user) return new Response(null, { status: 401 });
-		await context.session.update({ user: null });
-		return new Response('Logged out', { status: 200 });
-	}
-}
-```
+### JWT Token Issuance
 
-- `context.login(username, password)` verifies credentials and sets the session cookie on success.
-- To end a session, call `context.session.update({ user: null })` — `update` is the session's only mutator.
-- `context.session` is an empty object (not `undefined`) when sessions are enabled and no session cookie is present; test `context?.session?.user` to detect an established session.
-- Cookie-based sessions are for browser clients. For non-browser clients, use JWT issuance.
+8. **Call `create_authentication_tokens` with credentials**: Send `username` and `password` in the request body. No `Authorization` header is required when credentials are in the body:
 
-### 4. Creating Authentication Tokens
+   ```json
+   {
+   	"operation": "create_authentication_tokens",
+   	"username": "username",
+   	"password": "password"
+   }
+   ```
 
-Call `create_authentication_tokens` with credentials in the body — no `Authorization` header is required when `username` and `password` are supplied:
+   Response:
 
-```json
-{
-	"operation": "create_authentication_tokens",
-	"username": "username",
-	"password": "password"
-}
-```
+   ```json
+   {
+   	"operation_token": "<jwt-operation-token>",
+   	"refresh_token": "<jwt-refresh-token>"
+   }
+   ```
 
-Response:
+9. **Pass the `operation_token` as a Bearer token** on subsequent requests:
 
-```json
-{
-	"operation_token": "<jwt-operation-token>",
-	"refresh_token": "<jwt-refresh-token>"
-}
-```
+   ```bash
+   curl --location --request POST 'http://localhost:9925' \
+     --header 'Content-Type: application/json' \
+     --header 'Authorization: Bearer <operation_token>' \
+     --data-raw '{
+         "operation": "search_by_hash",
+         "schema": "dev",
+         "table": "dog",
+         "hash_values": [1],
+         "get_attributes": ["*"]
+     }'
+   ```
 
-Pass the `operation_token` as a `Bearer` token on subsequent requests:
+10. **Refresh an expired `operation_token`** using `refresh_operation_token`. Pass the `refresh_token` as `Bearer <refresh_token>`:
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <operation_token>' \
-  --data-raw '{
-      "operation": "search_by_hash",
-      "schema": "dev",
-      "table": "dog",
-      "hash_values": [1],
-      "get_attributes": ["*"]
-  }'
-```
+    ```bash
+    curl --location --request POST 'http://localhost:9925' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <refresh_token>' \
+      --data-raw '{
+        "operation": "refresh_operation_token"
+      }'
+    ```
 
-### 5. Refreshing the Operation Token
+    Response:
 
-When the `operation_token` expires, pass the `refresh_token` as `Bearer <refresh_token>` and call `refresh_operation_token`:
+    ```json
+    {
+    	"operation_token": "<new-jwt-operation-token>"
+    }
+    ```
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <refresh_token>' \
-  --data-raw '{
-    "operation": "refresh_operation_token"
-  }'
-```
+    When both tokens have expired, call `create_authentication_tokens` again with username and password.
 
-Response:
+### Scoped Tokens (Inline Role)
 
-```json
-{
-	"operation_token": "<new-jwt-operation-token>"
-}
-```
+11. **Mint a scoped token as a `super_user`**: Pass `role` as an inline role-shaped object using the same `permission` structure as `add_role`. The minter must be authenticated as a `super_user`; no `password` may be included in the body. Use `expires_in` to set the token lifetime:
 
-When both tokens have expired, call `create_authentication_tokens` again with username and password.
+    ```json
+    {
+    	"operation": "create_authentication_tokens",
+    	"username": "reporting-service",
+    	"role": {
+    		"permission": {
+    			"operations": ["read_only"],
+    			"dev": {
+    				"tables": {
+    					"dog": {
+    						"read": true,
+    						"insert": false,
+    						"update": false,
+    						"delete": false,
+    						"attribute_permissions": []
+    					}
+    				}
+    			}
+    		}
+    	},
+    	"expires_in": "7d"
+    }
+    ```
 
-### 6. Minting Scoped Tokens
+    Authenticate the mint request with Basic Authentication or an existing `super_user` `operation_token`:
 
-A `super_user` can mint a scoped token with embedded permissions using `create_authentication_tokens` with an inline `role`. The minter must be authenticated; no `password` may be included in the body. Use `add_role`-style `permission` structure:
+    ```bash
+    curl --location --request POST 'http://localhost:9925' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Basic <base64 of super_user:password>' \
+      --data-raw '{
+          "operation": "create_authentication_tokens",
+          "username": "reporting-service",
+          "role": { "permission": { "operations": ["read_only"] } },
+          "expires_in": "7d"
+      }'
+    ```
 
-```json
-{
-	"operation": "create_authentication_tokens",
-	"username": "reporting-service",
-	"role": {
-		"permission": {
-			"operations": ["read_only"],
-			"dev": {
-				"tables": {
-					"dog": {
-						"read": true,
-						"insert": false,
-						"update": false,
-						"delete": false,
-						"attribute_permissions": []
-					}
-				}
-			}
-		}
-	},
-	"expires_in": "7d"
-}
-```
+    Key constraints:
+    - `username` is attribution only and must not name an existing user.
+    - No refresh token is issued; no user record is created.
+    - Scoped tokens cannot be revoked before expiry — prefer short lifetimes.
+    - `super_user` and `cluster_user` are always forced to `false` in the embedded role.
+    - In **mixed-version** clusters, only nodes with scoped-token support accept these tokens; older nodes reject them with a 401.
 
-Authenticate the mint request with Basic Authentication or an existing `super_user` `operation_token`:
+### Issuing Tokens from a Custom Resource
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Basic <base64 of super_user:password>' \
-  --data-raw '{
-      "operation": "create_authentication_tokens",
-      "username": "reporting-service",
-      "role": { "permission": { "operations": ["read_only"] } },
-      "expires_in": "7d"
-  }'
-```
+12. **Use `server.operation()` to mint tokens programmatically**: Import `server` from `harper` and call `server.operation(operation, context, authorize)`. Pass `authorize: true` as the **third argument** when the operation should run as the current authenticated user; omit it or pass `false` when the operation supplies its own credentials:
 
-Key constraints for scoped tokens:
+    ```javascript
+    import { Resource, server } from 'harper';
 
-- `username` is attribution only and must not name an existing user.
-- No refresh token is issued; no user record is created.
-- Scoped tokens cannot be revoked before expiry — choose `expires_in` carefully and prefer short lifetimes.
-- `super_user` and `cluster_user` are always forced to `false` in the embedded role.
-- In **mixed-version** clusters, only nodes with scoped-token support accept these tokens; older nodes reject them with 401.
+    export class IssueTokens extends Resource {
+    	static async get(_target, context) {
+    		// Caller is already authenticated — issue tokens for the current authenticated user.
+    		const { operation_token, refresh_token } = await server.operation(
+    			{ operation: 'create_authentication_tokens' },
+    			context,
+    			true,
+    		);
+    		return { operation_token, refresh_token };
+    	}
 
-### 7. Issuing Tokens from a Custom Resource
+    	static async post(_target, data) {
+    		// Caller provides credentials in the body.
+    		const { username, password } = await data;
+    		if (!username || !password) {
+    			return new Response('username and password required', { status: 400 });
+    		}
+    		const { operation_token, refresh_token } = await server.operation({
+    			operation: 'create_authentication_tokens',
+    			username,
+    			password,
+    		});
+    		return { operation_token, refresh_token };
+    	}
+    }
 
-Use `server.operation()` to mint tokens programmatically inside a Resource. Pass `authorize: true` as the **third argument** when the operation should run as the current authenticated user:
+    export class RefreshJWT extends Resource {
+    	static async post(_target, data) {
+    		const { refresh_token } = await data;
+    		if (!refresh_token) {
+    			return new Response('refresh_token required', { status: 400 });
+    		}
+    		const { operation_token } = await server.operation({
+    			operation: 'refresh_operation_token',
+    			refresh_token,
+    		});
+    		return { operation_token };
+    	}
+    }
+    ```
 
-```javascript
-import { Resource, server } from 'harper';
+### Token Expiry Configuration
 
-export class IssueTokens extends Resource {
-	static async get(_target, context) {
-		// Issue tokens for the current authenticated user
-		const { operation_token, refresh_token } = await server.operation(
-			{ operation: 'create_authentication_tokens' },
-			context,
-			true, // third argument: authorize as current user
-		);
-		return { operation_token, refresh_token };
-	}
+13. **Configure token timeouts** in `harper-config.yaml` under the `authentication` section:
 
-	static async post(_target, data) {
-		// Issue tokens from credentials supplied in the body
-		const { username, password } = await data;
-		if (!username || !password) {
-			return new Response('username and password required', { status: 400 });
-		}
-		const { operation_token, refresh_token } = await server.operation({
-			operation: 'create_authentication_tokens',
-			username,
-			password,
-		});
-		return { operation_token, refresh_token };
-	}
-}
+    ```yaml
+    authentication:
+      operationTokenTimeout: 1d # Default: 1 day
+      refreshTokenTimeout: 30d # Default: 30 days
+    ```
 
-export class RefreshJWT extends Resource {
-	static async post(_target, data) {
-		const { refresh_token } = await data;
-		if (!refresh_token) {
-			return new Response('refresh_token required', { status: 400 });
-		}
-		const { operation_token } = await server.operation({
-			operation: 'refresh_operation_token',
-			refresh_token,
-		});
-		return { operation_token };
-	}
-}
-```
-
-Omit the third argument (or pass `false`) when the operation supplies its own credentials.
-
-### 8. Configuring Token Expiry
-
-Set timeouts in `harper-config.yaml` under the `authentication` section:
-
-```yaml
-authentication:
-  operationTokenTimeout: 1d # Default: 1 day
-  refreshTokenTimeout: 30d # Default: 30 days
-```
-
-Valid duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`). The `expires_in` field on scoped token minting accepts the same format.
+    Valid duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
 
 ## Examples
 
-### Full Sign-In / Sign-Out Resource
+### Full sign-in/sign-out Resource pair
 
 ```javascript
 export class SignIn extends Resource {
@@ -298,17 +296,7 @@ export class SignOut extends Resource {
 }
 ```
 
-### Reading the Current Authenticated User in a Static Verb
-
-```javascript
-static async get(_target, context) {
-    const user = context?.user;
-    if (!user) return new Response(null, { status: 401 });
-    return { username: user.username, role: user.role };
-}
-```
-
-### Minting Tokens via cURL
+### Minting tokens via the Operations API
 
 ```bash
 curl --location --request POST 'http://localhost:9925' \
@@ -322,9 +310,9 @@ curl --location --request POST 'http://localhost:9925' \
 
 ## Notes
 
-- JWT authentication is **preferred over Basic Auth** when you want to avoid sending credentials on every request, your client can store tokens, or you have multiple sequential requests. For simple or **server-to-server** scenarios, use **Basic Authentication**.
+- **JWT is preferred over Basic Auth** for clients that can store tokens, want to avoid sending credentials on every request, or make multiple sequential requests. For simple or **server-to-server** scenarios, use Basic Authentication.
 - Always use **HTTPS** in production to protect tokens in transit.
-- Treat tokens like passwords. If a token is compromised, it remains valid until expiry — use shorter `operationTokenTimeout` values in high-security environments.
-- `context.login` and `context.session` require `enableSessions: true` in `harperdb-config.yaml`; they are for browser clients only.
-- The `server.operation()` third argument (`authorize: true`) attributes the operation to — and permission-checks against — the current authenticated user. Omit it when supplying credentials directly in the operation body.
-- In **mixed-version** clusters, scoped tokens are only accepted by nodes that support them; older nodes return 401.
+- Treat tokens like passwords. Because scoped tokens cannot be revoked before expiry, set short `expires_in` values in high-security environments and consider lowering `operationTokenTimeout`.
+- A caller authenticated by a Bearer validator cannot mint tokens via the passwordless form — it must supply `username` and `password`.
+- `enableSessions` is required in `harperdb-config.yaml` for `context.login` and `context.session` to be available.
+- The **third argument** (`authorize: true`) to `server.operation()` attributes the operation to — and permission-checks against — the calling user.

@@ -14,28 +14,34 @@ metadata:
       reference/v5/resources/resource-api.md#`addTo(property: string, value:
       number)`
     - reference/v5/components/javascript-environment.md#Module Formats
-  sourceCommit: da68d8e45f5422321c128a0cd67694bd0b97b155
-  inputHash: a307b78a63f94fb1
+  sourceCommit: 0a29827da61afe7fff40ee8de87e1d4c2c286bea
+  inputHash: 4f4e5f98986aef68
 ---
 
 # Programmatic Table Requests
 
-Instructions for the agent to interact with Harper tables programmatically using the `tables` object, including querying, sorting, transactions, and module setup.
+Instructions for the agent to interact with Harper tables programmatically using the `tables` object, including querying, transactions, and module setup.
 
 **Instead of:** ORM and query-builder clients (Prisma, Drizzle, Knex). Use this rule rather than adding that service. See `harper-architecture`.
 
 ## When to Use
 
-Apply this rule when writing server-side Harper application code that reads or writes table data directly — for example, in HTTP handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct queries with `conditions`, paginate results, sort, run transactions, or perform CRDT updates.
+Apply this rule when writing server-side Harper code that reads or writes table data directly — for example, in request handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct a query with `conditions`, `sort`, `select`, `limit`, or `offset`, or when you need to wrap writes in a `transaction()`.
 
 ## How It Works
 
-1. **Import `tables` (and other APIs) from `harper`**: Access tables defined in `schema.graphql` via the `tables` object. Each table type is a property on `tables`.
+1. **Import `tables` (and other APIs) from `harper`**: Access tables defined in `schema.graphql` via the `tables` object. Each table is a property matching its type name.
 
    ```javascript
    import { tables, transaction } from 'harper';
    const { Product } = tables;
    // equivalent to: databases.data.Product
+   ```
+
+   For CommonJS:
+
+   ```javascript
+   const { tables, Resource } = require('harper');
    ```
 
    For components in their own directory, link the package first:
@@ -44,32 +50,32 @@ Apply this rule when writing server-side Harper application code that reads or w
    npm link harper
    ```
 
-   All installed components have `harper` automatically linked.
+   When bundling for SSR with Vite, keep `harper` external so it resolves to the runtime — add `ssr: { external: ['harper'] }` in `vite.config`.
 
-2. **Define your schema with `@table`**: Every type you want to access via `tables` must be declared with `@table` in `schema.graphql`. Mark attributes you intend to sort or filter by index with `@indexed`.
+2. **Define your schema with `@table`**: Every type you want to access via `tables` must be declared with `@table` in `schema.graphql`. Use `@indexed` on attributes you intend to sort or filter by efficiently.
 
    ```graphql
    type Product @table {
    	id: Long @primaryKey
    	name: String
-   	price: Float
+   	price: Float @indexed
    }
    ```
 
-3. **Use basic CRUD methods on the table class**: The table class implements the Resource API.
+3. **Perform basic CRUD operations**: Use the table class methods directly.
 
    ```javascript
-   // Create a new record (id auto-generated)
+   // Create
    const created = await Product.create({ name: 'Shirt', price: 9.5 });
 
-   // Modify the record
+   // Patch
    await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
 
-   // Retrieve by primary key
+   // Get by primary key
    const record = await Product.get(created.id);
    ```
 
-4. **Query with `search(` and a Query object**: Pass a query object with `conditions`, `sort`, `limit`, `offset`, `select`, and other options.
+4. **Query with `search(` and a query object**: Pass a query object with `conditions`, `sort`, `limit`, `offset`, `select`, and other options. `search(` returns an async iterable. If order doesn't matter, omit `sort` entirely and `search({})` will iterate without an index requirement.
 
    ```javascript
    const query = {
@@ -80,21 +86,21 @@ Apply this rule when writing server-side Harper application code that reads or w
    }
    ```
 
-5. **Construct `conditions`**: Each condition is an object with the following properties:
+5. **Build `conditions` arrays**: Each condition object supports the following properties:
 
-   | Property                   | Description                                                                                                                                                                         |
-   | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `attribute`                | Property name, or array for chained/joined properties (e.g. `['brand', 'name']`)                                                                                                    |
-   | `value`                    | The value to match                                                                                                                                                                  |
-   | `comparator`               | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal`, or a full-text comparator |
-   | `conditions`               | Nested conditions array                                                                                                                                                             |
-   | `operator`                 | `and` (default) or `or` for the nested `conditions`                                                                                                                                 |
-   | `fields`                   | Full-text source fields to search                                                                                                                                                   |
-   | `includeHighlights`        | Include configured full-text highlights                                                                                                                                             |
-   | `maxIndexLagMilliseconds`  | Maximum accepted full-text index lag                                                                                                                                                |
-   | `waitForIndexMilliseconds` | Time to wait for acceptable full-text coverage                                                                                                                                      |
+   | Property                   | Description                                                                                                                                                                                                                                                                                                         |
+   | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `attribute`                | Property name, or array for chained/joined properties                                                                                                                                                                                                                                                               |
+   | `value`                    | The value to match                                                                                                                                                                                                                                                                                                  |
+   | `comparator`               | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal`, or a full-text comparator (`matches`, `matches_all`, `matches_phrase`, `matches_prefix`, `matches_fuzzy`, `matches_fuzzy_prefix`, and their `not_` forms) |
+   | `conditions`               | Nested conditions array                                                                                                                                                                                                                                                                                             |
+   | `operator`                 | `and` (default) or `or` for nested `conditions`                                                                                                                                                                                                                                                                     |
+   | `fields`                   | Full-text source fields to search; every name must belong to the selected full-text index                                                                                                                                                                                                                           |
+   | `includeHighlights`        | Include configured full-text highlights                                                                                                                                                                                                                                                                             |
+   | `maxIndexLagMilliseconds`  | Maximum accepted full-text index lag                                                                                                                                                                                                                                                                                |
+   | `waitForIndexMilliseconds` | Time to wait for acceptable full-text coverage                                                                                                                                                                                                                                                                      |
 
-   Use nested `conditions` with `operator` for compound logic:
+   Use nested `conditions` and `operator` for compound logic:
 
    ```javascript
    Product.search({
@@ -117,51 +123,46 @@ Apply this rule when writing server-side Harper application code that reads or w
    Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
    ```
 
-6. **Apply `limit` and `offset` for pagination**:
+6. **Apply `select` to shape results**: Pass an array of property names, nested objects for relationships, or a string for a single property.
 
    ```javascript
-   Product.search({ conditions: [...], limit: 20, offset: 40 });
-   ```
-
-7. **Use `select` to project fields**: Pass an array of property names, a string for a single property, or nested objects for related records.
-
-   ```javascript
-   // Array of names
+   // Flat select
    Product.search({ select: ['name', 'price'] });
 
-   // Whole related record
-   const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
-   book.author.name;
-
-   // Partial related record
+   // Nested relationship select
    const book = await Book.get({
    	id: 42,
    	select: ['id', 'title', { name: 'author', select: ['name'] }],
    });
 
-   // Deep nesting
-   // select: ['id', 'name', { name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] }]
+   // Special properties:
+   // $id — primary key regardless of name
+   // $updatedtime — last-updated timestamp
+   // $distance — vector index distance
+   // $score — full-text BM25 score
+   // $highlights — full-text highlight fragments
    ```
 
-   Special `select` properties: `$id`, `$updatedtime`, `$distance`, `$score`, `$highlights`.
+7. **Use `sort` with `@indexed` attributes**: Provide a `sort` object with `attribute`, optional `descending`, and optional `next` for tie-breaking.
 
-8. **Apply `sort`**: Provide a sort object with `attribute`, optional `descending`, and optional `next` for tie-breaking.
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
 
-   | Property     | Description                                              |
-   | ------------ | -------------------------------------------------------- |
-   | `attribute`  | Property name or array for chained relationship property |
-   | `descending` | Sort descending if `true` (default: `false`)             |
-   | `next`       | Secondary sort to resolve ties (same structure)          |
+   ```javascript
+   // attribute must be @indexed, or at least one condition must be present
+   Product.search({
+   	sort: { attribute: 'price', descending: true },
+   });
+   ```
 
-   For collection queries, Harper requires one of:
-   - A `sort` `attribute` marked `@indexed` — no condition required.
-   - At least one `conditions` entry on any attribute when the sort attribute is not indexed.
-
-   If neither is satisfied, Harper throws:
+   If the sort `attribute` is not `@indexed` and no `conditions` are present, Harper throws:
 
    > `HdbError: <attribute> is not indexed and not combined with any other conditions`
 
-   Note: `@primaryKey` alone is treated as not indexed for sort purposes. To iterate a whole table in primary-key order, add an open-ended condition:
+   To iterate a whole table in primary-key order, add an open-ended condition:
 
    ```javascript
    Product.search({
@@ -170,13 +171,29 @@ Apply this rule when writing server-side Harper application code that reads or w
    });
    ```
 
-   Pass `allowFullScan: true` to permit an unconditional ordered scan without conditions. If order doesn't matter, omit `sort` entirely — `search({})` iterates without an index requirement.
+8. **Apply `limit` and `offset` for pagination**:
+
+   ```javascript
+   Product.search({
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+   	sort: { attribute: 'price' },
+   	limit: 20,
+   	offset: 40,
+   });
+   ```
 
 9. **Use `explain` and `enforceExecutionOrder` for debugging and control**:
-   - `explain: true` — returns conditions reordered as Harper will execute them.
-   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling automatic re-ordering.
+   - Set `explain: true` to return conditions reordered as Harper will execute them.
+   - Set `enforceExecutionOrder: true` to force conditions to execute in the order supplied, disabling Harper's automatic reordering.
 
-10. **Perform CRDT increments with `addTo`**: Use `addTo` on a mutable Resource instance for safe concurrent updates across threads and nodes.
+   ```javascript
+   Product.search({
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+   	explain: true,
+   });
+   ```
+
+10. **Use `addTo` for concurrent-safe numeric updates**: `addTo(property, value)` uses CRDT incrementation, safe across threads and nodes.
 
     ```javascript
     static async post(target, data) {
@@ -185,7 +202,7 @@ Apply this rule when writing server-side Harper application code that reads or w
     }
     ```
 
-11. **Use `transaction()` for explicit transactional control**: Required when code runs outside a natural transaction context (timers, background jobs). `transaction()` accepts an optional context and a callback; it commits on normal completion and aborts on throw.
+11. **Wrap out-of-context writes in `transaction()`**: HTTP request handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
 
     ```javascript
     import { isMainThread } from 'node:worker_threads';
@@ -209,11 +226,16 @@ Apply this rule when writing server-side Harper application code that reads or w
     		} finally {
     			running = false;
     		}
-    	}, 3600000); // every hour
+    	}, 3600000);
     }
     ```
 
-    The `txn` object passed to the callback has:
+    - Always `await` the `transaction()` call and `catch` it.
+    - Guard against overlap with a `running` flag when a job can outlast its interval.
+
+12. **Understand `transaction()` atomicity and scope**: Transactions span a single database. All tables within the same database share one transactional context — reads return a consistent snapshot and writes across multiple tables commit with atomicity. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
+
+    The `txn` object received by the callback exposes:
 
     | Member                | Type            | Description                                            |
     | --------------------- | --------------- | ------------------------------------------------------ |
@@ -222,106 +244,76 @@ Apply this rule when writing server-side Harper application code that reads or w
     | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
     | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
 
-    **Atomicity**: All tables within the same database share a single transactional context — reads return a consistent snapshot and writes across multiple tables commit atomically. Cross-database operations have no atomicity guarantee.
-
-    If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — making it safe to call defensively.
-
-12. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
-
-    ```javascript
-    // vite.config
-    ssr: {
-    	external: ['harper'];
-    }
-    ```
-
-    Example SSR entry using `tables`:
-
-    ```typescript
-    import { tables } from 'harper';
-
-    export async function render(url: string): Promise<string> {
-    	const product = await tables.Product.get(idFromUrl(url));
-    	return renderToString(/* <App product={product} /> */);
-    }
-    ```
+    On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
 
 ## Examples
 
-### Nested conditions with sort, limit, and offset
-
-```javascript
-import { tables } from 'harper';
-const { Product } = tables;
-
-const results = [];
-for await (const record of Product.search({
-	conditions: [
-		{ attribute: 'price', comparator: 'less_than', value: 100 },
-		{
-			operator: 'or',
-			conditions: [
-				{ attribute: 'rating', comparator: 'greater_than', value: 4 },
-				{ attribute: 'featured', value: true },
-			],
-		},
-	],
-	sort: { attribute: 'price', descending: false },
-	limit: 10,
-	offset: 0,
-	select: ['id', 'name', 'price'],
-})) {
-	results.push(record);
-}
-```
-
-### Relationship query with nested select and constraining conditions
+**Relationship group — one related record must meet all conditions:**
 
 ```javascript
 const brands = [];
 for await (const brand of Brand.search({
-	conditions: [{ attribute: ['products', 'price'], comparator: 'greater_than_equal', value: 30 }],
-	select: [
-		'id',
-		'name',
-		{ name: 'products', sort: { attribute: 'price' }, limit: 1, select: ['id', 'name', 'price'] },
+	conditions: [
+		{
+			attribute: 'products',
+			conditions: [
+				{ attribute: 'name', value: 'Keyboard' },
+				{ attribute: 'price', comparator: 'greater_than_equal', value: 30 },
+			],
+		},
 	],
+	select: ['id', 'name', { name: 'products', select: ['name', 'price'] }],
 })) {
 	brands.push(brand);
 }
 ```
 
-### Transaction with `resetReadSnapshot`
-
-```javascript
-import { tables, transaction } from 'harper';
-const { MyTable } = tables;
-
-await transaction(async (txn) => {
-	const record = await MyTable.get('some-id');
-	txn.resetReadSnapshot(); // refresh snapshot to latest committed state
-	await MyTable.put({ ...record, status: 'processed' }, txn);
-});
-```
-
-### CRDT increment with `addTo`
+**SSR entry point reading directly from Harper:**
 
 ```javascript
 import { tables } from 'harper';
-const { Product } = tables;
 
-const product = await Product.update(32);
-product.status = 'active';
-product.addTo('quantity', -1);
-product.save();
+export async function render(url: string): Promise<string> {
+  const product = await tables.Product.get(idFromUrl(url));
+  return renderToString(/* <App product={product} /> */);
+}
+```
+
+Keep `harper` external in `vite.config` — e.g. `ssr: { external: ['harper'] }` — so it resolves to the runtime instead of being bundled.
+
+**Nested relationship select with constraints:**
+
+```javascript
+const brand = await Brand.get({
+	id: 42,
+	select: [
+		'id',
+		{
+			name: 'products',
+			conditions: [{ attribute: 'price', comparator: 'greater_than_equal', value: 30 }],
+			sort: { attribute: 'price' },
+			offset: 0,
+			limit: 1,
+			select: ['id', 'price'],
+		},
+	],
+});
+```
+
+**Sort with secondary tie-breaker across a relationship:**
+
+```javascript
+Brand.search({
+	conditions: [{ attribute: ['products', 'price'], comparator: 'greater_than_equal', value: 30 }],
+	sort: { attribute: ['products', 'name'], next: { attribute: 'id' } },
+});
 ```
 
 ## Notes
 
-- Calls through `tables` run in a trusted server-side context and do **not** automatically apply the target table's role permissions. To enforce authorization, set `checkPermission: true` on the query and pass the authenticated `context` as the second argument to `search()` or `get()`.
-- Scope destructive `update`, `patch`, and `delete` operations with specific `conditions` and validate the affected set before writing. These operate directly on stored data and are not easily reversible.
-- `transaction()` must be `await`ed and wrapped in `catch` when used outside a request context. Guard against interval overlap with a `running` flag or equivalent.
-- Selecting a relationship without an outer condition behaves as a **LEFT JOIN**; a top-level `conditions` entry on a related attribute behaves as an **INNER JOIN**.
-- Only the combination of a non-`@indexed` sort `attribute` **and** zero `conditions` triggers `HdbError: <attribute> is not indexed and not combined with any other conditions`. Add a condition or mark the attribute `@indexed` to resolve it.
-- `enforceExecutionOrder: true` disables Harper's automatic condition re-ordering; use only when execution order must be exact.
-- CommonJS import is also supported: `const { tables, Resource } = require('harper');`
+- Calls through `tables` and `databases` run in a trusted server-side context and do not automatically apply the target table's role permissions. To enforce authorization, set `checkPermission: true` on the query and pass the authenticated `context` as the second argument to `search()` or `get()`. Harper then authorizes the read using `context.user`, including table, selected-property, and full-text source-field permissions.
+- Programmatic `update`, `patch`, and `delete` calls operate directly on stored (potentially live production) data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- `transaction()` is safe to call defensively: if the context already has an active transaction, it reuses it and executes the callback immediately.
+- `resetReadSnapshot()` on the `txn` object resets the read snapshot to the latest committed state mid-transaction.
+- The bare `@primaryKey` is treated as not indexed for sort purposes (it uses the primary store, not a secondary index). Sorting by primary key alone with no `conditions` triggers the `HdbError: <attribute> is not indexed and not combined with any other conditions` error. Add an open-ended condition or pass `allowFullScan: true` to permit an unconditional scan.
+- All installed components have `harper` automatically linked. For components in their own directory, run `npm link harper` manually.

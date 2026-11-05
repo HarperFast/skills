@@ -44,24 +44,15 @@ type ExamplePerson @table @export {
 
 ### 1.2 Schema Design and GraphQL Tooling
 
-Instructions for the agent to follow when designing Harper schemas, applying core directives, and configuring GraphQL tooling.
+Instructions for the agent to follow when designing Harper database schemas using GraphQL type definitions, core directives, and tooling configuration.
 
 #### When to Use
 
-Apply this rule when creating or modifying Harper schema files, configuring `graphqlSchema` in `config.yaml`, or deciding which directives to apply to tables and fields. Use it whenever a task involves defining tables, primary keys, indexes, or export behavior.
+Apply this rule when creating or modifying Harper schema files — defining tables, primary keys, indexes, and export behavior. Use it when configuring `graphqlSchema` in `config.yaml` or when choosing directives to control table structure, access patterns, and record lifecycle.
 
 #### How It Works
 
-1. **Load the schema via `graphqlSchema`**: In the component's `config.yaml`, point to the schema file:
-
-   ```yaml
-   graphqlSchema:
-     files: 'schema.graphql'
-   ```
-
-   Both plugins and applications can specify schemas. The schema ensures required tables exist on deployment, enforces types, controls indexing, and defines relationships.
-
-2. **Mark tables with `@table`**: Apply `@table` to every GraphQL type that should become a Harper database table. The type name becomes the table name by default.
+1. **Create a schema file** using standard GraphQL type definitions with Harper-specific directives. Name it (e.g., `schema.graphql`) and place it in your component directory.
 
    ```graphql
    type Dog @table {
@@ -69,6 +60,21 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    	name: String
    	breed: String
    	age: Int
+   }
+   ```
+
+2. **Register the schema** in the component's `config.yaml` using the `graphqlSchema` plugin:
+
+   ```yaml
+   graphqlSchema:
+     files: 'schema.graphql'
+   ```
+
+3. **Mark every table type with `@table`**. This tells Harper to create and manage the table. The type name becomes the table name by default.
+
+   ```graphql
+   type MyTable @table {
+   	id: Long @primaryKey
    }
    ```
 
@@ -82,13 +88,15 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    | `eviction`               | `Int`     | `0`                           | Additional seconds after `expiration` before physical removal                  |
    | `scanInterval`           | `Int`     | `(expiration + eviction) / 4` | Seconds between eviction scans                                                 |
    | `replicate`              | `Boolean` | `true`                        | Enable replication of this table                                               |
-   | `replicaExpiration`      | `Float`   | `3600`                        | Seconds a record fetched from another node is kept as a local replica          |
+   | `replicaExpiration`      | `Float`   | `3600`                        | Seconds to keep a local residency replica                                      |
    | `replicaRefreshFraction` | `Float`   | `0.5`                         | Fraction of `replicaExpiration` after which a read renews the replica lifetime |
    | `audit`                  | `Boolean` | `logging.auditLog`            | Enable the table's transaction log                                             |
    | `cacheControl`           | `String`  | —                             | `Cache-Control` header for anonymous GET/HEAD 200/304 responses                |
    | `randomAccessFields`     | `Boolean` | `storage.randomAccessFields`  | Pin this table's record encoding                                               |
 
-3. **Designate a primary key with `@primaryKey`**: Apply `@primaryKey` to exactly one field per table. Primary keys must be unique; duplicate inserts are rejected.
+4. **Designate a primary key with `@primaryKey`** on exactly one field per table. Primary keys must be unique; duplicate inserts are rejected. If no primary key is provided on insert, Harper auto-generates one:
+   - `String` or `ID` → UUID string
+   - `Int`, `Long`, or `Any` → auto-incrementing integer
 
    ```graphql
    type Product @table {
@@ -97,13 +105,9 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    }
    ```
 
-   If no primary key is provided on insert, Harper auto-generates one:
-   - **UUID string** — when type is `String` or `ID`
-   - **Auto-incrementing integer** — when type is `Int`, `Long`, or `Any`
+   Use `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
 
-   Prefer `Long` or `Any` for auto-generated numeric keys; `Int` is 32-bit and may be insufficient for large tables.
-
-4. **Index queryable fields with `@indexed`**: Apply `@indexed` to any field that must be filterable via REST queries, SQL, or NoSQL operations.
+5. **Add `@indexed` to fields that need fast querying**. Required for filtering by an attribute in REST queries, SQL, or NoSQL operations. If the field value is an array, each element is individually indexed.
 
    ```graphql
    type Product @table {
@@ -113,9 +117,7 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    }
    ```
 
-   If the field value is an array, each element is individually indexed. Null values are indexed by default.
-
-5. **Expose tables externally with `@export`**: Apply `@export` to make a table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment.
+6. **Expose the table externally with `@export`**. This makes the table accessible via REST, MQTT, and other interfaces. The optional `name` parameter sets the URL path segment; without it, the type name is used.
 
    ```graphql
    type MyTable @table @export(name: "my-table") {
@@ -123,9 +125,9 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    }
    ```
 
-   `@export` alone does not serve HTTP traffic — REST must also be enabled for the application via `rest: true` in `config.yaml` or Harper's built-in default. `@export` is a routing directive, not access control: omitting it returns 404 to callers but the table remains accessible through the Operations API and SQL.
+   `@export` alone does not serve HTTP traffic — REST must also be enabled for the application, either with `rest: true` in `config.yaml` or by Harper's built-in default for a component with no configuration file.
 
-6. **Prevent extra properties with `@sealed`** (when needed): Apply `@sealed` to reject records that include properties beyond those declared in the schema. By default, Harper allows additional properties.
+7. **Use `@sealed` to prevent extra properties** on records beyond those declared in the schema. By default, Harper allows records to have additional properties.
 
    ```graphql
    type StrictRecord @table @sealed {
@@ -134,33 +136,13 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    }
    ```
 
-7. **Use unique database names for plugins and applications**: All tables default to the `data` database. Specify a distinct `database` argument on `@table` to avoid naming collisions between components.
-
-8. **Apply timestamp and expiration field directives** where needed:
-   - `@createdTime` — auto-assigns a Unix epoch millisecond timestamp on record creation.
-   - `@updatedTime` — auto-assigns a Unix epoch millisecond timestamp on each update.
-   - `@expiresAt` — marks a field as the record's absolute expiration time (Unix epoch milliseconds); overrides the table-level `expiration` default.
-   - `@hidden` — suppresses the type or field from MCP tool descriptors and the OpenAPI document. Does not restrict data access.
-
-   ```graphql
-   type Event @table {
-   	id: Long @primaryKey
-   	createdAt: Long @createdTime
-   	updatedAt: Long @updatedTime
-   }
-
-   type Session @table {
-   	id: ID @primaryKey
-   	token: String
-   	expiresAt: Long @expiresAt
-   }
-   ```
-
-   Key `@expiresAt` behaviors:
-   - Takes an absolute Unix epoch millisecond timestamp, not a duration. A full-record `put` that omits the field clears it; a `patch` preserves it.
-   - A per-record value may extend or shorten a record's expiration relative to the table-level `expiration` default. When a record omits the field, the table default (if any) applies.
+8. **Use timestamp directives** to auto-populate lifecycle fields:
+   - `@createdTime` — assigns Unix epoch milliseconds on record creation
+   - `@updatedTime` — assigns Unix epoch milliseconds on every update
+   - `@expiresAt` — marks a field as the record's absolute expiration time (Unix epoch milliseconds); authoritative over the table-level `expiration` default
 
 9. **Use `@embed`** to automatically compute an embedding vector for an attribute whenever the source field is written (requires `source` and `model` arguments; field type must be `[Float]`):
+
    ```graphql
    type Document @table {
    	id: Long @primaryKey
@@ -168,11 +150,12 @@ Apply this rule when creating or modifying Harper schema files, configuring `gra
    	embedding: [Float] @embed(source: "text", model: "default")
    }
    ```
-   The attribute is automatically indexed with an HNSW vector index. A failure to compute the embedding fails the write. An update that does not touch the `source` field leaves the vector unchanged. Setting the `source` field to `null` sets the vector to `null`.
+
+10. **Use unique `database` names** in plugins or applications to avoid table naming collisions, since all tables default to the `data` database.
 
 #### Examples
 
-**Minimal schema with two tables:**
+**Minimal two-table schema:**
 
 ```graphql
 type Dog @table {
@@ -188,7 +171,17 @@ type Breed @table {
 }
 ```
 
-**Caching table with expiration, eviction, and scan tuning:**
+**Table with name override and specific database:**
+
+```graphql
+type Product @table(table: "products", database: "commerce") {
+	id: Long @primaryKey
+	name: String @indexed
+	price: Float @indexed
+}
+```
+
+**Caching table with expiration and eviction tuning:**
 
 ```graphql
 # Expire after 5 minutes, evict after 1 hour, scan every 10 minutes
@@ -208,16 +201,7 @@ type Product @table(cacheControl: "public, max-age=60") @export {
 }
 ```
 
-**Table in a named database with expiration:**
-
-```graphql
-type Event @table(database: "analytics", expiration: 86400) {
-	id: Long @primaryKey
-	name: String @indexed
-}
-```
-
-**Replica lifetime tuning:**
+**Table with replica lifetime control:**
 
 ```graphql
 # Keep fetched records for a day; a read after six hours renews them
@@ -227,18 +211,19 @@ type Order @table(replicaExpiration: 86400, replicaRefreshFraction: 0.25) {
 }
 ```
 
-**Random-access field encoding pinned on the table:**
+**Session table with per-record expiration and timestamps:**
 
 ```graphql
-type Reading @table(randomAccessFields: true) {
+type Session @table {
 	id: ID @primaryKey
-	sensorId: String @indexed
-	celsius: Float
-	recordedAt: Int
+	userId: String @indexed
+	createdAt: Long @createdTime
+	updatedAt: Long @updatedTime
+	expiresAt: Long @expiresAt
 }
 ```
 
-**`config.yaml` loading the schema:**
+**`config.yaml` registration:**
 
 ```yaml
 graphqlSchema:
@@ -247,15 +232,13 @@ graphqlSchema:
 
 #### Notes
 
-- Schemas are flexible by default — records may include additional properties. Use `@sealed` to prevent this.
-- `@export` is a routing directive, not an access control mechanism. Use RBAC and `attribute_permissions` to restrict data access.
-- `cacheControl` on `@table` only emits the header for anonymous (unauthenticated) GET/HEAD 200/304 responses. Authenticated responses always receive `Cache-Control: private, no-cache`.
-- `expiration`, `eviction`, and `scanInterval` work together: `expiration` marks a record stale, `eviction` controls physical removal, and `scanInterval` sets how often the sweep runs. Eviction scans are clock-aligned to the server's local timezone, not startup-aligned.
-- Eviction removes non-indexed record data but does not remove a record from its secondary indexes; indexes remain functional for evicted records.
-- `replicaExpiration` and `replicaRefreshFraction` apply only on the RocksDB engine. On LMDB, remote reads remain proxy reads regardless of these settings.
+- `@export` is a routing directive, not access control. Omitting it returns 404 to callers but does not protect the data — the table remains accessible through the Operations API and SQL. Use RBAC role grants and `attribute_permissions` for actual access control.
+- `@hidden` (on types or fields) suppresses entries from MCP tool descriptors and the OpenAPI document only. It does not restrict data access. Use `attribute_permissions` on roles for field-level enforcement.
+- Null values are indexed by default for `@indexed` fields, enabling queries like `GET /Product/?category=null`. This matches records that store `null`, not records that omit the attribute.
+- `cacheControl` emits the header only on anonymous (unauthenticated) GET/HEAD 200/304 responses. Authenticated responses receive `Cache-Control: private, no-cache` regardless of the declaration.
+- A `patch` of other fields preserves an existing `@expiresAt` value; a full `put` that omits the field clears it. Always re-include `expiresAt` in session-renewal writes.
+- `replicaExpiration` and `randomAccessFields` apply to RocksDB only. LMDB tables ignore replica behavior regardless of settings.
 - Disabling replication on a table (`replicate: false`) and re-enabling it later will not catch up on writes made while replication was disabled.
-- `randomAccessFields` on `@table` pins the encoding when the table is created. Editing the argument later does not repin an existing table.
-- `@hidden` is a metadata-visibility directive only — it does not restrict data access. Use `attribute_permissions` on roles for field-level access control.
 
 ### 1.3 Defining Relationships Between Tables in Harper
 
@@ -265,24 +248,16 @@ Instructions for the agent to follow when defining and querying relationships be
 
 #### When to Use
 
-Apply this rule when a schema requires join queries across tables, nested property access to related records, or any foreign-key association between two types. Use it whenever you need to express one-to-many, many-to-one, many-to-many, or foreign-key-to-foreign-key relationships.
+Apply this rule when adding foreign-key relationships between schema tables, enabling join queries, or selecting nested related records in query results. Use it any time a schema type needs to reference records in another table via a `@relationship` directive.
 
 #### How It Works
 
-1. **Choose the correct `@relationship` form** based on where the foreign key lives:
-
-   | Form                                            | Foreign key location            | Typical cardinality         | Result type       |
-   | ----------------------------------------------- | ------------------------------- | --------------------------- | ----------------- |
-   | `@relationship(from: attribute)`                | This table                      | many-to-one or many-to-many | singular or array |
-   | `@relationship(to: attribute)`                  | Target table                    | one-to-many or many-to-many | array (required)  |
-   | `@relationship(from: attribute, to: attribute)` | Both sides use non-primary keys | foreign key to foreign key  | array (required)  |
-
-2. **Declare `@relationship(from: attribute)` for many-to-one**: Place the directive on the relationship field in the table that holds the foreign key. The field type is the target table type (singular).
+1. **Use `@relationship(from: attribute)` for many-to-one or many-to-many**: Place this on the field whose table holds the foreign key. The `from` argument names the attribute in this table that stores the foreign key referencing the target table's primary key.
 
    ```graphql
    type RealityShow @table @export {
    	id: Long @primaryKey
-   	networkId: Long @indexed # foreign key
+   	networkId: Long @indexed
    	network: Network @relationship(from: networkId) # many-to-one
    	title: String @indexed
    }
@@ -293,17 +268,7 @@ Apply this rule when a schema requires join queries across tables, nested proper
    }
    ```
 
-3. **Declare `@relationship(to: attribute)` for one-to-many**: Place the directive on the parent table. The result type must be an array. The named attribute is the foreign key in the target table.
-
-   ```graphql
-   type Network @table @export {
-   	id: Long @primaryKey
-   	name: String @indexed
-   	shows: [RealityShow] @relationship(to: networkId) # one-to-many
-   }
-   ```
-
-4. **Use an array foreign key for many-to-many**: When the foreign key field is an array, `@relationship(from: attribute)` establishes a many-to-many relationship. The result type must also be an array. Array order is preserved when resolving the relationship.
+   If the foreign key attribute is an array, the relationship becomes many-to-many:
 
    ```graphql
    type RealityShow @table @export {
@@ -313,14 +278,24 @@ Apply this rule when a schema requires join queries across tables, nested proper
    }
    ```
 
-5. **Use `@relationship(from: attribute, to: attribute)` for foreign-key-to-foreign-key joins**: Specify both `from` and `to` when neither side uses the primary key. The result type must be an array.
+2. **Use `@relationship(to: attribute)` for one-to-many or many-to-many**: Place this on the field whose table holds the primary key. The `to` argument names the attribute in the _target_ table that stores the foreign key. The result type must be an array.
+
+   ```graphql
+   type Network @table @export {
+   	id: Long @primaryKey
+   	name: String @indexed
+   	shows: [RealityShow] @relationship(to: networkId) # one-to-many
+   }
+   ```
+
+3. **Use `@relationship(from: attribute, to: attribute)` for foreign-key-to-foreign-key joins**: Specify both `from` and `to` when neither side uses the primary key. The result type must be an array. Harper resolves the relationship by searching the target table's `to` attribute for matches using this record's `from` attribute value.
 
    ```graphql
    type OrderItem @table @export {
    	id: Long @primaryKey
    	orderId: Long @indexed
    	productSku: Long @indexed
-   	products: [Product] @relationship(from: productSku, to: sku) # matches products by sku, not primary key
+   	products: [Product] @relationship(from: productSku, to: sku)
    }
 
    type Product @table @export {
@@ -330,7 +305,7 @@ Apply this rule when a schema requires join queries across tables, nested proper
    }
    ```
 
-6. **Query across relationships using dot-syntax**: Filter by related attributes using `attribute.nestedAttribute=value`. This behaves as an INNER JOIN — only parents with a matching related record are returned.
+4. **Query across relationships using dot-syntax**: Filter by related table attributes using dot-chained paths. This behaves as an INNER JOIN — only parents with a matching related record are returned.
 
    ```
    GET /RealityShow?network.name=Bravo
@@ -338,7 +313,7 @@ Apply this rule when a schema requires join queries across tables, nested proper
    GET /Brand/?products.name=Keyboard
    ```
 
-7. **Include relationship fields in results using `select()`**: Relationship attributes are not included by default. Use `select()` to project them. Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN.
+5. **Include relationship fields in results using `select()`**: Relationship attributes are not included by default. Use `select()` to project them. Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN.
 
    ```
    GET /Product/?brand.name=Microsoft&select(name,brand)
@@ -346,78 +321,57 @@ Apply this rule when a schema requires join queries across tables, nested proper
    GET /Product/?name=Keyboard&select(name,brand{name,id})
    ```
 
-8. **Apply nested filters, sort, and pagination per relationship using square brackets**: Use `select(...,relationship[conditions&sort()&limit()&select()])` to qualify, order, and page each parent's related records independently.
+6. **Apply conditions, sort, and pagination to nested related records using bracket syntax inside `select()`**: Use square brackets after the relationship name inside `select()` to filter, sort, and page each parent's related records independently.
 
-   | Nested option      | Behavior                                                                  |
-   | ------------------ | ------------------------------------------------------------------------- |
-   | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups           |
-   | `sort(price)`      | Order that parent's eligible children before pagination                   |
-   | `limit(end)`       | Return at most `end` children per parent                                  |
-   | `limit(start,end)` | Skip `start` eligible children and return at most `end - start`           |
-   | `select(id,price)` | Project fields from returned children; omit to return whole child records |
+   | Nested option      | Behavior                                                                   |
+   | ------------------ | -------------------------------------------------------------------------- |
+   | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups.           |
+   | `sort(price)`      | Order eligible children before pagination.                                 |
+   | `limit(end)`       | Return at most `end` children per parent.                                  |
+   | `limit(start,end)` | Skip `start` eligible children and return at most `end - start`.           |
+   | `select(id,price)` | Project fields from returned children; omit to return whole child records. |
 
-   An outer relationship filter (e.g., `products.price=ge=number:30`) removes parents without a qualifying child and also narrows the children available to the nested selection. A filter inside `select(...,products[...])` only narrows projected children; it does not remove a parent.
+   Invalid `limit()` bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
 
-9. **Index foreign key and filter fields**: Keep relationship lookup fields and outer filter fields indexed. Use `@indexed` on foreign key attributes and any attribute used in dot-syntax filters.
+7. **Use bracket syntax on the relationship name in the query string to require one related record to meet multiple conditions**: This is distinct from separate `&`-joined conditions, which may be satisfied by different related records.
+
+   ```
+   GET /Brand/?products[name=Keyboard&price=ge=30]
+   ```
+
+   Inside brackets, name attributes of the related table directly (e.g., `price`, not `products.price`). Values convert to the attribute's schema type, so `price=ge=30` needs no `number:` prefix inside brackets.
+
+8. **Combine OR filters with child sorting and pagination**: Group OR conditions inside the relationship selection with `[condition1|condition2]`, then append `sort()`, `limit()`, and `select()` with `&`.
+
+   ```
+   GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
+   ```
+
+9. **Index foreign key and filter fields**: Keep relationship lookup fields and outer filter fields indexed. The `from` or `to` attribute referenced in `@relationship` should carry `@indexed`.
 
 #### Examples
 
-##### Schema with bidirectional relationships
+##### Many-to-one with join query
 
 ```graphql
+type Product @table @export {
+	id: Long @primaryKey
+	name: String
+	brandId: Long @indexed
+	brand: Brand @relationship(from: "brandId")
+}
+
 type Brand @table @export {
-	id: Int @primaryKey
-	name: String @indexed
+	id: Long @primaryKey
+	name: String
 	products: [Product] @relationship(to: "brandId")
 }
-
-type Product @table @export {
-	id: ID @primaryKey
-	brandId: Int @indexed
-	name: String
-	price: Int @indexed
-}
 ```
 
-##### Keep every parent; filter children inside the selection (LEFT JOIN behavior)
-
 ```
-GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
+GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Brand/?products.name=Keyboard
 ```
-
-All brands are returned. Brands with no qualifying products receive an empty `products` array.
-
-##### Return only qualifying parents; inherit the outer filter into nested results
-
-```
-GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
-```
-
-Only brands with at least one product costing ≥ 30 are returned. The price filter is inherited by the nested selection; repeating it inside `[...]` is unnecessary.
-
-##### Page through each parent's qualifying children
-
-```
-GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1,2)&select(id,name,price)])
-```
-
-`limit(1,2)` skips the first eligible product and returns the second for each qualifying brand. The offset applies independently per brand.
-
-##### Stable parent and child pagination
-
-```
-GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
-```
-
-Outer `sort(name,id)` orders brands; nested `sort(price,id)` orders products within each brand. Use a unique field as the final sort key for deterministic ordering.
-
-##### OR conditions inside nested selection
-
-```
-GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
-```
-
-Group OR conditions inside the relationship selection with `[condition1|condition2]`, then append `sort()`, `limit()`, and `select()` with `&`.
 
 ##### Many-to-many with array foreign key
 
@@ -434,16 +388,88 @@ type Product @table @export {
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
+##### Nested filtering and pagination
+
+```graphql
+type Brand @table @export {
+	id: Int @primaryKey
+	name: String @indexed
+	products: [Product] @relationship(to: "brandId")
+}
+
+type Product @table @export {
+	id: ID @primaryKey
+	brandId: Int @indexed
+	name: String
+	price: Int @indexed
+}
+```
+
+Keep every brand; show its cheapest product costing at least 30 (LEFT JOIN behavior — Budget Basics remains with an empty product list):
+
+```
+GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
+```
+
+Return only qualifying brands; inherit the outer price filter into nested results:
+
+```
+GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
+```
+
+Page through each brand's qualifying products (offset applies independently per brand):
+
+```
+GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1,2)&select(id,name,price)])
+```
+
+Bound parent pages with stable sorting:
+
+```
+GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
+```
+
+##### Conditions through several relationships
+
+```graphql
+type Company @table @export {
+	id: ID @primaryKey
+	departments: [Department] @relationship(to: "companyId")
+}
+
+type Department @table @export {
+	id: ID @primaryKey
+	companyId: ID @indexed
+	employees: [Employee] @relationship(to: "departmentId")
+}
+
+type Employee @table @export {
+	id: ID @primaryKey
+	departmentId: ID @indexed
+	tag: String @indexed
+	level: Int @indexed
+}
+```
+
+| Query                                                                      | Matches    | Why                                                         |
+| -------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------- |
+| `departments.employees.tag=oncall&departments.employees.level=ge=number:3` | c1, c2, c3 | each condition may be met by a different department         |
+| `departments[employees.tag=oncall&employees.level=ge=number:3]`            | c1, c2     | one department must meet both, possibly by different people |
+| `departments[employees[tag=oncall&level=ge=3]]`                            | c2         | one employee must meet both                                 |
+| `departments.employees[tag=oncall&level=ge=3]`                             | c2         | same as the previous row                                    |
+
 #### Notes
 
-- The result type for `@relationship(to: attribute)` and `@relationship(from: attribute, to: attribute)` **must** be an array.
-- Schemas can define self-referential relationships to enable parent-child hierarchies within a single table.
-- A singular foreign key that is null or references a missing record causes the relationship property to be omitted from the result.
-- For array-valued foreign keys, pagination alone preserves missing target positions; adding conditions or a sort drops missing targets.
+- `@relationship(from: ...)` — the foreign key is in **this** table; result type can be singular or array.
+- `@relationship(to: ...)` — the foreign key is in the **target** table; result type **must** be an array.
+- `@relationship(from: attribute, to: attribute)` — foreign-key-to-foreign-key join; result type **must** be an array.
+- Selecting a relationship without an outer dot-syntax filter is a LEFT JOIN; parents without matching related records are retained.
+- An outer filter joined with `&` (e.g., `products.price=ge=number:30`) removes parents without a qualifying related record **and** narrows the related records returned by `select()`. A condition inside an OR only decides which parents match; it does not narrow selected related records.
+- A nested filter inside `select(...,products[...])` only narrows projected children; it does not remove the parent.
+- Separate `&`-joined conditions on a one-to-many relationship may each be satisfied by a **different** related record. Use `relationship[cond1&cond2]` bracket syntax to require one related record to meet all conditions.
+- Self-referential relationships (a table referencing itself) are supported for parent-child hierarchies.
 - Nested filters require a table-backed relationship. Filters on plain JSON projections or full-text predicates inside a relationship selection return HTTP 400.
-- Invalid `limit()` bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
-- A condition that traverses another relationship qualifies the immediate child only; it does not narrow that child's projected descendants. Put grandchild constraints on the grandchild's own bracket selection.
-- Keep parent pages small and consider a separately paginated child endpoint for very large relationships.
+- Keep parent pages small using outer `limit()`; a nested `limit()` bounds children per parent, not the number of parents.
 
 ### 1.4 Vector Indexing
 
@@ -485,7 +511,7 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-4. **Apply a function predicate during traversal** using `vectorFilter` (JavaScript API only). The function receives each candidate record and must return a synchronous boolean. It must be side-effect free and fast:
+4. **Apply a function predicate** using `vectorFilter` (JavaScript API only) for predicates not expressible as conditions. The function receives each candidate record and must return a synchronous boolean. Records are frozen:
 
    ```javascript
    let results = Document.search(
@@ -512,7 +538,7 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-6. **Include computed distance in results** by adding `$distance` to `select`. Works with both `sort`-based and threshold queries:
+6. **Include computed distance** in results by adding `$distance` to `select`. Works with both `sort`-based ranking and threshold queries:
 
    ```javascript
    let results = Document.search({
@@ -531,7 +557,10 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    });
    ```
 
-8. **Tune filtered traversal** with `ef` and `filterExpansion` when a `vectorFilter` is very selective. The visit budget is `ef * filterExpansion` nodes (`filterExpansion` defaults to `24`):
+   - `distance` — overrides the index distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`.
+   - `ef` — overrides the search exploration budget. Higher values improve recall at the cost of latency.
+
+8. **Tune filtered traversal** when a `vectorFilter` is very selective. Filtered traversal is bounded by `ef * filterExpansion` nodes visited. Raise either knob to trade latency for recall:
 
    ```javascript
    let results = Document.search(
@@ -544,48 +573,89 @@ Apply this rule when adding a vector similarity search capability to a Harper ta
    );
    ```
 
-9. **Enforce row-level access control** using `rowFilter` on search and subscription targets (JavaScript API only). Attach it in an operation override. For vector queries, `rowFilter` participates in HNSW traversal so callers receive the k nearest _matching_ records:
+9. **Configure HNSW index parameters** in the schema directive. Use the parameter table below to choose values:
 
-   ```javascript
-   function canReadReport(record, context) {
-   	const user = context.user;
-   	if (user?.role?.permission?.super_user) return true;
-   	return user?.username != null && record.ownerId != null && record.ownerId === user.username;
-   }
-
-   export class Reports extends tables.Reports {
-   	search(target) {
-   		target.rowFilter = canReadReport;
-   		return super.search(target);
-   	}
+   ```graphql
+   type Document @table {
+   	id: Long @primaryKey
+   	textEmbeddings: [Float]
+   		@indexed(type: "HNSW", distance: "euclidean", optimizeRouting: 0, efConstructionSearch: 100)
    }
    ```
 
-##### HNSW Index Parameters
+   | Parameter              | Default           | Description                                                                                      |
+   | ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+   | `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                  |
+   | `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance |
+   | `M`                    | `16`              | Preferred connections per graph layer                                                            |
+   | `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)       |
+   | `mL`                   | computed from `M` | Normalization factor for level generation                                                        |
+   | `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size                        |
+   | `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                        |
+   | `filterExpansion`      | `24`              | Visit-budget multiplier for filtered search: visits at most `ef * filterExpansion` nodes         |
 
-Configure parameters directly on `@indexed(type: "HNSW", ...)`:
+   > Use `efConstructionSearch` (not `efSearchConstruction`). Changing `efConstructionSearch` on an existing index does not trigger a rebuild. Changing structural parameters (`distance`, `M`, `efConstruction`, `quantization`) does rebuild the index.
 
-| Parameter              | Default           | Description                                                                                      |
-| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
-| `distance`             | `"cosine"`        | Distance function: `"cosine"`, `"euclidean"`, or `"dotProduct"`                                  |
-| `efConstruction`       | `100`             | Max nodes explored during index construction. Higher = better recall, lower = better performance |
-| `M`                    | `16`              | Preferred connections per graph layer                                                            |
-| `optimizeRouting`      | `0.5`             | Heuristic aggressiveness for omitting redundant connections (0 = off, 1 = most aggressive)       |
-| `mL`                   | computed from `M` | Normalization factor for level generation                                                        |
-| `efConstructionSearch` | auto-scaled       | Max nodes explored during search. When unset, auto-scales with index size                        |
-| `quantization`         | —                 | `"int8"` stores vectors quantized to int8                                                        |
-| `filterExpansion`      | `24`              | Visit-budget multiplier for filtered search: visits at most `ef * filterExpansion` nodes         |
+10. **Enable vector quantization** with `quantization: "int8"` to reduce index size and memory usage. Graph navigation uses quantized distances; nearest-neighbor `sort` queries are re-ranked against full-precision vectors for exact results:
 
-Per-query `sort` descriptor options:
-
-| Option     | Values                                    | Description                                            |
-| ---------- | ----------------------------------------- | ------------------------------------------------------ |
-| `distance` | `"cosine"`, `"euclidean"`, `"dotProduct"` | Overrides the index's distance function for this query |
-| `ef`       | integer                                   | Overrides the search exploration budget for this query |
+    ```graphql
+    type Document @table {
+    	id: Long @primaryKey
+    	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
+    }
+    ```
 
 #### Examples
 
-**Index with custom HNSW parameters:**
+##### Basic nearest-neighbor search
+
+```graphql
+type Document @table {
+	id: Long @primaryKey
+	textEmbeddings: [Float] @indexed(type: "HNSW")
+}
+```
+
+```javascript
+let results = Document.search({
+	sort: { attribute: 'textEmbeddings', target: searchVector },
+	limit: 5,
+});
+```
+
+##### Filtered vector search with row-level access control
+
+```javascript
+function canReadReport(record, context) {
+	const user = context.user;
+	if (user?.role?.permission?.super_user) return true;
+	return user?.username != null && record.ownerId != null && record.ownerId === user.username;
+}
+
+export class Reports extends tables.Reports {
+	get(target) {
+		const context = this.getContext();
+		if (target.isCollection) {
+			target.rowFilter = canReadReport;
+		} else if (!canReadReport(this, context)) {
+			return new Response(null, { status: 404 });
+		}
+		return super.get(target);
+	}
+
+	search(target) {
+		target.rowFilter = canReadReport;
+		return super.search(target);
+	}
+
+	subscribe(request) {
+		request.rowFilter = canReadReport;
+		return super.subscribe(request);
+	}
+}
+```
+
+##### Custom HNSW parameters with cosine distance
 
 ```graphql
 type Document @table {
@@ -595,48 +665,13 @@ type Document @table {
 }
 ```
 
-**Index with int8 quantization:**
-
-```graphql
-type Document @table {
-	id: Long @primaryKey
-	textEmbeddings: [Float] @indexed(type: "HNSW", quantization: "int8")
-}
-```
-
-**Nearest-neighbor search with distance included:**
-
-```javascript
-let results = Document.search({
-	select: ['name', '$distance'],
-	sort: { attribute: 'textEmbeddings', target: searchVector },
-	limit: 5,
-});
-```
-
-**Filtered traversal with tuned budget:**
-
-```javascript
-let results = Document.search(
-	{
-		sort: { attribute: 'textEmbeddings', target: searchVector, ef: 200, filterExpansion: 40 },
-		vectorFilter: (record) => record.category === 'rare',
-		limit: 10,
-	},
-	context,
-);
-```
-
 #### Notes
 
-- `vectorFilter` and `rowFilter` are available from the JavaScript API only; they cannot be set through REST or QUERY request data.
-- `vectorFilter` functions must be synchronous, side-effect free, and fast — they can run once per candidate record visited during traversal; verdicts are memoized per query. Records passed to them are frozen.
-- `rowFilter` does not apply to a direct primary-key `get`.
-- Changing `efConstructionSearch` on an existing index does not trigger a rebuild. Structural parameters (`distance`, `M`, `efConstruction`, `quantization`) do rebuild the index when changed.
-- With `quantization: "int8"`, nearest-neighbor `sort` queries re-rank results against full-precision vectors, restoring exact ordering and exact `$distance` values. Distance-threshold (`lt`/`le`) queries filter on the approximate distance.
-- The correct parameter name is `efConstruction` (seeds the construction budget) and `efConstructionSearch` (controls search budget). The name `efSearchConstruction` is a previous documentation error.
-- When no `ef` is passed and `efConstructionSearch` (or `efConstruction`) is not explicitly set, the search budget auto-scales with index size.
-- `cosine` is the default distance function when `distance` is not specified.
+- `vectorFilter` is available from the JavaScript API only — it cannot be expressed in a REST query string. It must be synchronous, side-effect free, and fast. Verdicts are memoized per query.
+- `rowFilter` is also JavaScript API only. It participates in HNSW traversal so callers receive the k nearest _matching_ records. It does not apply to direct primary-key `get` calls. Prefer indexed query conditions for predicates that can be expressed declaratively.
+- When a query passes no `ef` and the index does not explicitly configure `efConstructionSearch` (or `efConstruction`), the search budget auto-scales with index size.
+- Distance-threshold (`lt`/`le`) queries with `quantization: "int8"` filter on approximate distance, not re-ranked full-precision distance.
+- `$distance` is available in both `sort`-based ranking and `conditions`-based threshold queries.
 
 ### 1.5 Using the Blob Data Type
 
@@ -860,25 +895,25 @@ export class Photo extends tables.Photo {
 
 ## 2. API & Communication
 
-### 2.1 Automatic APIs
+### 2.1 Automatic REST and WebSocket APIs
 
-Instructions for the agent to follow when using Harper's automatically generated REST and WebSocket APIs for exported tables and resources.
+Instructions for the agent to follow when exposing Harper tables and custom resources as REST and WebSocket endpoints using Harper's automatically generated API layer.
 
 **Instead of:** Hand-written CRUD routes (Express, Fastify, Next.js API routes). Use this rule rather than adding that service. See `harper-architecture`.
 
 #### When to Use
 
-Apply this rule when enabling HTTP REST endpoints or WebSocket subscriptions for Harper tables and custom resources. Use it whenever you need to configure the REST plugin, understand the auto-generated endpoint surface, or wire up real-time WebSocket connections. See [querying-rest-apis.md](querying-rest-apis.md) for query syntax and [real-time-apps.md](real-time-apps.md) for real-time patterns.
+Apply this rule when enabling HTTP REST access to Harper tables, when configuring WebSocket subscriptions on resource paths, or when customizing how exported resources respond to standard HTTP methods. Use it any time you need to wire up `rest: true`, handle conditional requests, or implement a `connect()` handler.
 
 #### How It Works
 
-1. **Enable the REST plugin** by adding `rest: true` to your application's `config.yaml`:
+1. **Enable the REST plugin** by adding `rest: true` to the application's `config.yaml`:
 
    ```yaml
    rest: true
    ```
 
-   Extended options:
+   Additional options:
 
    ```yaml
    rest:
@@ -887,7 +922,9 @@ Apply this rule when enabling HTTP REST endpoints or WebSocket subscriptions for
      exactCount: true # opt in to Prefer: count=exact scans (off by default)
    ```
 
-2. **Export the table in your schema** using `@export`. Tables are not exposed by default — `@export` is required for Harper to register a REST route:
+   A component directory with no `config.yaml` at all inherits a built-in default that enables `rest` and loads `*.graphql` from the component root. As soon as a `config.yaml` exists it is used verbatim — omitting `rest` turns REST off. Always write `rest: true` when adding a config file.
+
+2. **Export the table in the schema** using `@export`. Tables are not exported by default.
 
    ```graphql
    type Product @table @export {
@@ -897,41 +934,76 @@ Apply this rule when enabling HTTP REST endpoints or WebSocket subscriptions for
    }
    ```
 
-   Without `@export`, the table has no REST route and callers receive `404`. Without `rest: true` in `config.yaml`, even an exported table does not respond to HTTP requests.
+   Reference the schema file from `config.yaml`:
 
-3. **Understand the auto-generated endpoints**. With both `@export` and `rest: true` in place, Harper registers the following on the application HTTP server port (default `9926`):
+   ```yaml
+   graphqlSchema:
+     files: schema.graphql
+   rest: true
+   ```
 
-   | Endpoint                     | Description                                                                          |
-   | ---------------------------- | ------------------------------------------------------------------------------------ |
-   | `GET /Product`               | Resource description — table name, database, declared attributes                     |
-   | `GET /Product/`              | Record collection; append query parameters to filter, sort, page                     |
-   | `GET /Product/{id}`          | Single record by primary key; `404` if not found                                     |
-   | `GET /Product/{id}.property` | Single declared property of one record                                               |
-   | `POST /Product/`             | Creates a record; responds `201`; primary key returned in `Location` header          |
-   | `PUT /Product/{id}`          | Creates or replaces the record at `{id}` (upsert); omitted properties are removed    |
-   | `PATCH /Product/{id}`        | Shallow-merges body into existing record; unspecified top-level properties preserved |
-   | `DELETE /Product/{id}`       | Deletes the record at `{id}`                                                         |
-   | `DELETE /Product/?query`     | Deletes every record matching the query                                              |
-   - `HEAD` is served exactly as `GET` with the response body omitted. `QUERY` is accepted on the collection path (`QUERY /Product/`) and runs a search taken from the request body rather than the URL.
+   Both `@export` and `rest: true` are required. Without `@export`, no REST route is registered and callers receive `404`. Without REST enabled, even an exported table does not respond to HTTP requests.
 
-4. **Use the correct URL structure**. The trailing slash is significant:
+3. **Understand the auto-generated endpoints**. With `Product` exported, Harper registers these routes on the application HTTP server port (default `9926`) with no handler code required:
 
-   | Path                      | Addresses                                      |
-   | ------------------------- | ---------------------------------------------- |
-   | `/my-resource`            | The resource itself (metadata)                 |
-   | `/my-resource/`           | The record collection                          |
-   | `/my-resource/record-id`  | A specific record by primary key               |
-   | `/my-resource/record-id/` | Collection of records with the given id prefix |
+   | Endpoint                     | Description                                                                 |
+   | ---------------------------- | --------------------------------------------------------------------------- |
+   | `GET /Product`               | Resource description (table name, database, attributes)                     |
+   | `GET /Product/`              | Record collection; append query parameters to filter/sort/page              |
+   | `GET /Product/{id}`          | Single record by primary key; `404` if not found                            |
+   | `GET /Product/{id}.property` | Single declared property of one record                                      |
+   | `POST /Product/`             | Creates a record; responds `201`; primary key returned in `Location` header |
+   | `PUT /Product/{id}`          | Creates or replaces the record at `{id}` (upsert)                           |
+   | `PATCH /Product/{id}`        | Shallow-merges body into existing record                                    |
+   | `DELETE /Product/{id}`       | Deletes the record at `{id}`                                                |
+   | `DELETE /Product/?query`     | Deletes every record matching the query                                     |
 
-5. **Handle `POST` primary keys via `Location`**. On a successful `POST`, the new record's primary key is returned in the `Location` response header — the value supplied by the body, or a Harper-assigned key if the body omitted the primary-key property.
+   The trailing slash is significant: `/Product` addresses the resource itself; `/Product/` addresses its record collection.
 
-6. **Use conditional GET requests for caching**. GET responses include an `ETag` header. Send `If-None-Match` on subsequent requests; if the record is unchanged, Harper returns `304 Not Modified` with no body.
+4. **Understand the URL structure**. Harper follows a consistent URL pattern across all resources:
 
-7. **Apply `@updatedTime` for write timestamps**. On `PUT`, Harper re-stamps any `@updatedTime` attribute with the time of the write, preserves any `@createdTime` value from the original record, and forces the primary key to match the `{id}` in the URL.
+   | Path                                         | Description                                                                                       |
+   | -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+   | `/my-resource`                               | Root path — returns a description of the resource (e.g., table metadata)                          |
+   | `/my-resource/`                              | Trailing slash indicates a collection — represents all records; append query parameters to search |
+   | `/my-resource/record-id`                     | A specific record identified by its primary key                                                   |
+   | `/my-resource/record-id/`                    | Trailing slash — the collection of records with the given id prefix                               |
+   | `/my-resource/record-id/with/multiple/parts` | Record id with multiple path segments                                                             |
 
-8. **Control OpenAPI visibility**. Every non-hidden exported resource appears in the generated OpenAPI document at `GET /openapi`. To exclude a type, mark it `@hidden` in the schema, or set `static hidden = true` on a programmatic resource class.
+5. **Handle HTTP methods correctly**:
+   - **GET** — Retrieves a record or collection. Use `GET /MyTable/123` for a single record, `GET /MyTable/?name=Harper` for a filtered collection. The `.msgpack` suffix (along with `.json`, `.cbor`, `.csv`) is a reserved content-type selector and takes precedence over property access via dot syntax.
+   - **POST** — Creates a record. The new record's primary key is returned in the `Location` response header. A `POST` to a key that already exists fails with `409`.
+   - **PUT** — Upserts a record. The stored record matches the body exactly; omitted properties are removed. Harper always re-stamps an `@updatedTime` attribute and preserves `@createdTime`.
+   - **PATCH** — Shallow-merges the body. Top-level unspecified properties are preserved; nested objects in the body replace the stored sub-object wholesale.
+   - **DELETE** — Deletes by id or by query. `DELETE /MyTable/` with no query parameters deletes every record.
 
-9. **Implement a custom `connect()` handler** when default subscription behavior is insufficient. The method must return an async iterable that produces messages to send to the client:
+6. **Use conditional requests for caching**. GET responses include an `ETag` header. Clients send `If-None-Match` on subsequent requests; if the record is unchanged Harper returns `304 Not Modified` with no body.
+
+7. **Set the `Accept` header** to request a specific response format. Use `Content-Type` for request bodies. See [querying-rest-apis.md](querying-rest-apis.md) for the full query syntax and content-type details.
+
+8. **Use WebSocket subscriptions** on the same resource paths. WebSocket support is enabled automatically with `rest: true`. Connecting to a resource URL subscribes to change events:
+
+   ```javascript
+   let ws = new WebSocket('wss://server/my-resource/341');
+   ws.onmessage = (event) => {
+   	let data = JSON.parse(event.data);
+   };
+   ```
+
+   Disable WebSocket support without disabling REST:
+
+   ```yaml
+   rest:
+     webSocket: false
+   ```
+
+   For MQTT over WebSockets, set the sub-protocol header:
+
+   ```
+   Sec-WebSocket-Protocol: mqtt
+   ```
+
+9. **Implement a custom `connect()` handler** on a resource class to control WebSocket behavior. The method must return an async iterable producing messages to send to the client:
 
    ```javascript
    export class Echo extends Resource {
@@ -943,28 +1015,25 @@ Apply this rule when enabling HTTP REST endpoints or WebSocket subscriptions for
    }
    ```
 
-10. **Connect via WebSocket**. WebSocket support is enabled automatically with `rest: true`. Connect to a resource URL to subscribe to change events:
+10. **Control OpenAPI visibility**. Every non-hidden exported resource is included in the generated OpenAPI document at `GET /openapi`. To exclude a type from the OpenAPI document, mark it `@hidden` in the schema:
+
+    ```graphql
+    type Secret @table @export @hidden {
+    	id: Long @primaryKey
+    }
+    ```
+
+    Or set `static hidden = true` on a programmatic resource class:
 
     ```javascript
-    let ws = new WebSocket('wss://server/my-resource/341');
-    ws.onmessage = (event) => {
-    	let data = JSON.parse(event.data);
-    };
+    export class Secret extends Resource {
+    	static hidden = true;
+    }
     ```
-
-    Disable WebSocket support independently with `webSocket: false` under `rest`.
-
-11. **Use MQTT over WebSockets** by setting the sub-protocol header:
-
-    ```
-    Sec-WebSocket-Protocol: mqtt
-    ```
-
-12. **Specify response format** using the `Accept` header. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors on property paths and take precedence over property names.
 
 #### Examples
 
-**Schema and config for a REST-enabled table:**
+**Full schema and config setup:**
 
 ```graphql
 # schema.graphql
@@ -982,88 +1051,89 @@ graphqlSchema:
 rest: true
 ```
 
-**Conditional GET with ETag caching:**
+**Conditional GET with caching:**
 
-```http
+```
 GET /Product/123
-If-None-Match: "abc123"
+If-None-Match: "abc123etag"
 ```
 
 Response when unchanged:
 
 ```
 HTTP/1.1 304 Not Modified
-ETag: "abc123"
+ETag: "abc123etag"
 ```
 
 **POST and read the Location header:**
 
-```http
+```
 POST /Product/
 Content-Type: application/json
 
-{ "name": "Widget" }
+{ "name": "Widget", "price": 9.99 }
 ```
+
+Response:
 
 ```
 HTTP/1.1 201 Created
 Location: 7f3a9c
 ```
 
-**PATCH (shallow merge only):**
+**PATCH shallow merge:**
 
-```http
+```
 PATCH /Product/123
 Content-Type: application/json
 
-{ "status": "active" }
+{ "price": 12.99 }
 ```
 
-**Custom WebSocket connect handler:**
+Preserves `name` and all other top-level properties; replaces any nested object in `price` wholesale.
+
+**Custom WebSocket connect handler with timer:**
 
 ```javascript
-export class Echo extends Resource {
-	async *connect(incomingMessages) {
-		for await (let message of incomingMessages) {
-			yield message; // echo each message back
-		}
+export class Example extends Resource {
+	connect(incomingMessages) {
+		let outgoingMessages = super.connect();
+
+		let timer = setInterval(() => {
+			outgoingMessages.send({ greeting: 'hi again!' });
+		}, 1000);
+
+		incomingMessages.on('data', (message) => {
+			outgoingMessages.send(message);
+		});
+
+		outgoingMessages.on('close', () => {
+			clearInterval(timer);
+		});
+
+		return outgoingMessages;
 	}
-}
-```
-
-**Hide a resource from OpenAPI — schema directive:**
-
-```graphql
-type InternalLog @table @export @hidden {
-	id: Long @primaryKey
-}
-```
-
-**Hide a resource from OpenAPI — programmatic class:**
-
-```javascript
-export class InternalLog extends Resource {
-	static hidden = true;
 }
 ```
 
 #### Notes
 
-- A component directory with **no** `config.yaml` inherits Harper's built-in default, which enables `rest` automatically. As soon as a `config.yaml` exists, it is used verbatim — omitting `rest` from it disables REST even if the directory previously had it without a config file. Always add `rest: true` when adding a config file.
-- `POST /Product` (no trailing slash) returns `404`. The trailing slash is required for collection operations.
-- A `POST` to a primary key that already exists fails with `409` rather than overwriting.
-- PATCH merge is **shallow** — a nested object in the body replaces the stored nested object wholesale; nested properties not included in the body are dropped.
-- The `.msgpack` suffix (along with `.json`, `.cbor`, `.csv`) is reserved as a content-type selector and cannot be used as a property name in dot-path access.
-- Server-Sent Events subscriptions are served on the same paths, negotiated via `Accept: text/event-stream`; they are not affected by the `webSocket` option.
-- See [querying-rest-apis.md](querying-rest-apis.md) for full query syntax on collection endpoints and [real-time-apps.md](real-time-apps.md) for real-time subscription patterns.
+- The trailing slash is always significant: `/Product` is the resource descriptor; `/Product/` is the record collection. `POST /Product` (no slash) returns `404`.
+- `HEAD` is served exactly as `GET` with the response body omitted. `QUERY` is accepted on the collection path (`QUERY /Product/`) and runs a search taken from the request body rather than the URL.
+- `PUT` always forces the primary key to match the `{id}` in the URL, re-stamps `@updatedTime`, and preserves `@createdTime` from the original record.
+- PATCH merge is shallow only. A nested object in the body replaces the entire stored sub-object; omitted nested properties are lost.
+- Server-Sent Events subscriptions are served on the same paths, negotiated via `Accept: text/event-stream`. They are not affected by the `webSocket` option.
+- Leaving `@export` on the schema while also exporting a same-named subclass produces conflicting endpoints. When a JavaScript subclass should own the URL, omit `@export` from the schema and export the class instead.
+- See [real-time-apps.md](real-time-apps.md) for patterns around WebSocket and event-driven resource design.
+- See [querying-rest-apis.md](querying-rest-apis.md) for filtering, sorting, pagination, and content-type details.
 
-### 2.2 Querying Harper REST APIs
+### 2.2 Querying REST APIs
 
-Instructions for the agent to filter, sort, select, and paginate records through Harper's URL-based REST query language.
+Instructions for the agent to filter, sort, select, and paginate Harper REST API collections using URL query parameters.
 
 #### When to Use
 
-Apply this rule whenever building or modifying HTTP requests against Harper collection endpoints that need attribute filtering, comparison operators, sorting, field selection, pagination, or relationship joins. Use it when constructing query strings for any REST interface exposed by Harper (see [automatic-apis.md](automatic-apis.md)).
+Apply this rule when building or modifying HTTP requests against Harper REST collection endpoints that need attribute filtering, comparison operators, sorting, field selection, or pagination. Use it whenever constructing query strings for `GET` requests against table-backed resources exposed via `@export`. See [automatic-apis.md](automatic-apis.md) for how those endpoints are created.
 
 #### How It Works
 
@@ -1074,50 +1144,40 @@ Apply this rule whenever building or modifying HTTP requests against Harper coll
    GET /Product/?category=software&inStock=true
    ```
 
-   Query for null values with:
+2. **Apply FIQL comparison operators**: Use FIQL syntax for range and equality comparisons.
 
-   ```
-   GET /Product/?discount=null
-   ```
-
-2. **Apply comparison operators (FIQL syntax)**: Use FIQL operators in the query string for range and pattern matching.
-
-   | Operator             | Meaning                                |
-   | -------------------- | -------------------------------------- |
-   | `==`                 | Equal                                  |
-   | `=lt=`               | Less than                              |
-   | `=le=`               | Less than or equal                     |
-   | `=gt=`               | Greater than                           |
-   | `=ge=`               | Greater than or equal                  |
-   | `=ne=`, `!=`         | Not equal                              |
-   | `=ct=`               | Contains (strings)                     |
-   | `=sw=`, `==<value>*` | Starts with (strings)                  |
-   | `=ew=`               | Ends with (strings)                    |
-   | `=`, `===`           | Strict equality (no type conversion)   |
-   | `!==`                | Strict inequality (no type conversion) |
+   | Operator                                  | Meaning                                 |
+   | ----------------------------------------- | --------------------------------------- |
+   | `==`                                      | Equal                                   |
+   | `=lt=`                                    | Less than                               |
+   | `=le=`                                    | Less than or equal                      |
+   | `=gt=`                                    | Greater than                            |
+   | `=ge=`                                    | Greater than or equal                   |
+   | `=ne=`, `!=`                              | Not equal                               |
+   | `=between=(low,high)`, `=gele=(low,high)` | At least `low` and at most `high`       |
+   | `=gelt=(low,high)`                        | At least `low` and less than `high`     |
+   | `=gtle=(low,high)`                        | Greater than `low` and at most `high`   |
+   | `=gtlt=(low,high)`                        | Greater than `low` and less than `high` |
+   | `=ct=`                                    | Contains (strings)                      |
+   | `=sw=`, `==<value>*`                      | Starts with (strings)                   |
+   | `=ew=`                                    | Ends with (strings)                     |
+   | `=`, `===`                                | Strict equality (no type conversion)    |
+   | `!==`                                     | Strict inequality (no type conversion)  |
 
    ```
    GET /Product/?price=gt=100
    GET /Product/?price=le=20
-   GET /Product/?name==Keyboard*
    GET /Product/?category=software&price=gt=100&price=lt=200
+   GET /Product/?price=between=(100,200)
    ```
 
-   URL-encode colons in date values:
+   For date fields, URL-encode colons as `%3A`:
 
    ```
    GET /Product/?listDate=gt=2017-03-08T09%3A30%3A00.000Z
    ```
 
-3. **Chain conditions for range queries**: Omit the attribute name on the second condition to apply it to the same attribute.
-
-   ```
-   GET /Product/?price=gt=100&lt=200
-   ```
-
-   Chaining supports `gt`/`ge` combined with `lt`/`le` only.
-
-4. **Apply type conversion**: For FIQL comparators, Harper converts values automatically. Use explicit type prefixes when needed.
+3. **Apply type conversion**: For FIQL comparators, Harper converts values automatically. Use explicit type prefixes when needed.
 
    | Syntax                                    | Behavior                                    |
    | ----------------------------------------- | ------------------------------------------- |
@@ -1129,28 +1189,44 @@ Apply this rule whenever building or modifying HTTP requests against Harper coll
    | `name==string:some%20text`                | Keep as string with URL decode              |
    | `name==date:2024-01-05T20%3A07%3A27.955Z` | Explicit Date conversion                    |
 
-   For strict operators (`=`, `===`, `!==`), no automatic type conversion is applied.
+   If the attribute declares a type in the schema (e.g., `Float`), values are always converted to that type before searching. For strict operators (`=`, `===`, `!==`), no automatic type conversion is applied.
 
-5. **Combine conditions with OR logic**: Use `|` instead of `&`.
+4. **Query for null values**: Use `=null` to match records storing `null`; use `=ne=null` to match records with a present, non-null value. A record that omits the attribute matches neither.
+
+   ```
+   GET /Product/?discount=null
+   GET /Product/?discount=ne=null
+   ```
+
+5. **Understand null and omitted value behavior**: Comparators treat a null value and an omitted value the same way, except `==null`, which matches a stored `null` only.
+   - No range comparator (`=lt=`, `=le=`, `=gt=`, `=ge=`, `=between=`, etc.) matches a null or omitted value.
+   - `=ne=` with a non-null value matches null and omitted values.
+   - A `null` lower bound means no lower bound: `ge=null` and `gt=null` match every non-null value, and `between=(null,10)` returns the same records as `le=10`. A `null` upper bound: `lt=null` and `le=null` match nothing.
+   - Sorting puts null and omitted values first; `-` puts them last, with no guaranteed order between the two.
+
+6. **Chain range conditions**: Omit the attribute name on the second condition to apply it to the same attribute.
+
+   ```
+   GET /Product/?price=gt=100&lt=200
+   ```
+
+   Chaining supports `gt`/`ge` combined with `lt`/`le` only.
+
+7. **Combine conditions with OR**: Use `|` instead of `&` for OR logic. Use parentheses or square brackets to group conditions.
 
    ```
    GET /Product/?rating=5|featured=true
-   ```
-
-6. **Group conditions**: Use parentheses or square brackets to control order of operations. Prefer square brackets when constructing from user input.
-
-   ```
    GET /Product/?rating=5|(price=gt=100&price=lt=200)
    GET /Product/?rating=5&[tag=fast|tag=scalable|tag=efficient]
    ```
 
-   Construct from JavaScript:
+   Prefer square brackets when constructing queries from user input:
 
    ```javascript
    let url = `/Product/?rating=5&[${tags.map(encodeURIComponent).join('|')}]`;
    ```
 
-7. **Select specific properties with `select()`**: Include `select()` as a query function to control which fields are returned.
+8. **Select specific fields with `select()`**: Specify which properties to include in the response.
 
    | Syntax                                 | Returns                                           |
    | -------------------------------------- | ------------------------------------------------- |
@@ -1166,191 +1242,189 @@ Apply this rule whenever building or modifying HTTP requests against Harper coll
    GET /Product/?brand.name=Microsoft&select(name,brand{name})
    ```
 
-8. **Paginate with `limit(end)` or `limit(start,end)`**: Return records in a zero-based window. `limit(end)` starts at zero; `limit(start,end)` returns at most `end - start` records.
+9. **Limit results with `limit(end)` or `limit(start,end)`**: Return records in the zero-based window from `start` (inclusive) to `end` (exclusive). `limit(end)` starts at zero.
 
    ```
    GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
    GET /Product/?rating=gt=3&limit(10,30)
    ```
 
-9. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
+10. **Sort results with `sort(property)` or `sort(+property,-property,...)`**: Prefix `+` or no prefix = ascending; `-` = descending. Multiple properties break ties in order.
 
-   ```
-   GET /Product/?rating=gt=3&sort(+name)
-   GET /Product/?sort(+rating,-price)
-   ```
+    ```
+    GET /Product/?rating=gt=3&sort(+name)
+    GET /Product/?sort(+rating,-price)
+    ```
 
-10. **Request total counts for pagination**: Send a `Prefer` header on `GET` or `HEAD` requests. Counting is opt-in; without the header, no count is computed. Counting requires a bounded `limit()` with page size (`end - start`, or `end` in the one-argument form) no larger than **10,000**, and window end no larger than **1,000,000**. A request with no `limit()`, one outside those bounds, or a non-numeric one is served normally with no count headers.
-
-    | Value             | Meaning                                                                                       |
-    | ----------------- | --------------------------------------------------------------------------------------------- |
-    | `count=exact`     | Exact number of matching records (off by default; requires `exactCount: true` in REST config) |
-    | `count=estimated` | Fast planner/table estimate; cheap, approximate                                               |
+11. **Request total counts for pagination**: Send a `Prefer` header on `GET` or `HEAD` requests. Counting is opt-in; without the header, no count is computed. Counting requires a bounded `limit()` with page size (`end - start`, or `end` in the one-argument form) no larger than **10,000** and window end no larger than **1,000,000**.
 
     ```
     GET /Product/?category=software&limit(0,25)
     Prefer: count=exact
     ```
 
+    | `Prefer` value    | Meaning                                                     |
+    | ----------------- | ----------------------------------------------------------- |
+    | `count=exact`     | Exact count of matching records; scans the full matched set |
+    | `count=estimated` | Fast planner/table estimate; cheap and approximate          |
+
     Response headers:
 
-    | Header               | Example           | Description                                                |
-    | -------------------- | ----------------- | ---------------------------------------------------------- |
-    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range returned out of total matching set |
-    | `Range-Unit`         | `items`           | Unit used by `Content-Range`                               |
-    | `Preference-Applied` | `count=exact`     | Count mode the server applied (`exact` or `estimated`)     |
-
-    Enable exact counts in REST configuration:
-
-    ```yaml
-    rest:
-      exactCount: true
+    ```
+    HTTP/1.1 200 OK
+    Content-Range: items 0-24/1234
+    Range-Unit: items
+    Preference-Applied: count=exact
     ```
 
-    Without `exactCount: true`, a `count=exact` request is served as an estimate. When the total cannot be produced, it is reported as `*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total (`.../*`) is distinct from a request that asked for no count.
+    | Header               | Example           | Description                                                               |
+    | -------------------- | ----------------- | ------------------------------------------------------------------------- |
+    | `Content-Range`      | `items 0-24/1234` | 0-based inclusive range of records returned out of the total matching set |
+    | `Range-Unit`         | `items`           | The unit used by `Content-Range`                                          |
+    | `Preference-Applied` | `count=exact`     | The count mode the server applied                                         |
+    - The response status for paginated results is always `200`; Harper does not use `206 Partial Content`. `Content-Range` is informational.
+    - Without `exactCount: true`, a `count=exact` request is served as an estimate (`Preference-Applied: count=estimated`). When the total cannot be produced, it is reported as `.../*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total (`.../*`) is distinct from a request that asked for no count.
+    - Exact counting is off by default. Enable it in REST configuration:
+      ```yaml
+      rest:
+        exactCount: true
+      ```
+    - When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
+    - Full-text queries cannot provide an exact total count; `Prefer: count=exact` returns `Content-Range: items <range>/*` for full-text indexes.
+    - For JSON-array responses from full-text queries, check for a terminal error object shaped like `{ "error": "ErrorName: message" }` and treat the response as failed. A stream or JSON-parse error is also a failed page, not a record.
 
-11. **Query across relationships**: Use dot-syntax on related attributes. Relationships must be defined with `@relationship` in the schema.
+12. **Use full-text operators**: For a `FullText` field carrying `@fullText`, use the field name as the query attribute with a full-text comparator.
+
+    ```
+    GET /Product/?catalogSearch=matches=waterproof%20trail
+    GET /Product/?catalogSearch=matches_phrase=trail%20running
+    GET /Product/?catalogSearch=matches_prefix=waterproof%20tra&limit(10)
+    ```
+
+    Supported operators: `matches`, `matches_all`, `matches_phrase`, `matches_prefix`, `matches_fuzzy`, `matches_fuzzy_prefix`, plus a `not_` form of each. A negated full-text condition requires a non-negated condition on the same index. Repeat the parameter to provide both:
+
+    ```
+    GET /Product/?catalogSearch=matches=waterproof&catalogSearch=not_matches=leather
+    ```
+
+    Use operators like `=matches=`, `=matches_phrase=`, `=matches_prefix=`, and `=matches_fuzzy=` with the full-text field name. The REST URL syntax searches every source field in the index, so the caller must be allowed to read every source field.
+
+13. **Query across relationships**: Use dot-syntax to filter by related table attributes. Relationships must be defined with `@relationship` in the schema.
 
     ```
     GET /Product/?brand.name=Microsoft
-    GET /Brand/?products.name=Keyboard
-    ```
-
-    Include relationship attributes in the response using `select()`:
-
-    ```
-    GET /Product/?brand.name=Microsoft&select(name,brand)
     GET /Product/?brand.name=Microsoft&select(name,brand{name})
     ```
 
-    Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN. An outer filter such as `products.price=ge=number:30` removes parents without a qualifying product and narrows the selected products.
+    Selecting a relationship without an outer dot-syntax filter behaves as a LEFT JOIN. An outer filter joined with `&` removes parents without a qualifying related record. An outer relationship filter narrows nested relationship results. A nested filter inside `select(...,products[...])` only narrows projected products; it does not remove a parent.
 
-12. **Filter and page each relationship's children**: Use square brackets inside `select()` to apply conditions, sort, and pagination per parent's related records.
+14. **Apply conditions one related record must meet**: Use square brackets after the relationship name to require one related record to satisfy all enclosed conditions.
+
+    ```
+    GET /Brand/?products[name=Cable&price=ge=30]
+    GET /Brand/?products[name=Keyboard&price=ge=30]
+    ```
+
+    Inside the brackets, name attributes of the related table directly (e.g., `price`, not `products.price`). Conditions combine with `&`, `|`, and groups.
+
+15. **Filter and page nested relationships**: Use square brackets inside `select()` to apply conditions, sort, and pagination to each parent's related records.
 
     ```
     GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
     ```
 
-    An outer relationship filter also narrows that relationship's nested results — do not repeat the outer filter inside `[...]` unless you want to narrow further.
-
     | Nested option      | Behavior                                                        |
     | ------------------ | --------------------------------------------------------------- |
-    | Conditions         | Qualify children; combine with `&` (AND), `\|` (OR), and groups |
+    | Conditions         | Qualify children of the selected relationship                   |
     | `sort(price)`      | Order eligible children before pagination                       |
     | `limit(end)`       | Return at most `end` children per parent                        |
     | `limit(start,end)` | Skip `start` eligible children and return at most `end - start` |
     | `select(id,price)` | Project fields from returned children                           |
+    - `limit(0)` returns no children without reading them. Invalid nested bounds (negative or fractional values) return HTTP 400.
+    - Nested filters require a table-backed relationship. Filters on plain JSON projections or full-text predicates inside a relationship selection return HTTP 400.
 
 #### Examples
 
-##### Range filter with sort and limit
+##### Range filter with type conversion
 
 ```
-GET /Product/?category=software&price=gt=100&price=lt=200&sort(+price)&limit(0,25)
+GET /Product/?price=gt=100&price=lt=200
+GET /Product/?price=between=(100,200)
 ```
 
-##### Select specific fields with a relationship join
+##### Null query
 
 ```
-GET /Product/?brand.name=Microsoft&select(name,brand{name,id})
+GET /Product/?discount=null
+GET /Product/?discount=ne=null
 ```
 
-##### Paginate with exact count
+##### Select with sort and limit
+
+```
+GET /Product/?rating=gt=3&inStock=true&select(rating,name)&limit(20)
+GET /Product/?sort(+rating,-price)
+```
+
+##### Paginated request with exact count
 
 ```
 GET /Product/?category=software&limit(0,25)
 Prefer: count=exact
 ```
 
-Response:
+Response headers:
 
 ```
-HTTP/1.1 200 OK
 Content-Range: items 0-24/1234
 Range-Unit: items
 Preference-Applied: count=exact
 ```
 
-##### Relationship schema with nested child filtering
-
-```graphql
-type Brand @table @export {
-	id: Int @primaryKey
-	name: String @indexed
-	products: [Product] @relationship(to: "brandId")
-}
-
-type Product @table @export {
-	id: ID @primaryKey
-	brandId: Int @indexed
-	name: String
-	price: Int @indexed
-}
-```
-
-Keep every brand; show its cheapest product costing at least 30:
-
-```
-GET /Brand/?select(id,name,products[price=ge=number:30&sort(price)&limit(1)&select(id,name,price)])
-```
-
-Return only qualifying brands; inherit the outer price filter:
+##### Relationship query with nested selection and pagination
 
 ```
 GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1)&select(id,name,price)])
 ```
 
-Page through each brand's qualifying products (skip first, return second):
-
-```
-GET /Brand/?products.price=ge=number:30&select(id,name,products[sort(price)&limit(1,2)&select(id,name,price)])
-```
-
-Bound parent pages with stable sorting:
-
-```
-GET /Brand/?products.price=ge=number:30&sort(name,id)&limit(0,20)&select(id,name,products[sort(price,id)&limit(1)&select(id,name,price)])
-```
-
-Combine OR filters with child sorting and pagination:
+##### OR grouping with nested relationship filter and pagination
 
 ```
 GET /Brand/?sort(name,id)&limit(0,20)&select(id,name,products[[price=lt=number:30|price=ge=number:60]&sort(-price,id)&limit(1,2)&select(id,name,price)])
 ```
 
-##### Many-to-many relationship
+##### Conditions through several relationship hops
 
-```graphql
-type Product @table @export {
-	id: Long @primaryKey
-	name: String
-	resellerIds: [Long] @indexed
-	resellers: [Reseller] @relationship(from: "resellerIds")
-}
 ```
+GET /Company/?departments[employees[tag=oncall&level=ge=3]]
+GET /Company/?departments.employees[tag=oncall&level=ge=3]
+```
+
+##### Many-to-many relationship query
 
 ```
 GET /Product/?resellers.name=Cool Shop&select(id,name,resellers{name,id})
 ```
 
-##### Access a specific property by URL
-
-```
-GET /MyTable/123.propertyName
-```
-
 #### Notes
 
-- The queried attribute in a basic filter must be indexed.
-- For full-text fields annotated with `@fullText`, use operators like `=matches=`, `=matches_phrase=`, `=matches_prefix=`, `=matches_fuzzy=`, and their `not_` negated forms. A negated full-text condition requires a non-negated condition on the same index.
-- Full-text queries cannot provide an exact total count. With `exactCount: true`, `Prefer: count=exact` returns an unavailable total (`Content-Range: items 0-24/*`).
-- The response status for paginated results is always `200`; Harper does not use `206 Partial Content`.
+- Only indexed attributes can lead a filter query; at least one attribute in a multi-attribute query must be indexed.
+- Null indexing requires indexes created in v4.3.0 or later. Existing indexes must be removed and re-added to support `discount=null` queries.
+- For strict operators (`=`, `===`, `!==`), no automatic type conversion is applied — the value is decoded as a URL-encoded string.
+- No range comparator (`=lt=`, `=le=`, `=gt=`, `=ge=`, `=between=`, etc.) matches a null or omitted value.
+- `=ne=` with a non-null value matches null and omitted values.
+- A `null` lower bound means no lower bound: `ge=null` and `gt=null` match every non-null value, and `between=(null,10)` returns the same records as `le=10`. A `null` upper bound: `lt=null` and `le=null` match nothing.
+- Sorting puts null and omitted values first; `-` puts them last, with no guaranteed order between the two.
+- A `HEAD` request with a `count` preference returns count headers with no body.
+- The response status for paginated results is always `200`; Harper does not use `206 Partial Content`. `Content-Range` is informational.
+- Without `exactCount: true`, a `count=exact` request is served as an estimate (`Preference-Applied: count=estimated`). When the total cannot be produced, it is reported as `.../*` (e.g., `Content-Range: items 0-24/*`). `Preference-Applied` still echoes the requested mode, so an unavailable total (`.../*`) is distinct from a request that asked for no count.
 - When CORS is enabled, `Content-Range`, `Range-Unit`, and `Preference-Applied` are added to `Access-Control-Expose-Headers`.
-- For JSON-array responses from full-text queries, check for a terminal error object shaped like `{ "error": "ErrorName: message" }` and treat the response as failed.
+- Full-text queries cannot provide an exact total count; with exact counting enabled, `Prefer: count=exact` returns an unavailable total (`.../*`).
+- For JSON-array responses from full-text queries, check for a terminal error object shaped like `{ "error": "ErrorName: message" }` and treat the response as failed. A stream or JSON-parse error is also a failed page, not a record.
+- Access a specific property of a record by appending it with dot syntax to the record id: `GET /MyTable/123.propertyName`. This only works for declared properties. The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` are reserved as content-type selectors and take precedence over a property of the same name.
+- Querying through a relationship requires read permission on the related table and each related attribute named in a condition; without it, Harper returns HTTP 403.
 - Nested filters require a table-backed relationship. Filters on plain JSON projections or full-text predicates inside a relationship selection return HTTP 400.
-- Invalid nested `limit` bounds (negative or fractional values) return HTTP 400. `limit(0)` returns no children without reading them.
-- The suffixes `.json`, `.cbor`, `.msgpack`, and `.csv` in property access URLs are reserved as content-type selectors.
-- See [automatic-apis.md](automatic-apis.md) for how Harper automatically exposes REST endpoints from schema definitions.
+- `limit(0)` returns no children without reading them. Invalid nested bounds (negative or fractional values) return HTTP 400.
 
 ### 2.3 Real-Time Apps with WebSockets and Pub/Sub
 
@@ -1454,250 +1528,248 @@ Instructions for the agent to handle user authentication, sessions, and JWT toke
 
 #### When to Use
 
-Apply this rule when implementing login/logout flows, reading the current authenticated user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Resource must gate behavior on identity or credentials. See [custom-resources.md](custom-resources.md) for the broader Resource authoring model.
+Apply this rule when implementing sign-in/sign-out flows, reading the current authenticated user, issuing or refreshing JWT tokens, or minting scoped tokens from a custom Resource. Use it whenever a Resource must inspect, establish, or delegate authentication state. See [custom-resources.md](custom-resources.md) for the broader Resource authoring context.
 
 #### How It Works
 
-##### 1. Reading the Current Authenticated User
+##### Reading the Current User
 
-**In an instance method**, call `getCurrentUser()` to get the user associated with the current request, or `undefined` if unauthenticated. The returned object exposes `username`, `role`, and `role.permission` flags.
+1. **Use `getCurrentUser()` in instance methods**: Call `getCurrentUser()` on a Resource instance to get the current authenticated user, or `undefined` if no user is authenticated. The returned object exposes `username`, `role`, and `role.permission` flags.
 
-**In a static verb**, read the user from the `context` argument instead — `context.user`:
+2. **Use `context.user` in static verbs**: Static verbs receive the context as a trailing argument. Read the current authenticated user from `context?.user`:
 
-```javascript
-static async get(_target, context) {
-    const user = context?.user;
-    if (!user) return new Response(null, { status: 401 });
-    return { username: user.username, role: user.role };
-}
-```
+   ```javascript
+   static async get(_target, context) {
+     const user = context?.user;
+     if (!user) return new Response(null, { status: 401 });
+     return { username: user.username, role: user.role };
+   }
+   ```
 
-##### 2. Reading the Full Context
+3. **Use `getContext()` for dual-path static methods**: `getContext()` is a Resource instance method. For static methods that must work both via HTTP and direct server-side calls, import `getContext()` from the `harper` module. Static verbs receive context as the trailing argument — `(target, context)` for `get`/`delete`, `(target, data, context)` for `put`/`patch`/`post`.
 
-**In an instance method**, call `getContext()` to retrieve the current context, which includes:
+4. **Access HTTP-specific context properties**: When triggered by HTTP, the context is the `Request` object with additional properties. Use these to read request metadata or set response headers:
 
-- `user` — User object with username, role, and authorization information
-- `transaction` — The current transaction
+   | Property          | Description                                                                      |
+   | ----------------- | -------------------------------------------------------------------------------- |
+   | `url`             | Full local path including query string                                           |
+   | `method`          | HTTP method                                                                      |
+   | `headers`         | Request headers (`context.headers.get(name)`)                                    |
+   | `responseHeaders` | Response headers (`context.responseHeaders.set(name, value)`)                    |
+   | `pathname`        | Path without query string                                                        |
+   | `host`            | Host from the `Host` header                                                      |
+   | `ip`              | Client IP address                                                                |
+   | `body`            | Raw Node.js `Readable` stream (if a request body exists)                         |
+   | `data`            | Promise resolving to the deserialized request body                               |
+   | `lastModified`    | Controls `ETag`/`Last-Modified` response header                                  |
+   | `requestContext`  | (Source resources only) Context of the upstream resource making the data request |
+   | `transaction`     | Current transaction                                                              |
 
-**In a static verb**, the context is the trailing argument:
+   When triggered by HTTP, the context also exposes `url`, `method`, `headers`, `responseHeaders`, `pathname`, `host`, `ip`, `body`, `data`, `lastModified`, and `requestContext`.
 
-- `(target, context)` for `get`/`delete`
-- `(target, data, context)` for `put`/`patch`/`post`
+##### Session-Based Login and Logout
 
-When triggered by HTTP, the context also exposes `url`, `method`, `headers`, `responseHeaders`, `pathname`, `host`, `ip`, `body`, `data`, `lastModified`, and `requestContext`.
+5. **Enable sessions in config**: Set `authentication.enableSessions: true` in `harperdb-config.yaml` before using `context.login` or `context.session`.
 
-##### 3. Handling Sessions and Login
+6. **Implement sign-in with `context.login`**: Call `context.login(username, password)` in a static `post` verb. It verifies credentials and establishes the session cookie on success:
 
-Enable sessions in `harper-config.yaml`:
+   ```javascript
+   export class SignIn extends Resource {
+   	static async post(_target, data, context) {
+   		const { username, password } = (await data) ?? {};
+   		try {
+   			await context.login(username, password);
+   		} catch {
+   			return new Response('Invalid credentials', { status: 403 });
+   		}
+   		return new Response('Logged in', { status: 200 });
+   	}
+   }
+   ```
 
-```yaml
-authentication:
-  enableSessions: true
-```
+7. **Implement sign-out by clearing the session user**: Use `context.session.update({ user: null })` — `update` is the session's only mutator. Test `context?.session?.user` to detect an established session, because `context.session` is an empty object (not `undefined`) when sessions are enabled and no session cookie is present:
 
-Use `context.login` in a static `post` verb to verify credentials and establish a session cookie:
+   ```javascript
+   export class SignOut extends Resource {
+   	static async post(_target, _data, context) {
+   		if (!context?.session?.user) return new Response(null, { status: 401 });
+   		await context.session.update({ user: null });
+   		return new Response('Logged out', { status: 200 });
+   	}
+   }
+   ```
 
-```javascript
-export class SignIn extends Resource {
-	static async post(_target, data, context) {
-		const { username, password } = (await data) ?? {};
-		try {
-			await context.login(username, password);
-		} catch {
-			return new Response('Invalid credentials', { status: 403 });
-		}
-		return new Response('Logged in', { status: 200 });
-	}
-}
+   Cookie-based sessions are intended for browser clients. For non-browser clients, use JWT issuance.
 
-export class SignOut extends Resource {
-	static async post(_target, _data, context) {
-		if (!context?.session?.user) return new Response(null, { status: 401 });
-		await context.session.update({ user: null });
-		return new Response('Logged out', { status: 200 });
-	}
-}
-```
+##### JWT Token Issuance
 
-- `context.login(username, password)` verifies credentials and sets the session cookie on success.
-- To end a session, call `context.session.update({ user: null })` — `update` is the session's only mutator.
-- `context.session` is an empty object (not `undefined`) when sessions are enabled and no session cookie is present; test `context?.session?.user` to detect an established session.
-- Cookie-based sessions are for browser clients. For non-browser clients, use JWT issuance.
+8. **Call `create_authentication_tokens` with credentials**: Send `username` and `password` in the request body. No `Authorization` header is required when credentials are in the body:
 
-##### 4. Creating Authentication Tokens
+   ```json
+   {
+   	"operation": "create_authentication_tokens",
+   	"username": "username",
+   	"password": "password"
+   }
+   ```
 
-Call `create_authentication_tokens` with credentials in the body — no `Authorization` header is required when `username` and `password` are supplied:
+   Response:
 
-```json
-{
-	"operation": "create_authentication_tokens",
-	"username": "username",
-	"password": "password"
-}
-```
+   ```json
+   {
+   	"operation_token": "<jwt-operation-token>",
+   	"refresh_token": "<jwt-refresh-token>"
+   }
+   ```
 
-Response:
+9. **Pass the `operation_token` as a Bearer token** on subsequent requests:
 
-```json
-{
-	"operation_token": "<jwt-operation-token>",
-	"refresh_token": "<jwt-refresh-token>"
-}
-```
+   ```bash
+   curl --location --request POST 'http://localhost:9925' \
+     --header 'Content-Type: application/json' \
+     --header 'Authorization: Bearer <operation_token>' \
+     --data-raw '{
+         "operation": "search_by_hash",
+         "schema": "dev",
+         "table": "dog",
+         "hash_values": [1],
+         "get_attributes": ["*"]
+     }'
+   ```
 
-Pass the `operation_token` as a `Bearer` token on subsequent requests:
+10. **Refresh an expired `operation_token`** using `refresh_operation_token`. Pass the `refresh_token` as `Bearer <refresh_token>`:
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <operation_token>' \
-  --data-raw '{
-      "operation": "search_by_hash",
-      "schema": "dev",
-      "table": "dog",
-      "hash_values": [1],
-      "get_attributes": ["*"]
-  }'
-```
+    ```bash
+    curl --location --request POST 'http://localhost:9925' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <refresh_token>' \
+      --data-raw '{
+        "operation": "refresh_operation_token"
+      }'
+    ```
 
-##### 5. Refreshing the Operation Token
+    Response:
 
-When the `operation_token` expires, pass the `refresh_token` as `Bearer <refresh_token>` and call `refresh_operation_token`:
+    ```json
+    {
+    	"operation_token": "<new-jwt-operation-token>"
+    }
+    ```
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Bearer <refresh_token>' \
-  --data-raw '{
-    "operation": "refresh_operation_token"
-  }'
-```
+    When both tokens have expired, call `create_authentication_tokens` again with username and password.
 
-Response:
+##### Scoped Tokens (Inline Role)
 
-```json
-{
-	"operation_token": "<new-jwt-operation-token>"
-}
-```
+11. **Mint a scoped token as a `super_user`**: Pass `role` as an inline role-shaped object using the same `permission` structure as `add_role`. The minter must be authenticated as a `super_user`; no `password` may be included in the body. Use `expires_in` to set the token lifetime:
 
-When both tokens have expired, call `create_authentication_tokens` again with username and password.
+    ```json
+    {
+    	"operation": "create_authentication_tokens",
+    	"username": "reporting-service",
+    	"role": {
+    		"permission": {
+    			"operations": ["read_only"],
+    			"dev": {
+    				"tables": {
+    					"dog": {
+    						"read": true,
+    						"insert": false,
+    						"update": false,
+    						"delete": false,
+    						"attribute_permissions": []
+    					}
+    				}
+    			}
+    		}
+    	},
+    	"expires_in": "7d"
+    }
+    ```
 
-##### 6. Minting Scoped Tokens
+    Authenticate the mint request with Basic Authentication or an existing `super_user` `operation_token`:
 
-A `super_user` can mint a scoped token with embedded permissions using `create_authentication_tokens` with an inline `role`. The minter must be authenticated; no `password` may be included in the body. Use `add_role`-style `permission` structure:
+    ```bash
+    curl --location --request POST 'http://localhost:9925' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Basic <base64 of super_user:password>' \
+      --data-raw '{
+          "operation": "create_authentication_tokens",
+          "username": "reporting-service",
+          "role": { "permission": { "operations": ["read_only"] } },
+          "expires_in": "7d"
+      }'
+    ```
 
-```json
-{
-	"operation": "create_authentication_tokens",
-	"username": "reporting-service",
-	"role": {
-		"permission": {
-			"operations": ["read_only"],
-			"dev": {
-				"tables": {
-					"dog": {
-						"read": true,
-						"insert": false,
-						"update": false,
-						"delete": false,
-						"attribute_permissions": []
-					}
-				}
-			}
-		}
-	},
-	"expires_in": "7d"
-}
-```
+    Key constraints:
+    - `username` is attribution only and must not name an existing user.
+    - No refresh token is issued; no user record is created.
+    - Scoped tokens cannot be revoked before expiry — prefer short lifetimes.
+    - `super_user` and `cluster_user` are always forced to `false` in the embedded role.
+    - In **mixed-version** clusters, only nodes with scoped-token support accept these tokens; older nodes reject them with a 401.
 
-Authenticate the mint request with Basic Authentication or an existing `super_user` `operation_token`:
+##### Issuing Tokens from a Custom Resource
 
-```bash
-curl --location --request POST 'http://localhost:9925' \
-  --header 'Content-Type: application/json' \
-  --header 'Authorization: Basic <base64 of super_user:password>' \
-  --data-raw '{
-      "operation": "create_authentication_tokens",
-      "username": "reporting-service",
-      "role": { "permission": { "operations": ["read_only"] } },
-      "expires_in": "7d"
-  }'
-```
+12. **Use `server.operation()` to mint tokens programmatically**: Import `server` from `harper` and call `server.operation(operation, context, authorize)`. Pass `authorize: true` as the **third argument** when the operation should run as the current authenticated user; omit it or pass `false` when the operation supplies its own credentials:
 
-Key constraints for scoped tokens:
+    ```javascript
+    import { Resource, server } from 'harper';
 
-- `username` is attribution only and must not name an existing user.
-- No refresh token is issued; no user record is created.
-- Scoped tokens cannot be revoked before expiry — choose `expires_in` carefully and prefer short lifetimes.
-- `super_user` and `cluster_user` are always forced to `false` in the embedded role.
-- In **mixed-version** clusters, only nodes with scoped-token support accept these tokens; older nodes reject them with 401.
+    export class IssueTokens extends Resource {
+    	static async get(_target, context) {
+    		// Caller is already authenticated — issue tokens for the current authenticated user.
+    		const { operation_token, refresh_token } = await server.operation(
+    			{ operation: 'create_authentication_tokens' },
+    			context,
+    			true,
+    		);
+    		return { operation_token, refresh_token };
+    	}
 
-##### 7. Issuing Tokens from a Custom Resource
+    	static async post(_target, data) {
+    		// Caller provides credentials in the body.
+    		const { username, password } = await data;
+    		if (!username || !password) {
+    			return new Response('username and password required', { status: 400 });
+    		}
+    		const { operation_token, refresh_token } = await server.operation({
+    			operation: 'create_authentication_tokens',
+    			username,
+    			password,
+    		});
+    		return { operation_token, refresh_token };
+    	}
+    }
 
-Use `server.operation()` to mint tokens programmatically inside a Resource. Pass `authorize: true` as the **third argument** when the operation should run as the current authenticated user:
+    export class RefreshJWT extends Resource {
+    	static async post(_target, data) {
+    		const { refresh_token } = await data;
+    		if (!refresh_token) {
+    			return new Response('refresh_token required', { status: 400 });
+    		}
+    		const { operation_token } = await server.operation({
+    			operation: 'refresh_operation_token',
+    			refresh_token,
+    		});
+    		return { operation_token };
+    	}
+    }
+    ```
 
-```javascript
-import { Resource, server } from 'harper';
+##### Token Expiry Configuration
 
-export class IssueTokens extends Resource {
-	static async get(_target, context) {
-		// Issue tokens for the current authenticated user
-		const { operation_token, refresh_token } = await server.operation(
-			{ operation: 'create_authentication_tokens' },
-			context,
-			true, // third argument: authorize as current user
-		);
-		return { operation_token, refresh_token };
-	}
+13. **Configure token timeouts** in `harper-config.yaml` under the `authentication` section:
 
-	static async post(_target, data) {
-		// Issue tokens from credentials supplied in the body
-		const { username, password } = await data;
-		if (!username || !password) {
-			return new Response('username and password required', { status: 400 });
-		}
-		const { operation_token, refresh_token } = await server.operation({
-			operation: 'create_authentication_tokens',
-			username,
-			password,
-		});
-		return { operation_token, refresh_token };
-	}
-}
+    ```yaml
+    authentication:
+      operationTokenTimeout: 1d # Default: 1 day
+      refreshTokenTimeout: 30d # Default: 30 days
+    ```
 
-export class RefreshJWT extends Resource {
-	static async post(_target, data) {
-		const { refresh_token } = await data;
-		if (!refresh_token) {
-			return new Response('refresh_token required', { status: 400 });
-		}
-		const { operation_token } = await server.operation({
-			operation: 'refresh_operation_token',
-			refresh_token,
-		});
-		return { operation_token };
-	}
-}
-```
-
-Omit the third argument (or pass `false`) when the operation supplies its own credentials.
-
-##### 8. Configuring Token Expiry
-
-Set timeouts in `harper-config.yaml` under the `authentication` section:
-
-```yaml
-authentication:
-  operationTokenTimeout: 1d # Default: 1 day
-  refreshTokenTimeout: 30d # Default: 30 days
-```
-
-Valid duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`). The `expires_in` field on scoped token minting accepts the same format.
+    Valid duration strings follow the `jsonwebtoken` package format (e.g., `1d`, `12h`, `60m`).
 
 #### Examples
 
-##### Full Sign-In / Sign-Out Resource
+##### Full sign-in/sign-out Resource pair
 
 ```javascript
 export class SignIn extends Resource {
@@ -1721,17 +1793,7 @@ export class SignOut extends Resource {
 }
 ```
 
-##### Reading the Current Authenticated User in a Static Verb
-
-```javascript
-static async get(_target, context) {
-    const user = context?.user;
-    if (!user) return new Response(null, { status: 401 });
-    return { username: user.username, role: user.role };
-}
-```
-
-##### Minting Tokens via cURL
+##### Minting tokens via the Operations API
 
 ```bash
 curl --location --request POST 'http://localhost:9925' \
@@ -1745,12 +1807,12 @@ curl --location --request POST 'http://localhost:9925' \
 
 #### Notes
 
-- JWT authentication is **preferred over Basic Auth** when you want to avoid sending credentials on every request, your client can store tokens, or you have multiple sequential requests. For simple or **server-to-server** scenarios, use **Basic Authentication**.
+- **JWT is preferred over Basic Auth** for clients that can store tokens, want to avoid sending credentials on every request, or make multiple sequential requests. For simple or **server-to-server** scenarios, use Basic Authentication.
 - Always use **HTTPS** in production to protect tokens in transit.
-- Treat tokens like passwords. If a token is compromised, it remains valid until expiry — use shorter `operationTokenTimeout` values in high-security environments.
-- `context.login` and `context.session` require `enableSessions: true` in `harperdb-config.yaml`; they are for browser clients only.
-- The `server.operation()` third argument (`authorize: true`) attributes the operation to — and permission-checks against — the current authenticated user. Omit it when supplying credentials directly in the operation body.
-- In **mixed-version** clusters, scoped tokens are only accepted by nodes that support them; older nodes return 401.
+- Treat tokens like passwords. Because scoped tokens cannot be revoked before expiry, set short `expires_in` values in high-security environments and consider lowering `operationTokenTimeout`.
+- A caller authenticated by a Bearer validator cannot mint tokens via the passwordless form — it must supply `username` and `password`.
+- `enableSessions` is required in `harperdb-config.yaml` for `context.login` and `context.session` to be available.
+- The **third argument** (`authorize: true`) to `server.operation()` attributes the operation to — and permission-checks against — the calling user.
 
 ## 3. Logic & Extension
 
@@ -1762,23 +1824,23 @@ Instructions for the agent to follow when defining custom REST endpoints with Ja
 
 #### When to Use
 
-Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a table-backed schema, or when you need fine-grained control over URL shape and path parameters.
+Apply this rule when you need to create custom HTTP endpoints, wrap external APIs, or register routes programmatically in a Harper application. Use it any time business logic must live outside a standard table-backed resource.
 
 #### How It Works
 
-1. **Import `Resource` from the `harper` package**: Always import explicitly rather than relying on globals.
+1. **Import `Resource` from `harper`**: Pull in the base class before extending it.
 
    ```javascript
    import { tables, Resource } from 'harper';
    ```
 
-   CommonJS alternative:
+   CommonJS is also supported:
 
    ```javascript
    const { tables, Resource } = require('harper');
    ```
 
-2. **Define a class that `extends Resource`**: Use `export class` so Harper exposes it as an endpoint. Implement HTTP methods as `static` methods on the class.
+2. **Define a class that `extends Resource`**: Declare HTTP handler methods as `static` methods matching the HTTP verb (`get`, `put`, `post`, etc.). Each method receives a `target` object representing the request.
 
    ```javascript
    export class CustomEndpoint extends Resource {
@@ -1790,7 +1852,7 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    }
    ```
 
-3. **Use `static` async methods to call external services**: Each HTTP verb maps to a `static` method of the same lowercase name.
+3. **Wrap external APIs** by making the `static` methods `async` and using `fetch` or any other async call inside them.
 
    ```javascript
    export class MyExternalData extends Resource {
@@ -1806,13 +1868,16 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    		});
    	}
    }
+
+   // Use as a cache source for a local table
+   tables.MyCache.sourcedFrom(MyExternalData);
    ```
 
-4. **Control the URL by choosing the export form**: The shape of the export determines the resulting URL path.
+4. **Control the URL by choosing an export form**: The shape of the export determines the resulting endpoint URL.
 
    | Export form                                 | URL             | Notes                                                           |
    | ------------------------------------------- | --------------- | --------------------------------------------------------------- |
-   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment; case-sensitive.            |
+   | `export class Foo extends Resource {}`      | `/Foo/`         | Class name becomes the path segment. Case-sensitive.            |
    | `export const Bar = { Foo };`               | `/Bar/Foo/`     | Nest under an object to add a path prefix.                      |
    | `export const bar = { 'foo-baz': Foo };`    | `/bar/foo-baz/` | Use object keys for lowercase, hyphens, or non-identifier URLs. |
    | `export { Foo as '/widget/:id' }`           | `/widget/:id`   | Rename the export to set the path directly.                     |
@@ -1821,7 +1886,7 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
 
    URL path matching is case-sensitive — `/Foo/` and `/foo/` are different endpoints.
 
-5. **Declare dynamic path segments with `static path`**: Use `:name` for a single segment and `*name` as a catch-all. Matched values are bound onto `target.<name>`.
+5. **Declare dynamic path segments** using `static path` on the class. Use `:name` for a single segment and `*name` as a catch-all for the rest of the path. Matched values are bound onto `target.<name>`.
 
    ```javascript
    export class Widget extends Resource {
@@ -1841,26 +1906,36 @@ Apply this rule when you need to create custom HTTP endpoints, wrap external API
    }
    ```
 
-   - A leading `/` in `static path` makes the path root-relative (top-level), independent of the file's location.
-   - A leading `./` or bare name resolves relative to the component directory.
-   - A bare `*` (no name) binds under `target.wildcard`. A wildcard must be the final segment.
+   - A bare `*` (no name) binds under `target.wildcard`.
+   - A wildcard must be the final segment of the path.
+   - A leading `/` makes the path root-relative (top-level), independent of the file's location.
+   - A leading `./` or a bare name resolves relative to the component directory.
    - `static path` takes precedence over the export name.
-   - Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats `:param`, which beats `*`, compared left to right.
 
-6. **Register programmatically when the path is dynamic**: Use `server.resources.set(` with a path string and the resource class.
+6. **Understand resolution order**: Exact and static paths always win over parameterized ones. Among parameterized routes, more specific paths win: a literal segment beats a `:param`, which beats a `*` wildcard, compared left to right.
 
+7. **Register programmatically** using `server.resources.set(` when the path must be determined at runtime rather than statically.
    ```javascript
    server.resources.set('my-path', Foo);
    ```
 
-7. **Optionally use a resource as a cache source for a local table**: Call `sourcedFrom` on the target table.
-   ```javascript
-   tables.MyCache.sourcedFrom(MyExternalData);
-   ```
-
 #### Examples
 
-**Custom endpoint with external API wrapping:**
+**Custom endpoint with a fixed path:**
+
+```javascript
+import { Resource } from 'harper';
+
+export class CustomEndpoint extends Resource {
+	static get(target) {
+		return {
+			data: doSomething(),
+		};
+	}
+}
+```
+
+**External API wrapper used as a cache source:**
 
 ```javascript
 import { tables, Resource } from 'harper';
@@ -1879,7 +1954,6 @@ export class MyExternalData extends Resource {
 	}
 }
 
-// Use as a cache source for a local table
 tables.MyCache.sourcedFrom(MyExternalData);
 ```
 
@@ -1889,18 +1963,9 @@ tables.MyCache.sourcedFrom(MyExternalData);
 import { Resource } from 'harper';
 
 export class Widget extends Resource {
-	// GET /widget/10/action/jump  ->  target.id === '10', target.action === 'jump'
 	static path = '/widget/:id/action/:action';
 	static get(target) {
 		return { id: target.id, action: target.action };
-	}
-}
-
-export class Files extends Resource {
-	// GET /files/a/b/c.txt  ->  target.rest === 'a/b/c.txt'
-	static path = '/files/*rest';
-	static get(target) {
-		return { path: target.rest };
 	}
 }
 ```
@@ -1908,23 +1973,15 @@ export class Files extends Resource {
 **Programmatic registration:**
 
 ```javascript
-import { Resource } from 'harper';
-
-export class Foo extends Resource {
-	static get(target) {
-		return { ok: true };
-	}
-}
-
 server.resources.set('my-path', Foo);
 ```
 
 #### Notes
 
-- Avoid conflicting exports between the schema and the JavaScript implementation when a resource `extends` an existing table.
-- Parameterized routes appear in the generated OpenAPI document as templated paths (e.g. `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
+- Do not create conflicting exports between a schema definition and a JavaScript implementation when a resource extends an existing table.
+- Parameterized routes surface in the generated OpenAPI document as templated paths (e.g., `/widget/{id}/action/{action}`) and in MCP `resources/templates/list` as `{param}` URI templates.
 - When bundling for SSR with a tool like Vite, keep `harper` external so it resolves to the runtime: `ssr: { external: ['harper'] }`.
-- For components in their own directory, run `npm link harper` to ensure typings match the running installation.
+- Run `npm link harper` in a component's own directory to ensure typings match the running installation. All installed components have `harper` automatically linked.
 
 ### 3.2 Extending Tables
 
@@ -2026,22 +2083,28 @@ export class MyTable extends tables.MyTable {
 
 ### 3.3 Programmatic Table Requests
 
-Instructions for the agent to interact with Harper tables programmatically using the `tables` object, including querying, sorting, transactions, and module setup.
+Instructions for the agent to interact with Harper tables programmatically using the `tables` object, including querying, transactions, and module setup.
 
 **Instead of:** ORM and query-builder clients (Prisma, Drizzle, Knex). Use this rule rather than adding that service. See `harper-architecture`.
 
 #### When to Use
 
-Apply this rule when writing server-side Harper application code that reads or writes table data directly — for example, in HTTP handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct queries with `conditions`, paginate results, sort, run transactions, or perform CRDT updates.
+Apply this rule when writing server-side Harper code that reads or writes table data directly — for example, in request handlers, background jobs, timers, or SSR entry points. Use it whenever you need to construct a query with `conditions`, `sort`, `select`, `limit`, or `offset`, or when you need to wrap writes in a `transaction()`.
 
 #### How It Works
 
-1. **Import `tables` (and other APIs) from `harper`**: Access tables defined in `schema.graphql` via the `tables` object. Each table type is a property on `tables`.
+1. **Import `tables` (and other APIs) from `harper`**: Access tables defined in `schema.graphql` via the `tables` object. Each table is a property matching its type name.
 
    ```javascript
    import { tables, transaction } from 'harper';
    const { Product } = tables;
    // equivalent to: databases.data.Product
+   ```
+
+   For CommonJS:
+
+   ```javascript
+   const { tables, Resource } = require('harper');
    ```
 
    For components in their own directory, link the package first:
@@ -2050,32 +2113,32 @@ Apply this rule when writing server-side Harper application code that reads or w
    npm link harper
    ```
 
-   All installed components have `harper` automatically linked.
+   When bundling for SSR with Vite, keep `harper` external so it resolves to the runtime — add `ssr: { external: ['harper'] }` in `vite.config`.
 
-2. **Define your schema with `@table`**: Every type you want to access via `tables` must be declared with `@table` in `schema.graphql`. Mark attributes you intend to sort or filter by index with `@indexed`.
+2. **Define your schema with `@table`**: Every type you want to access via `tables` must be declared with `@table` in `schema.graphql`. Use `@indexed` on attributes you intend to sort or filter by efficiently.
 
    ```graphql
    type Product @table {
    	id: Long @primaryKey
    	name: String
-   	price: Float
+   	price: Float @indexed
    }
    ```
 
-3. **Use basic CRUD methods on the table class**: The table class implements the Resource API.
+3. **Perform basic CRUD operations**: Use the table class methods directly.
 
    ```javascript
-   // Create a new record (id auto-generated)
+   // Create
    const created = await Product.create({ name: 'Shirt', price: 9.5 });
 
-   // Modify the record
+   // Patch
    await Product.patch(created.id, { price: Math.round(created.price * 0.8 * 100) / 100 });
 
-   // Retrieve by primary key
+   // Get by primary key
    const record = await Product.get(created.id);
    ```
 
-4. **Query with `search(` and a Query object**: Pass a query object with `conditions`, `sort`, `limit`, `offset`, `select`, and other options.
+4. **Query with `search(` and a query object**: Pass a query object with `conditions`, `sort`, `limit`, `offset`, `select`, and other options. `search(` returns an async iterable. If order doesn't matter, omit `sort` entirely and `search({})` will iterate without an index requirement.
 
    ```javascript
    const query = {
@@ -2086,21 +2149,21 @@ Apply this rule when writing server-side Harper application code that reads or w
    }
    ```
 
-5. **Construct `conditions`**: Each condition is an object with the following properties:
+5. **Build `conditions` arrays**: Each condition object supports the following properties:
 
-   | Property                   | Description                                                                                                                                                                         |
-   | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `attribute`                | Property name, or array for chained/joined properties (e.g. `['brand', 'name']`)                                                                                                    |
-   | `value`                    | The value to match                                                                                                                                                                  |
-   | `comparator`               | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal`, or a full-text comparator |
-   | `conditions`               | Nested conditions array                                                                                                                                                             |
-   | `operator`                 | `and` (default) or `or` for the nested `conditions`                                                                                                                                 |
-   | `fields`                   | Full-text source fields to search                                                                                                                                                   |
-   | `includeHighlights`        | Include configured full-text highlights                                                                                                                                             |
-   | `maxIndexLagMilliseconds`  | Maximum accepted full-text index lag                                                                                                                                                |
-   | `waitForIndexMilliseconds` | Time to wait for acceptable full-text coverage                                                                                                                                      |
+   | Property                   | Description                                                                                                                                                                                                                                                                                                         |
+   | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `attribute`                | Property name, or array for chained/joined properties                                                                                                                                                                                                                                                               |
+   | `value`                    | The value to match                                                                                                                                                                                                                                                                                                  |
+   | `comparator`               | `equals` (default), `greater_than`, `greater_than_equal`, `less_than`, `less_than_equal`, `starts_with`, `contains`, `ends_with`, `between`, `not_equal`, or a full-text comparator (`matches`, `matches_all`, `matches_phrase`, `matches_prefix`, `matches_fuzzy`, `matches_fuzzy_prefix`, and their `not_` forms) |
+   | `conditions`               | Nested conditions array                                                                                                                                                                                                                                                                                             |
+   | `operator`                 | `and` (default) or `or` for nested `conditions`                                                                                                                                                                                                                                                                     |
+   | `fields`                   | Full-text source fields to search; every name must belong to the selected full-text index                                                                                                                                                                                                                           |
+   | `includeHighlights`        | Include configured full-text highlights                                                                                                                                                                                                                                                                             |
+   | `maxIndexLagMilliseconds`  | Maximum accepted full-text index lag                                                                                                                                                                                                                                                                                |
+   | `waitForIndexMilliseconds` | Time to wait for acceptable full-text coverage                                                                                                                                                                                                                                                                      |
 
-   Use nested `conditions` with `operator` for compound logic:
+   Use nested `conditions` and `operator` for compound logic:
 
    ```javascript
    Product.search({
@@ -2123,51 +2186,46 @@ Apply this rule when writing server-side Harper application code that reads or w
    Product.search({ conditions: [{ attribute: ['brand', 'name'], value: 'Harper' }] });
    ```
 
-6. **Apply `limit` and `offset` for pagination**:
+6. **Apply `select` to shape results**: Pass an array of property names, nested objects for relationships, or a string for a single property.
 
    ```javascript
-   Product.search({ conditions: [...], limit: 20, offset: 40 });
-   ```
-
-7. **Use `select` to project fields**: Pass an array of property names, a string for a single property, or nested objects for related records.
-
-   ```javascript
-   // Array of names
+   // Flat select
    Product.search({ select: ['name', 'price'] });
 
-   // Whole related record
-   const book = await Book.get({ id: 42, select: ['id', 'title', 'author'] });
-   book.author.name;
-
-   // Partial related record
+   // Nested relationship select
    const book = await Book.get({
    	id: 42,
    	select: ['id', 'title', { name: 'author', select: ['name'] }],
    });
 
-   // Deep nesting
-   // select: ['id', 'name', { name: 'segments', select: ['id', 'name', { name: 'client', select: ['id', 'name'] }] }]
+   // Special properties:
+   // $id — primary key regardless of name
+   // $updatedtime — last-updated timestamp
+   // $distance — vector index distance
+   // $score — full-text BM25 score
+   // $highlights — full-text highlight fragments
    ```
 
-   Special `select` properties: `$id`, `$updatedtime`, `$distance`, `$score`, `$highlights`.
+7. **Use `sort` with `@indexed` attributes**: Provide a `sort` object with `attribute`, optional `descending`, and optional `next` for tie-breaking.
 
-8. **Apply `sort`**: Provide a sort object with `attribute`, optional `descending`, and optional `next` for tie-breaking.
+   | Property     | Description                                                |
+   | ------------ | ---------------------------------------------------------- |
+   | `attribute`  | Property name (or array for chained relationship property) |
+   | `descending` | Sort descending if `true` (default: `false`)               |
+   | `next`       | Secondary sort to resolve ties (same structure)            |
 
-   | Property     | Description                                              |
-   | ------------ | -------------------------------------------------------- |
-   | `attribute`  | Property name or array for chained relationship property |
-   | `descending` | Sort descending if `true` (default: `false`)             |
-   | `next`       | Secondary sort to resolve ties (same structure)          |
+   ```javascript
+   // attribute must be @indexed, or at least one condition must be present
+   Product.search({
+   	sort: { attribute: 'price', descending: true },
+   });
+   ```
 
-   For collection queries, Harper requires one of:
-   - A `sort` `attribute` marked `@indexed` — no condition required.
-   - At least one `conditions` entry on any attribute when the sort attribute is not indexed.
-
-   If neither is satisfied, Harper throws:
+   If the sort `attribute` is not `@indexed` and no `conditions` are present, Harper throws:
 
    > `HdbError: <attribute> is not indexed and not combined with any other conditions`
 
-   Note: `@primaryKey` alone is treated as not indexed for sort purposes. To iterate a whole table in primary-key order, add an open-ended condition:
+   To iterate a whole table in primary-key order, add an open-ended condition:
 
    ```javascript
    Product.search({
@@ -2176,13 +2234,29 @@ Apply this rule when writing server-side Harper application code that reads or w
    });
    ```
 
-   Pass `allowFullScan: true` to permit an unconditional ordered scan without conditions. If order doesn't matter, omit `sort` entirely — `search({})` iterates without an index requirement.
+8. **Apply `limit` and `offset` for pagination**:
+
+   ```javascript
+   Product.search({
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+   	sort: { attribute: 'price' },
+   	limit: 20,
+   	offset: 40,
+   });
+   ```
 
 9. **Use `explain` and `enforceExecutionOrder` for debugging and control**:
-   - `explain: true` — returns conditions reordered as Harper will execute them.
-   - `enforceExecutionOrder: true` — forces conditions to execute in the order supplied, disabling automatic re-ordering.
+   - Set `explain: true` to return conditions reordered as Harper will execute them.
+   - Set `enforceExecutionOrder: true` to force conditions to execute in the order supplied, disabling Harper's automatic reordering.
 
-10. **Perform CRDT increments with `addTo`**: Use `addTo` on a mutable Resource instance for safe concurrent updates across threads and nodes.
+   ```javascript
+   Product.search({
+   	conditions: [{ attribute: 'price', comparator: 'less_than', value: 100 }],
+   	explain: true,
+   });
+   ```
+
+10. **Use `addTo` for concurrent-safe numeric updates**: `addTo(property, value)` uses CRDT incrementation, safe across threads and nodes.
 
     ```javascript
     static async post(target, data) {
@@ -2191,7 +2265,7 @@ Apply this rule when writing server-side Harper application code that reads or w
     }
     ```
 
-11. **Use `transaction()` for explicit transactional control**: Required when code runs outside a natural transaction context (timers, background jobs). `transaction()` accepts an optional context and a callback; it commits on normal completion and aborts on throw.
+11. **Wrap out-of-context writes in `transaction()`**: HTTP request handlers get a transaction automatically. Use `transaction()` explicitly for timers, background jobs, or any code outside a natural transaction context.
 
     ```javascript
     import { isMainThread } from 'node:worker_threads';
@@ -2215,11 +2289,16 @@ Apply this rule when writing server-side Harper application code that reads or w
     		} finally {
     			running = false;
     		}
-    	}, 3600000); // every hour
+    	}, 3600000);
     }
     ```
 
-    The `txn` object passed to the callback has:
+    - Always `await` the `transaction()` call and `catch` it.
+    - Guard against overlap with a `running` flag when a job can outlast its interval.
+
+12. **Understand `transaction()` atomicity and scope**: Transactions span a single database. All tables within the same database share one transactional context — reads return a consistent snapshot and writes across multiple tables commit with atomicity. Tables in different databases each get their own transaction with no cross-database atomicity guarantee.
+
+    The `txn` object received by the callback exposes:
 
     | Member                | Type            | Description                                            |
     | --------------------- | --------------- | ------------------------------------------------------ |
@@ -2228,109 +2307,79 @@ Apply this rule when writing server-side Harper application code that reads or w
     | `resetReadSnapshot()` | `() => void`    | Resets the read snapshot to the latest committed state |
     | `timestamp`           | `number`        | Timestamp associated with the current transaction      |
 
-    **Atomicity**: All tables within the same database share a single transactional context — reads return a consistent snapshot and writes across multiple tables commit atomically. Cross-database operations have no atomicity guarantee.
-
-    If `transaction()` is called with a context that already has an active transaction, it reuses that transaction — making it safe to call defensively.
-
-12. **Keep `harper` external when bundling for SSR**: In `vite.config`, mark `harper` as external so it resolves to the runtime rather than being bundled.
-
-    ```javascript
-    // vite.config
-    ssr: {
-    	external: ['harper'];
-    }
-    ```
-
-    Example SSR entry using `tables`:
-
-    ```typescript
-    import { tables } from 'harper';
-
-    export async function render(url: string): Promise<string> {
-    	const product = await tables.Product.get(idFromUrl(url));
-    	return renderToString(/* <App product={product} /> */);
-    }
-    ```
+    On normal callback completion the transaction commits automatically. If the callback throws, the transaction is aborted.
 
 #### Examples
 
-##### Nested conditions with sort, limit, and offset
-
-```javascript
-import { tables } from 'harper';
-const { Product } = tables;
-
-const results = [];
-for await (const record of Product.search({
-	conditions: [
-		{ attribute: 'price', comparator: 'less_than', value: 100 },
-		{
-			operator: 'or',
-			conditions: [
-				{ attribute: 'rating', comparator: 'greater_than', value: 4 },
-				{ attribute: 'featured', value: true },
-			],
-		},
-	],
-	sort: { attribute: 'price', descending: false },
-	limit: 10,
-	offset: 0,
-	select: ['id', 'name', 'price'],
-})) {
-	results.push(record);
-}
-```
-
-##### Relationship query with nested select and constraining conditions
+**Relationship group — one related record must meet all conditions:**
 
 ```javascript
 const brands = [];
 for await (const brand of Brand.search({
-	conditions: [{ attribute: ['products', 'price'], comparator: 'greater_than_equal', value: 30 }],
-	select: [
-		'id',
-		'name',
-		{ name: 'products', sort: { attribute: 'price' }, limit: 1, select: ['id', 'name', 'price'] },
+	conditions: [
+		{
+			attribute: 'products',
+			conditions: [
+				{ attribute: 'name', value: 'Keyboard' },
+				{ attribute: 'price', comparator: 'greater_than_equal', value: 30 },
+			],
+		},
 	],
+	select: ['id', 'name', { name: 'products', select: ['name', 'price'] }],
 })) {
 	brands.push(brand);
 }
 ```
 
-##### Transaction with `resetReadSnapshot`
-
-```javascript
-import { tables, transaction } from 'harper';
-const { MyTable } = tables;
-
-await transaction(async (txn) => {
-	const record = await MyTable.get('some-id');
-	txn.resetReadSnapshot(); // refresh snapshot to latest committed state
-	await MyTable.put({ ...record, status: 'processed' }, txn);
-});
-```
-
-##### CRDT increment with `addTo`
+**SSR entry point reading directly from Harper:**
 
 ```javascript
 import { tables } from 'harper';
-const { Product } = tables;
 
-const product = await Product.update(32);
-product.status = 'active';
-product.addTo('quantity', -1);
-product.save();
+export async function render(url: string): Promise<string> {
+  const product = await tables.Product.get(idFromUrl(url));
+  return renderToString(/* <App product={product} /> */);
+}
+```
+
+Keep `harper` external in `vite.config` — e.g. `ssr: { external: ['harper'] }` — so it resolves to the runtime instead of being bundled.
+
+**Nested relationship select with constraints:**
+
+```javascript
+const brand = await Brand.get({
+	id: 42,
+	select: [
+		'id',
+		{
+			name: 'products',
+			conditions: [{ attribute: 'price', comparator: 'greater_than_equal', value: 30 }],
+			sort: { attribute: 'price' },
+			offset: 0,
+			limit: 1,
+			select: ['id', 'price'],
+		},
+	],
+});
+```
+
+**Sort with secondary tie-breaker across a relationship:**
+
+```javascript
+Brand.search({
+	conditions: [{ attribute: ['products', 'price'], comparator: 'greater_than_equal', value: 30 }],
+	sort: { attribute: ['products', 'name'], next: { attribute: 'id' } },
+});
 ```
 
 #### Notes
 
-- Calls through `tables` run in a trusted server-side context and do **not** automatically apply the target table's role permissions. To enforce authorization, set `checkPermission: true` on the query and pass the authenticated `context` as the second argument to `search()` or `get()`.
-- Scope destructive `update`, `patch`, and `delete` operations with specific `conditions` and validate the affected set before writing. These operate directly on stored data and are not easily reversible.
-- `transaction()` must be `await`ed and wrapped in `catch` when used outside a request context. Guard against interval overlap with a `running` flag or equivalent.
-- Selecting a relationship without an outer condition behaves as a **LEFT JOIN**; a top-level `conditions` entry on a related attribute behaves as an **INNER JOIN**.
-- Only the combination of a non-`@indexed` sort `attribute` **and** zero `conditions` triggers `HdbError: <attribute> is not indexed and not combined with any other conditions`. Add a condition or mark the attribute `@indexed` to resolve it.
-- `enforceExecutionOrder: true` disables Harper's automatic condition re-ordering; use only when execution order must be exact.
-- CommonJS import is also supported: `const { tables, Resource } = require('harper');`
+- Calls through `tables` and `databases` run in a trusted server-side context and do not automatically apply the target table's role permissions. To enforce authorization, set `checkPermission: true` on the query and pass the authenticated `context` as the second argument to `search()` or `get()`. Harper then authorizes the read using `context.user`, including table, selected-property, and full-text source-field permissions.
+- Programmatic `update`, `patch`, and `delete` calls operate directly on stored (potentially live production) data. Scope destructive operations with specific `conditions`, validate the affected set before writing, and gate them behind authorization controls.
+- `transaction()` is safe to call defensively: if the context already has an active transaction, it reuses it and executes the callback immediately.
+- `resetReadSnapshot()` on the `txn` object resets the read snapshot to the latest committed state mid-transaction.
+- The bare `@primaryKey` is treated as not indexed for sort purposes (it uses the primary store, not a secondary index). Sorting by primary key alone with no `conditions` triggers the `HdbError: <attribute> is not indexed and not combined with any other conditions` error. Add an open-ended condition or pass `allowFullScan: true` to permit an unconditional scan.
+- All installed components have `harper` automatically linked. For components in their own directory, run `npm link harper` manually.
 
 ### 3.4 TypeScript Type Stripping in Harper
 
@@ -2559,20 +2608,20 @@ Instructions for the agent to deploy a Harper application to Harper Fabric using
 
 #### When to Use
 
-Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, checking that a rolling deploy was certified on every node, or rolling back to a previous release by activating a stored `deployment_id`. See [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md) for cluster setup, and [deploying-from-ci.md](deploying-from-ci.md) for GitHub Actions workflows.
+Apply this rule when deploying a Harper application to a remote Harper Fabric cluster, checking whether a rolling deploy was certified on each node, or restoring a previous release without rebuilding. Also apply it when provisioning credentials for private-source deploys or staging a build for later activation.
 
 #### How It Works
 
-1. **Log in to the cluster once**: Pass the cluster's **Application URL**, from its **Config → Overview** page, to `harper login`. The CLI stores the token, so later commands don't repeat credentials. If the current directory already has a `.env` file that sets no target, the CLI also appends `HARPER_CLI_TARGET` to it.
+1. **Authenticate against the cluster**: Run `harper login` once, pointing at the cluster's Application URL (found on **Config → Overview**). The CLI stores the token and sets the URL as the default target. If the current directory has a `.env` file, and neither that file nor your environment sets `HARPER_CLI_TARGET` or `CLI_TARGET`, login appends `HARPER_CLI_TARGET` to it.
 
    ```bash
    harper login <Application URL>
    # Provide cluster username and password when prompted
    ```
 
-   For CI/CD pipelines, use workload identity (OIDC) or a refresh token from `harper login --for-ci` instead of a password. See [deploying-from-ci.md](deploying-from-ci.md) for a complete GitHub Actions workflow. For a one-off command, `auth_username=` and `auth_password=` are also available as dedicated parameters (not recommended for production).
+   For CI/CD pipelines, use workload identity (OIDC) or a refresh token from `harper login --for-ci` instead of a password. See [deploying-from-ci.md](deploying-from-ci.md) for a complete GitHub Actions workflow. For a one-off command, `auth_username=` and `auth_password=` are available but not recommended for production.
 
-2. **Deploy the application**: Run `harper deploy` with the required parameters. A bare `target` host defaults to `https://<host>:9925`. Use `restart=rolling` for a staggered, zero-downtime restart across the cluster. Pass `replicated=false` to deploy only to the node you called. Pass `json=true` to print the result as JSON.
+2. **Deploy the application**: Run `harper deploy` with the required parameters. A bare `target` host defaults to `https://<host>:9925`. Use `restart=rolling` for a staggered, zero-downtime restart across the cluster. Pass `replicated=false` to restrict the deploy to the single node you called; on Harper Fabric, omit it to reach every node.
 
    ```bash
    harper deploy \
@@ -2583,39 +2632,89 @@ Apply this rule when deploying a Harper application to a remote Harper Fabric cl
      replicated=true
    ```
 
-3. **Choose a package source**: The `package` parameter accepts any valid npm dependency value.
+   Key parameters:
 
-   | Format             | Example                                                                                       |
-   | ------------------ | --------------------------------------------------------------------------------------------- |
-   | Current directory  | Omit `package`                                                                                |
-   | npm package        | `package="@harperdb/status-check"`                                                            |
-   | GitHub (public)    | `package="HarperFast/status-check"` or `package="https://github.com/HarperFast/status-check"` |
-   | Private repo (SSH) | `package="git+ssh://git@github.com:HarperDB/secret-app.git"`                                  |
-   | Tarball            | `package="https://example.com/application.tar.gz"`                                            |
+   | Parameter             | Description                                                                           |
+   | --------------------- | ------------------------------------------------------------------------------------- |
+   | `package=<reference>` | npm, GitHub, or tarball reference. Omit to deploy current directory.                  |
+   | `target=<url>`        | Remote Harper instance URL. Bare host defaults to `https://<host>:9925`.              |
+   | `restart=rolling`     | Restart nodes one at a time; each stays in rotation while it restarts.                |
+   | `replicated=false`    | Deploy to the called node only.                                                       |
+   | `wait=false`          | With `restart=rolling`, exit after the called node takes the release.                 |
+   | `wait_timeout=<ms>`   | With `restart=rolling`, maximum wait time per node. Default: ten minutes per node.    |
+   | `activate=false`      | Build and install without making the release live. Cannot be combined with `restart`. |
+   | `ref=<committish>`    | Branch, tag, or commit SHA to deploy. Resolved to SHA. Implies `by_ref`.              |
+   | `json=true`           | Print output as JSON instead of YAML.                                                 |
+
+3. **Choose a package source**: The `package` field accepts any valid npm dependency value.
+
+   | Format                  | Example                                                                                       |
+   | ----------------------- | --------------------------------------------------------------------------------------------- |
+   | Current local directory | Omit `package`                                                                                |
+   | npm package             | `package="@harperdb/status-check"`                                                            |
+   | GitHub (public)         | `package="HarperFast/status-check"` or `package="https://github.com/HarperFast/status-check"` |
+   | Private repo (SSH)      | `package="git+ssh://git@github.com:HarperDB/secret-app.git"`                                  |
+   | Tarball                 | `package="https://example.com/application.tar.gz"`                                            |
 
    For git tags, use the `semver` directive: `HarperFast/application-template#semver:v1.0.0`. For an SSH-based private repo, register the key with `add_ssh_key` first.
 
-4. **Provision credentials for private repositories**: Run `harper deploy setup=true` once per component and source. (With `provider=github-actions`, it sets up GitHub Actions OIDC deploys instead.) This requires `super_user` privileges and is interactive:
+4. **Provision credentials for private repositories**: Run `harper deploy setup=true` once per component and source. (With `provider=github-actions`, it sets up GitHub Actions OIDC deploys instead.) This requires `super_user` privileges — run it with an administrative credential, not the CI identity it provisions for.
 
    ```bash
    harper deploy setup=true
    ```
 
-   This flow:
+   The setup flow:
    - Fetches the cluster's public key with `get_secrets_public_key`.
    - Encrypts the token locally into an `enc:v1:` envelope.
-   - Stores only the ciphertext with `set_secret`, scoped to the component, never in the global `processEnv` tier.
+   - Stores only the ciphertext with `set_secret` in the component-scoped tier — never in the global `processEnv` tier that every component and child process can read.
    - Grants the component permission to resolve it with `grant_secret`.
 
-   Prefer a `fine-grained` PAT with **Contents: Read-only** on that one repository. Avoid the `gh` CLI session token, which typically carries `read:org`, `gist`, and `workflow` scopes across your whole account.
+   Prefer a **fine-grained** personal access token scoped to **Contents: Read-only** on the target repository. Avoid the `gh` CLI session token, which carries `read:org`, `gist`, `workflow`, and `repo` scopes across your whole account. The encrypted token is durable and replayed on every cold deploy and rollback, so use the narrowest credential that does the job.
 
-   Then deploy using the sealed credential:
+   Then deploy with `credential=true`:
 
    ```bash
-   harper deploy by_ref=true credential=true restart=rolling replicated=true
+   harper deploy by_ref=true credential=true restart=true replicated=true
    ```
 
-5. **Stage a release to make live later**: `activate=false` (`activate: false` in the operation) builds and installs the release on each node without making it live, so the slow, fallible part happens when you choose and the cut-over is quick. Cannot be combined with `restart`.
+5. **Deploy by reference for a reproducible source**: `by_ref=true` sends a pinned git reference instead of uploading the working directory, and the cluster fetches and builds that exact commit. It resolves the repository's `origin` remote and the current commit, then deploys `package=git+https://github.com/<owner>/<repo>.git#<full commit SHA>`.
+
+   ```bash
+   harper deploy by_ref=true restart=true replicated=true
+   ```
+
+   Deploy a specific tag or commit with `ref`:
+
+   ```bash
+   harper deploy ref=v1.2.0 restart=true replicated=true
+   harper deploy ref=9f8c2a1 restart=true replicated=true
+   ```
+
+   Tags and branches are resolved to a full commit SHA before the deploy is sent. A `ref` that cannot be resolved stops the deploy — run `git fetch` and retry, or pass a full commit SHA. A full commit SHA is accepted directly with no resolution step. Valid refs must be in `refs/heads/*` or `refs/tags/*` if qualified; a ref like `refs/pull/123/head` is rejected up front even if your local checkout can resolve it. Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
+   - On a GitHub Actions `pull_request` run, `by_ref` deploys the pull request's head commit. If the event payload isn't readable, the deploy stops; pass the commit explicitly:
+
+     ```bash
+     harper deploy ref=${{ github.event.pull_request.head.sha }} restart=true replicated=true
+     ```
+
+6. **Activate a staged build**: Make a staged build live using its `deployment_id`. Pass `restart` here, not on the stage step. Takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host` — those are rejected rather than ignored.
+
+   ```json
+   {
+   	"operation": "deploy_component",
+   	"project": "my-app",
+   	"deployment_id": "a3f8c2d1-..."
+   }
+   ```
+
+   Or via the CLI:
+
+   ```bash
+   harper deploy project=<name> deployment_id=<id> restart=true
+   ```
+
+7. **Stage a build for later activation**: Pass `activate=false` (`activate: false` in the operation) to build and install without making the release live. `activate: false` cannot be combined with `restart`.
 
    ```json
    {
@@ -2626,99 +2725,73 @@ Apply this rule when deploying a Harper application to a remote Harper Fabric cl
    }
    ```
 
-   The response includes a `deployment_id` naming the staged artifact. Staged builds and replaced releases together count against `deployment.stagingRetention.maxCount` (default `5`). Each kept release is a full installed copy of the component, `node_modules` included, so budget disk for it. `0` keeps no replaced release. `file:` directory sources (`package: file:<dir>`) cannot be staged and are not kept as rollback targets.
+   The response names the artifact that is now waiting:
 
-6. **Activate a staged build**: Make a staged build live using its `deployment_id`. Pass `restart` here, not on the stage step. Takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host` — those are rejected rather than ignored.
+   ```json
+   {
+   	"deployment_id": "a3f8c2d1-...",
+   	"message": "Staged: my-app. Deploy it with deploy_component deployment_id=a3f8c2d1-..."
+   }
+   ```
+
+   The response includes a `deployment_id` naming the staged artifact. Staged builds and replaced releases together count against `deployment.stagingRetention.maxCount` (default `5`). Each kept release is a full installed copy of the component, `node_modules` included. The oldest are pruned at the next deploy or startup.
+   - `404` means the id never existed on that node, was pruned, or the release was replaced and not kept. A `409` means the build exists but cannot be activated (e.g., belongs to another component, or files changed after staging).
+
+8. **Roll back to a previous release**: Use `list_deployments` to find the `deployment_id` of the release to restore. Then activate that id with `restart`. This swaps in the exact installed release with no fetch, rebuild, or reinstall. The release it replaces is kept in turn, so you can go forward again the same way.
 
    ```json
    {
    	"operation": "deploy_component",
    	"project": "my-app",
-   	"deployment_id": "a3f8c2d1-...",
+   	"deployment_id": "<id of the deployment you want back>",
    	"restart": true
    }
    ```
 
-   - A `404` response means the id never existed on that node, was pruned, or the release was replaced and not kept. A `409` means the build exists but cannot be activated (e.g., belongs to another component, or files changed after staging).
-   - Activating the release that is already live succeeds and changes nothing — retries are safe.
+9. **Check certification after a rolling deploy**: A deploy with `"restart": "rolling"` certifies the release on each node using a canary worker before rolling it out. The deploy response includes a `certification` field:
 
-7. **Deploy by reference for a reproducible source**: `by_ref=true` sends a pinned git reference instead of uploading the working directory, and the cluster fetches and builds that exact commit. It resolves the repository's `origin` remote and the current commit, then deploys `package=git+https://github.com/<owner>/<repo>.git#<full commit SHA>`.
+   | `certification` | Meaning                                                                                                                                                                         |
+   | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `certified`     | The canary loaded the release; rollout proceeded.                                                                                                                               |
+   | `uncertified`   | The rollout went on unchecked: the component ran nothing as it loaded (`loadComponent: dev-only`, an absent `if-installed` component, or safe mode), or no worker was replaced. |
+   | `unavailable`   | Deploy restarted unchecked (no worker loads the component, `isolated` setting changed, already live, or `package: file:<dir>` source).                                          |
+   | `not-requested` | The deploy did not restart.                                                                                                                                                     |
+   - **A rejected release fails the deploy.** If the canary throws while loading the component, exits, or doesn't report within a minute, the deploy fails with `400`. The release it replaced is made live again, and nothing is replicated to other nodes. A restart that stops before the canary decides is reported with `status: "interrupted"`.
+   - **A release with nothing to go back to fails closed.** A rejected first deploy, or one whose previous release was not kept, stays on disk, but no worker on that node loads it, even after Harper restarts. `get_status` reports the component as failed and says why. Deploy a fixed release, or activate the same `deployment_id` again with `restart` once the cause is fixed.
+   - Another deploy or `drop_component` of the component on that node is refused with `409` until the rollout has finished.
 
-   ```bash
-   harper deploy by_ref=true restart=rolling replicated=true
-   ```
+10. **Check rolling deploy job status**: A `deploy_component` with `"restart": "rolling"` returns a `restartJobId`. Call `get_job` on the node that received the deploy — `system.hdb_job` is not replicated.
 
-   Deploy a specific tag or commit with `ref`:
+    ```json
+    { "operation": "get_job", "id": "<restartJobId>" }
+    ```
 
-   ```bash
-   harper deploy ref=v1.2.0 restart=rolling replicated=true
-   harper deploy ref=9f8c2a1 restart=rolling replicated=true
-   ```
+    `get_job` returns status `COMPLETE`, `IN_PROGRESS`, or `ERROR`. It answers only on the node that ran the job — `system.hdb_job` is not replicated. For a rolling deploy, that is the node that received the deploy. A deploy-only role that polls for rolling deploys must include `get_job` in its operations allowlist. The job ends `COMPLETE` on success, or `ERROR` with a `message` listing each node's outcome under `activated`.
 
-   - Tags and branches are resolved to a full commit SHA before the deploy is sent. A `ref` that cannot be resolved stops the deploy — run `git fetch` and retry, or pass a full commit SHA.
-   - Any other `ref` must name something a clone can fetch: `refs/heads/*` or `refs/tags/*`, or a bare branch or tag name. A qualified ref outside those, such as `refs/pull/123/head`, is rejected up front.
-   - Commit and push before deploying — the cluster clones from the remote and only sees pushed commits.
-   - On a GitHub Actions `pull_request` run, `by_ref` deploys the pull request's head commit. If the event payload isn't readable, the deploy stops; pass the commit explicitly.
+11. **Monitor `list_deployments` correctly**: A deploy in progress reads `pending`, or `loading` once its release has started loading. A rolling deploy's record reads `rolling_out` until the job has visited every node; filter `list_deployments` without `status` and check each record's `status` is a finished one (`success`, `failed`, `staged`, or `partial`). `completed_at` alone does not indicate completion, since a `rolling_out` record already has it.
 
-8. **Roll back to a previous release**: Use `list_deployments` to find the `deployment_id` of the release to restore, then activate it with `restart`. This swaps in the exact installed release with no fetch, rebuild, or reinstall.
+    ```json
+    {
+    	"operation": "list_deployments",
+    	"project": "my-app",
+    	"limit": 20
+    }
+    ```
 
-   ```bash
-   harper deploy project=<name> deployment_id=<id> restart=true
-   ```
-
-   The release it replaces is kept in turn, so you can go forward again the same way.
-
-9. **Wait for a rolling deploy to finish**: A `deploy_component` with `"restart": "rolling"` returns a `restartJobId`. Poll it with `get_job` to learn whether every node took the release.
-
-   ```json
-   { "operation": "get_job", "id": "4a982782-929a-4507-8794-26dae1132def" }
-   ```
-
-   `get_job` returns status `COMPLETE`, `IN_PROGRESS`, or `ERROR`. It answers only on the node that ran the job — any other node returns an empty array.
-
-10. **Check certification after a rolling deploy**: A deploy with `restart=rolling` certifies the release on each node using a canary worker before rolling it out. The response includes a `certification` field:
-
-    | `certification` | Meaning                                                                                                                                                                         |
-    | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | `certified`     | The canary loaded the release; rollout proceeded.                                                                                                                               |
-    | `uncertified`   | The rollout went on unchecked: the component ran nothing as it loaded (`loadComponent: dev-only`, an absent `if-installed` component, or safe mode), or no worker was replaced. |
-    | `unavailable`   | Deploy restarted unchecked (no worker loads the component, `isolated` setting changed, already live, or `package: file:<dir>` source).                                          |
-    | `not-requested` | The deploy did not restart.                                                                                                                                                     |
-    - **A rejected release fails the deploy.** If the canary throws while loading the component, exits, or doesn't report within a minute, the deploy fails with `400`. The release it replaced is made live again, and nothing is replicated to other nodes. The error carries `certification` as an object with `status` set to `rejected`, or `interrupted` for a restart that stopped before the canary decided.
-    - **A release with nothing to go back to fails closed.** A rejected first deploy, or one whose previous release was not kept, stays on disk, but no worker on that node loads it, even after Harper restarts. `get_status` reports the component as failed and says why. Deploy a fixed release, or activate the same `deployment_id` again with `restart` once the cause is fixed.
-    - Another deploy or `drop_component` of the component on that node is refused with `409` until the rollout has finished.
-    - A rolling deploy's record reads `rolling_out` until the job has visited every node; filter `list_deployments` without `status` and check each record's `status` for a finished value (`success`, `partial`, `failed`, `staged`). `completed_at` alone does not confirm a finished state.
-    - `list_deployments` returns records newest first. Filter by `project` and `status`; omit `limit` to return every matching record. A deploy in progress reads `pending`, or `loading`, until its `completed_at` is set.
+    - The `list_deployments` response strips `payload_blob` and replaces it with `payload_blob_present`; use `get_deployment_payload` to retrieve the tarball.
 
 #### Examples
 
-##### Standard rolling deploy to a cluster
+##### Full rolling deploy from a git tag
 
 ```bash
-# Authenticate once
 harper login https://my-cluster.harperdbcloud.com
-
-# Deploy with rolling restart
 harper deploy \
   project=my-app \
-  package="HarperFast/my-app#semver:v2.1.0" \
-  target=https://my-cluster.harperdbcloud.com \
+  ref=v1.2.0 \
   restart=rolling \
-  replicated=true
-```
-
-##### Deploy by reference with a private repo
-
-```bash
-# Provision credential once (requires super_user)
-harper deploy setup=true
-
-# Deploy pinned to current HEAD, authenticating the clone
-harper deploy \
-  by_ref=true \
-  credential=true \
-  restart=rolling \
-  replicated=true
+  replicated=true \
+  credential=true
 ```
 
 ##### Stage a build, then activate in a maintenance window
@@ -2741,7 +2814,7 @@ Response:
 }
 ```
 
-Activate later:
+Activate later with restart:
 
 ```json
 {
@@ -2755,27 +2828,25 @@ Activate later:
 ##### Roll back using list_deployments
 
 ```json
-{ "operation": "list_deployments", "project": "my-app", "status": "success", "limit": 20 }
+{ "operation": "list_deployments", "project": "my-app", "limit": 10 }
 ```
-
-Then activate the target release:
 
 ```json
 {
 	"operation": "deploy_component",
 	"project": "my-app",
-	"deployment_id": "<id of the deployment you want back>",
+	"deployment_id": "<previous-deployment-id>",
 	"restart": true
 }
 ```
 
-##### Check rolling deploy job status
+##### Check a rolling deploy job
 
 ```json
 { "operation": "get_job", "id": "4a982782-929a-4507-8794-26dae1132def" }
 ```
 
-Returns `COMPLETE`, `IN_PROGRESS`, or `ERROR`. The `restartJobId` from the deploy response is the id to query.
+The job ends `COMPLETE` when every node has taken the release, or `ERROR` with node-level detail if any node did not.
 
 ##### Certification rejection response
 
@@ -2797,215 +2868,134 @@ Returns `COMPLETE`, `IN_PROGRESS`, or `ERROR`. The `restartJobId` from the deplo
 
 #### Notes
 
-- `harper login` stores a token; use `harper login --for-ci` to get a refresh token for non-OIDC pipelines. See [deploying-from-ci.md](deploying-from-ci.md) for GitHub Actions OIDC setup.
-- `replicated=false` deploys to the called node only. On Harper Pro and Fabric, omitting this deploys to every node.
+- `replicated=false` restricts a deploy to the single node you called. On Harper Fabric, omit this parameter to reach every node.
 - `restart=rolling` cannot be combined with `activate=false`.
-- `deployment_id` activation takes no build inputs — passing `package`, `by_ref`, or install options is rejected.
-- `deployment.stagingRetention.maxCount` (default `5`) caps staged builds and kept replaced releases together per component. Oldest are pruned at the next deploy or startup.
-- `file:` directory sources (`package: file:<dir>`) cannot be staged or kept for rollback.
-- `get_job` on a `restartJobId` answers only on the node that received the deploy; any other node returns an empty array.
-- A deploy-only role that waits for rolling deploys must include `get_job` (and `get_deployment` for certified rolling deploys) in its `operations` allowlist.
-- The `enc:v1:` envelope is the only form of the token that ever leaves your machine or travels over the operations API — the plaintext never does.
-- `super_user` is required to run `harper deploy setup=true`.
-- `not-requested` in `certification` means the deploy completed without a restart; no canary check was performed.
-- A rejected release with no previous release to restore **fails closed**: no worker loads it, even after Harper restarts.
+- `deployment_id` activation takes no `package`, `payload`, `credentials`, install options, or `urlPath`/`host` — supplying them is rejected.
+- `file:` directory sources cannot be staged with `activate=false` and are not kept as rollback targets.
+- `deployment.stagingRetention.maxCount` (default `5`) caps staged builds and kept replaced releases together per component. At the default, budget disk for up to five extra copies per component, `node_modules` included.
+- A deploy-only role that waits for rolling deploys must include `get_job` in its operations allowlist.
+- `get_job` answers only on the node that ran the job — `system.hdb_job` is not replicated.
+- The `enc:v1:` envelope is the only form of the token that ever leaves your machine or appears in API logs.
+- The secret provisioned by `harper deploy setup=true` is stored scoped to the component, never in the global `processEnv` tier.
+- For creating the cluster itself, see [creating-a-fabric-account-and-cluster.md](creating-a-fabric-account-and-cluster.md). For full CI/CD pipeline setup, see [deploying-from-ci.md](deploying-from-ci.md).
 
 ### 4.2 Deploying a Harper Application from GitHub Actions with OIDC
 
-Instructions for the agent to configure OIDC trusted publishing so a GitHub Actions workflow can deploy to Harper with no stored credential, using `harper deploy setup=true provider=github-actions` and hand-written policies for tag-triggered releases.
+Instructions for the agent to configure OIDC trusted publishing so a GitHub Actions workflow can deploy to Harper with no stored credential.
 
 #### When to Use
 
-Apply this rule when wiring up a GitHub Actions workflow to deploy a Harper application without storing a `HARPER_CLI_REFRESH_TOKEN` or any other durable credential in CI. Use it for both the one-command branch-deploy setup and the manual policy approach required for tag-triggered releases.
+Apply this rule when setting up a GitHub Actions workflow to deploy a Harper application using OIDC identity tokens instead of stored secrets. Use it when running `harper deploy setup=true provider=github-actions` for the first time, when writing or debugging a deploy workflow, or when managing trust policies, deploy users, and rolling restarts.
 
 #### How It Works
 
-##### One-Command Setup (Branch Deploys)
+##### 1. Run one-command setup as a `super_user`
 
-1. **Run setup once** from the project's checkout, signed in as a `super_user`:
-
-   ```bash
-   harper deploy setup=true provider=github-actions project=my-app
-   ```
-
-   If your workflow file is not `.github/workflows/deploy.yaml`, pass its path explicitly with `workflow=`; otherwise the policy pins `deploy.yaml` and runs of your workflow cannot match it:
-
-   ```bash
-   harper deploy setup=true provider=github-actions project=my-app workflow=.github/workflows/deploy.yml
-   ```
-
-2. **Understand what setup does** — it performs these steps in order:
-   - Resolves the GitHub repository from the checkout's `origin` remote (or `repo=<owner>/<name>`), fetching its numeric id and canonical spelling. For a private repository without `gh`, pass `repository_id=<id>` explicitly.
-   - Validates the workflow file: it must be able to run on `main` (or `branch=`), have a job in the `production` environment (or `environment=`), and grant `id-token: write`. A workflow that can never match stops setup before anything is written. Conditions setup cannot decide are reported as not verified.
-   - Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus the trust policy `github-actions-<project>`.
-   - Reads the policy back and compares it claim by claim with what was written.
-   - Sets the repository's `HARPER_CLI_TARGET` variable via `gh` if one does not already exist.
-
-3. **Handle idempotency**: setup only creates — running it again leaves the cluster and variable unchanged. A role, user, or policy that already exists but differs stops setup before writing. To replace a policy, drop it first:
-
-   ```bash
-   harper drop_oidc_trust id=github-actions-<project>
-   ```
-
-   Then run setup again.
-
-4. **Revoke access when needed**:
-   - Drop the trust policy to stop new runs: `harper drop_oidc_trust id=github-actions-<project>`
-   - Deactivate the user to also invalidate already-issued tokens (valid up to one hour): `harper alter_user username=<project>-ci-deploy active=false`
-
----
-
-##### Manual Setup (Tag-Triggered Releases)
-
-A workflow that deploys on tags needs a policy written by hand because the tag is part of `workflow_ref` and is unknown when the policy is written. See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for cluster-level context.
-
-1. **Log in as `super_user`**:
-
-   ```bash
-   harper login https://my-cluster.example.com:9925
-   ```
-
-2. **Create a deploy-only role and user**:
-
-   ```bash
-   harper add_role role=ci_deploy permission='{"operations":["deploy_component","get_job","get_deployment","registration_info"]}'
-   harper add_user username=ci-deploy role=ci_deploy active=true password="$(openssl rand -base64 32)"
-   ```
-
-   - `deploy_component` — the deploy itself.
-   - `get_deployment` — required for `harper deploy restart=rolling` to wait on every node; without it that wait fails with `403`.
-   - `get_job` — what the wait step polls when the deploy did not wait itself; without it the wait step fails with `403`.
-   - `registration_info` — version check `harper deploy` makes before uploading; without it the deploy still works but the cluster logs a refused operation on every run.
-   - `restart_service` is not needed: Harper starts the rolling restart's job itself. The password is required to create the user but a GitHub Actions pipeline never uses it, so this command discards it.
-
-3. **Add a trust policy** pinning `repository_id`, `workflow_path`, and `environment` (not `workflow_ref`, since the tag is unknown):
-
-   ```bash
-   harper add_oidc_trust \
-     id=my-app-release \
-     issuer=https://token.actions.githubusercontent.com \
-     audience=https://my-cluster.example.com:9925/ \
-     user=ci-deploy \
-     claims='{"repository_id":"67890","workflow_path":"my-org/my-app/.github/workflows/deploy.yml","environment":"production"}'
-   ```
-
-   - `repository_id` is immutable and survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.
-   - `workflow_path` is derived from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`.
-   - `environment` gates the ref. Without it, anyone who can push a branch could mint a token.
-   - `audience` must be the exact target URL with its port and a **trailing slash**.
-   - A workflow that deploys on a push to `main` can pin `workflow_ref` (`my-org/my-app/.github/workflows/deploy.yml@refs/heads/main`) instead, which gates the ref by itself.
-
-4. **Configure the GitHub environment**: in **Settings → Environments → production**, set **Deployment branches and tags** to the `v*` tag pattern. Add required reviewers if a release needs approval.
-
-5. **Store the target as a repository variable** (not a secret — it is not sensitive):
-
-   ```bash
-   gh variable set HARPER_CLI_TARGET --repo my-org/my-app --body https://my-cluster.example.com:9925/
-   ```
-
----
-
-##### How OIDC Authentication Works in the Workflow
-
-A job with `id-token: write` asks GitHub for an identity token. The Harper CLI trades it for a one-hour operation token when all four conditions hold:
-
-1. The job declares `permissions: id-token: write`.
-2. `HARPER_CLI_TARGET` equals the policy's `audience` (URL with port and trailing slash).
-3. The run matches the policy's claims: `repository_id`, `workflow_path`/`workflow_ref`, and `environment`.
-4. **Nothing else is configured to authenticate.** `auth_username=`/`auth_password=`, credentials in the target URL, `HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_REFRESH_TOKEN` or `HARPER_CLI_OPERATION_TOKEN`, and a saved `harper login` all outrank the exchange.
-
-Nothing in the workflow names the policy. Every `harper` command in the job (`harper deploy`, `harper get_job`, etc.) authenticates through it automatically.
-
-The exchange runs only when GitHub sets `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which it does for a job that declares `permissions: id-token: write`. Without them, the CLI falls through to its other credential sources rather than reporting a failure.
-
-On success the CLI prints to stderr:
-
-```
-Requesting a GitHub Actions identity token for https://my-instance.harperdb.io:9925/...
-Authenticated as 'ci-deploy' via OIDC trust policy 'my-app-prod'.
-```
-
-To diagnose a rejected exchange, use `list_oidc_trust` and check the instance's `oidc-trust` log. The server does not report which check failed.
-
----
-
-##### Policy Specificity for GitHub Actions
-
-For `https://token.actions.githubusercontent.com`, a policy must satisfy all three of these:
-
-| Requirement            | Satisfied by one of                                                      | Left open otherwise                             |
-| ---------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
-| **Pin the repository** | `repository_id`, `repository`                                            | Any repository                                  |
-| **Pin the workflow**   | `workflow_ref`, `workflow_path`, `job_workflow_ref`, `job_workflow_path` | Any workflow in that repository                 |
-| **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
-
-Additional constraints:
-
-- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
-- `repository_id` is preferred over `repository` because it is immutable.
-- A tag-triggered release cannot pin `workflow_ref` since the tag is unknown when the policy is written — pin `workflow_path` and gate on `environment` instead.
-
----
-
-##### Diagnosing and Managing Policies
-
-- **List all policies** (including disabled ones) — `super_user` only:
-
-  ```bash
-  harper list_oidc_trust
-  ```
-
-  `list_oidc_trust` returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, and optionally `invalid_reason`. Check `invalid_reason` first when diagnosing a rejected exchange — it is set when the policy is malformed or its user was deleted or deactivated after the policy was written.
-
-- **Drop a policy** — stops future exchanges; does not revoke already-issued tokens:
-
-  ```bash
-  harper drop_oidc_trust id=my-app-release
-  ```
-
-  To also stop tokens already in circulation, deactivate the user with `harper alter_user`.
-
----
-
-##### Durable Credentials for Private Sources
-
-Skip this section if your repository is public or your package is on a public registry.
-
-Harper keeps the credential (encrypted, in the secrets store) with the component's configuration so that later installs — a new node joining the cluster, a reinstall after a restore — can fetch the package again. Use a durable token, not the workflow's ephemeral `GITHUB_TOKEN`.
-
-- For a private repository (git-tag deploys): a fine-grained personal access token with **Contents: read-only** permission scoped to the application repository.
-- For GitHub Packages: a token with the `read:packages` scope.
-
-Store it in Harper once from your machine:
+Log in to the cluster, then run setup from the project's checkout:
 
 ```bash
-# For a private repository:
-harper deploy setup=true provider=github project=my-app
+harper login https://my-cluster.example.com:9925
+harper deploy setup=true provider=github-actions project=my-app
+```
 
-# For GitHub Packages:
+If your workflow file is not `.github/workflows/deploy.yaml`, pass `workflow=` explicitly — the policy pins the exact filename, and runs of a differently named workflow will never match:
+
+```bash
+harper deploy setup=true provider=github-actions project=my-app workflow=.github/workflows/deploy.yml
+```
+
+Setup performs these steps automatically:
+
+1. Resolves the GitHub repository's numeric id and canonical name from the `origin` remote (or `repo=<owner>/<name>`). Pass `repository_id=<id>` for private repositories without `gh`.
+2. Validates the workflow file: it must be able to run on `main` (or `branch=`), run a job in the `production` environment (`environment=`), and grant `permissions: id-token: write`. Setup stops before writing anything if the workflow could never match or never request a token.
+3. Creates a role and a user named `<project>-ci-deploy` with permissions limited to `deploy_component`, `get_deployment`, `get_job`, and `registration_info`, plus the trust policy `github-actions-<project>`.
+4. Reads the policy back and compares it claim by claim with what it intended to write.
+5. Sets the repository's `HARPER_CLI_TARGET` variable via `gh` if one does not already exist.
+
+##### 2. Understand what setup creates
+
+| Object        | Name                       | Purpose                              |
+| ------------- | -------------------------- | ------------------------------------ |
+| Role + user   | `<project>-ci-deploy`      | Privilege boundary for CI runs       |
+| Trust policy  | `github-actions-<project>` | Maps OIDC claims to the deploy user  |
+| Repo variable | `HARPER_CLI_TARGET`        | Points every workflow at the cluster |
+
+The policy's `audience` is the target URL with its port and a **trailing slash** (e.g. `https://my-cluster.example.com:9925/`). The claims include `repository_id`, `workflow_ref`, and `environment`.
+
+##### 3. Create a deploy-only user manually (alternative to setup)
+
+If you need to configure manually — for example, for a tag-triggered workflow that cannot use a branch pin — create the role and user yourself:
+
+```bash
+harper add_role role=ci_deploy permission='{"operations":["deploy_component","get_job","get_deployment","registration_info"]}'
+harper add_user username=ci-deploy role=ci_deploy active=true password="$(openssl rand -base64 32)"
+```
+
+- **`deploy_component`** — the deploy itself.
+- **`get_deployment`** — required for `harper deploy restart=rolling` to wait on every node; without it the wait fails with `403`.
+- **`get_job`** — required for the wait step that polls `restartJobId`; without it the wait fails with `403`.
+- **`registration_info`** — version check before upload; without it the deploy still works but logs a refused operation.
+- **`restart_service`** is not needed: Harper starts the rolling restart's job itself. The password is required to create the user but a GitHub Actions pipeline never uses it, so this command discards it.
+
+##### 4. Add a trust policy manually (tag-triggered workflows)
+
+Tag-triggered workflows cannot pin `workflow_ref` because the tag is unknown at policy-write time. Pin `workflow_path` and gate on `environment` instead:
+
+```bash
+harper add_oidc_trust \
+  id=my-app-release \
+  issuer=https://token.actions.githubusercontent.com \
+  audience=https://my-cluster.example.com:9925/ \
+  user=ci-deploy \
+  claims='{"repository_id":"67890","workflow_path":"my-org/my-app/.github/workflows/deploy.yml","environment":"production"}'
+```
+
+- **`repository_id`** — immutable; survives renames. Look it up with `gh api repos/my-org/my-app --jq .id`.
+- **`workflow_path`** — Harper derives it from `workflow_ref` by removing the `@<ref>` suffix; format is `<owner>/<repo>/<path>`.
+- **`environment`** — the ref gate. Without one, anyone who can push a branch could run the pinned workflow on it and mint a token. In the repository's **Settings → Environments → production**, set **Deployment branches and tags** to the `v*` tag pattern.
+- **`audience`** — must be the exact target URL with port and **trailing slash**.
+- **`workflow_ref`** pins workflow and ref together. Use for branch-triggered deploys, e.g. `my-org/my-app/.github/workflows/deploy.yml@refs/heads/main`.
+
+Store the target as a repository variable (not a secret):
+
+```bash
+gh variable set HARPER_CLI_TARGET --repo my-org/my-app --body https://my-cluster.example.com:9925/
+```
+
+##### 5. Configure the workflow job for OIDC
+
+Every `harper` command in the job authenticates through the trust policy automatically when all four conditions hold:
+
+1. The job declares `id-token: write`.
+2. `HARPER_CLI_TARGET` equals the policy's `audience` (with port and trailing slash).
+3. The run matches the policy's claims (repository, workflow file, branch/environment).
+4. **Nothing else is configured to authenticate.** `auth_username=`/`auth_password=`, credentials in the target URL, `HARPER_CLI_USERNAME`/`HARPER_CLI_PASSWORD`, `HARPER_CLI_REFRESH_TOKEN` or `HARPER_CLI_OPERATION_TOKEN`, and a saved `harper login` all outrank the exchange.
+
+The exchange runs only when GitHub sets `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which it does for a job that declares `permissions: id-token: write`. Without them, the CLI falls through to its other credential sources rather than failing.
+
+##### 6. Store a durable credential for private sources
+
+Skip this step if your repository is public or your package is on a public registry.
+
+For a private repository (git-tag deploys), store a fine-grained personal access token with **Contents: read-only** scoped to the application repository:
+
+```bash
+harper deploy setup=true provider=github project=my-app
+```
+
+For GitHub Packages, store a durable token with the `read:packages` scope:
+
+```bash
 harper deploy setup=true provider=npm project=my-app registry=https://npm.pkg.github.com scope=@my-org
 ```
 
-The name is derived from the component and the host: `deploy.my-app.git.github.com` for the repository, and `deploy.my-app.npm.pkg.github.com` for GitHub Packages. Reference it by that name in the workflow — the token never appears in your pipeline.
+The name is derived from the component and the host: `deploy.my-app.git.github.com` for the repository, and `deploy.my-app.npm.pkg.github.com` for GitHub Packages. The workflows reference it by that name — the token never appears in the pipeline.
 
----
+##### 7. Write the deploy workflow
 
-##### Checking the Deployment Record
+**Path A — deploy a tagged release (`v1.2.3`) from the repository:**
 
-`deploy.json` carries a `deployment_id`. Read the deployment record with:
-
-```bash
-harper get_deployment deployment_id="$(jq -r .deployment_id deploy.json)" json=true
-```
-
-- Go back to a previous release by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. To deploy a release that is no longer kept, re-run the deploy with its tag or version.
-- Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
-
-#### Examples
-
-##### Path A: Deploy a Tagged Release (`v1.2.3`) from the Repository
-
-Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit even if the tag is moved later. If this repository needs a build step to be runnable, stop — don't reach for `install_allow_scripts`. Use Path B instead.
+Push a semver tag (`v1.2.3`), and every node clones and installs that commit. `by_ref=true` deploys `git+https://github.com/<owner>/<repo>.git#<sha>`, where the SHA is the commit the tag points to (`GITHUB_SHA`), and every node clones that exact commit. Pass `ref=<sha>` with the full commit SHA to deploy a different commit. If the repository needs a build step to be runnable, use Path B instead — do not reach for `install_allow_scripts`.
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -3054,24 +3044,19 @@ jobs:
           exit 1
 ```
 
-For a private repository, add `credential=true` to the deploy command to attach the `deploy.my-app.git.github.com` reference.
+For a private repository, add `credential=true` to the deploy command.
 
-Key details:
+Key details for Path A:
 
-- **No secrets.** `HARPER_CLI_TARGET` is the only thing the workflow is given. `id-token: write` lets the CLI request an identity token, and `environment: production` puts the `environment` claim the trust policy requires into it.
-- **`persist-credentials: false`** keeps the job's `GITHUB_TOKEN` out of `.git/config`, where `actions/checkout` otherwise leaves it for every later step.
+- **`persist-credentials: false`** keeps the job's `GITHUB_TOKEN` out of `.git/config`, where `actions/checkout` otherwise leaves it for every later step. From v6 it saves the token in a file under `$RUNNER_TEMP` rather than in `.git/config`, which `harper deploy` uploads with the checkout, but later steps can still read it.
 - **`replicated` isn't needed.** On Harper Fabric and Harper Pro, a deploy goes to every node unless you pass `replicated=false`. Each node fetches and installs the package itself.
-- **`restart=rolling`** restarts nodes one at a time so the cluster keeps serving throughout. Use `restart=true` for a single-node or dev instance.
-- **`certification`**: on v5.4.0 and later, `restart=rolling` loads the release in a canary worker on each node before that node serves it, so a release that fails to load is rejected. The `certification` field in the deploy result reflects whether this ran.
-- **`load-balanced` clusters**: the rolling restart job lives on one node. `get_job` polls through a load-balanced URL may reach a node that did not receive the deploy and return an empty list. If your load balancer routes that way, use one node's own URL for both the deploy and the wait, and as the trust policy's `audience`.
-- **`.[0].status`** is the field the wait step reads from `get_job` output to determine `COMPLETE`, `ERROR`, or still running.
-- **`restartJobId`** is the field in `deploy.json` the wait step uses to identify the rolling restart job to poll.
+- **`restart=rolling`** restarts nodes one at a time. `restart=true` deploys to every node at once; each node replaces its workers a few at a time while the others keep serving.
+- **`certification`**: on v5.4.0 and later, `restart=rolling` loads the release in a canary worker on each node before that node serves it, so a release that fails to load is rejected. The `certification` field in the deploy result reflects whether this ran; when it is `unavailable`, the certified wait is skipped.
+- **`json=true`** prints the deploy result as JSON on stdout. Progress and authentication messages go to stderr.
+- **Waiting for every node**: with `restart=rolling` on v5.4.0 and later, unless `certification` is `unavailable`, `harper deploy` waits for every node on the deployment record before it exits. Its result then carries `rollout`, and the wait step does nothing. Otherwise the wait step polls `restartJobId` with `get_job` until `COMPLETE` or `ERROR`, retrying polls that fail (such as one that reaches a node while it restarts). It gives up after 60 polls (~10 minutes).
+- **The job lives on one node.** Harper does not replicate jobs, so only the node that received the deploy knows the rolling job. Through a **load-balanced** cluster URL, at least one poll must reach that node. Routing that sends polls to a different node than the deploy causes the step to fail, saying the job was not on the node that answered and its outcome is unknown. If your load balancer routes that way, use one node's own URL for both the deploy and the wait, and as the trust policy's `audience`.
 
----
-
-##### Path B: Build in CI, Publish to GitHub Packages, Deploy the Artifact
-
-The flow: push a tag → CI builds and tests → `npm publish` to GitHub Packages → `harper deploy` installs the published version from the registry.
+**Path B — build in CI, publish to GitHub Packages, deploy the artifact:**
 
 Give `package.json` a scoped name and `"publishConfig": { "registry": "https://npm.pkg.github.com" }`:
 
@@ -3161,29 +3146,84 @@ The workflow has two jobs so the job that can request an identity token runs non
 - **`publish`** installs, builds, tests, and publishes with `contents: read` and `packages: write` only. It cannot request an identity token.
 - **`deploy`** runs once `publish` has finished (`needs: publish`), holds the `production` environment and `id-token: write`, installs only the Harper CLI, then deploys the published version.
 
-Note the two credentials play different roles:
+##### 8. Manage trust policies
 
-- **Publishing** and installing private `@my-org` dependencies with `npm ci` use the workflow's ephemeral `GITHUB_TOKEN`. Both happen entirely inside the `publish` job, so an ephemeral token is exactly right.
-- **Installing on Harper nodes** uses the durable `read:packages` token stored as `deploy.my-app.npm.pkg.github.com` — because installs can happen long after this workflow ends.
+**List all policies** (including disabled ones) — `super_user` only:
+
+```bash
+harper list_oidc_trust
+```
+
+Returns `{ "policies": [ ... ] }`. Each entry includes `id`, `issuer`, `audience`, `claims`, `user`, `enabled`, `invalid_reason`, and `exchangeable`. Check `invalid_reason` first when diagnosing a rejected exchange — the exchange itself does not report which check failed. Diagnose further with the instance's `oidc-trust` log.
+
+**Drop a policy** to stop future runs from exchanging — `super_user` only:
+
+```bash
+harper drop_oidc_trust id=github-actions-<project>
+```
+
+Fails with `404` if no policy has that `id`. Does not revoke already-issued tokens (valid for one hour). To also stop a token already in circulation, deactivate the user:
+
+```bash
+harper alter_user username=<project>-ci-deploy active=false
+```
+
+**Replace a policy**: drop it with `harper drop_oidc_trust id=github-actions-<project>`, then run setup again. Setup never overwrites an existing policy.
+
+#### Examples
+
+**Minimal OIDC-authenticated deploy job (branch-triggered, setup already run):**
+
+```yaml
+deploy:
+  runs-on: ubuntu-latest
+  environment: production
+  permissions:
+    contents: read
+    id-token: write
+  env:
+    HARPER_CLI_TARGET: ${{ vars.HARPER_CLI_TARGET }}
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - run: npm install --global harper@^5.3
+    - run: harper deploy project=my-app restart=rolling
+```
+
+**Check the deployment record after a deploy:**
+
+```bash
+harper get_deployment deployment_id="$(jq -r .deployment_id deploy.json)" json=true
+```
+
+**Go back to a previous release** by activating its `deployment_id`, with no rebuild or reinstall: `harper deploy project=my-app deployment_id=<id> restart=rolling`. Use `list_deployments` to see the history of what was deployed and when, and filter by commit with `sha`.
+
+**Revoke pipeline access:**
+
+```bash
+harper drop_oidc_trust id=github-actions-<project>
+harper alter_user username=<project>-ci-deploy active=false
+```
 
 #### Notes
 
-- **`id-token: write`** must appear on the specific job that runs `harper` commands. Every step in that job can request an identity token — run none of the repository's code in it.
-- **`vars.HARPER_CLI_TARGET`** is a repository variable, not a secret. The URL is not sensitive.
-- **`HARPER_CLI_REFRESH_TOKEN`** and any other configured credential outrank the OIDC exchange. Remove stored credentials from the workflow before enabling OIDC.
-- **`npm install --global harper@^5.3`** pins the CLI's major version. 5.3 is the first CLI that authenticates with the identity token.
-- **`runs-on: ubuntu-latest`** is required for the wait-step shell logic shown above.
-- **`push:` / `tags: ['v*']`** triggers the workflow on version tags.
-- **`jobs:`** structure matters for security: separate `publish` and `deploy` jobs so the job with `id-token: write` runs none of the repository's build code.
-- **`add_oidc_trust`** replaces a policy with the same `id`. Setup checks just before writing, but a policy created by another `super_user` in that moment would still be overwritten.
-- **`deploy_component`** in the role allows deploying any component on the cluster, not only the named project. Access control comes down to who can merge to the branch or push a matching tag.
-- **`token.actions.githubusercontent.com`** is the required `issuer` value for GitHub Actions OIDC policies.
-- **`environment: production`** on the job puts the `environment` claim into the identity token. Without it the token carries no environment claim and cannot match a policy that requires one.
-- **`Deployment branches and tags`**: set this in **Settings → Environments → production** to `v*` to restrict which tags can deploy.
-- **`alter_user`** deactivates a user and stops already-issued tokens from authorizing further operations. Use it alongside `drop_oidc_trust` when responding to a suspected compromise.
-- **`invalid_reason`** on a `list_oidc_trust` entry means the policy cannot authenticate anyone — check it first when diagnosing a rejected exchange.
-- **`github-actions-<project>`** is the trust policy id setup creates.
-- **`<project>-ci-deploy`** is the user name setup creates. It can deploy any component on the cluster.
+- The `audience` in every trust policy and in `HARPER_CLI_TARGET` must include the port and a **trailing slash** — `https://my-cluster.example.com:9925/`. A missing trailing slash causes the exchange to fail.
+- `HARPER_CLI_REFRESH_TOKEN` and any other stored credential outrank the OIDC exchange. Remove them from the workflow if you are switching to OIDC.
+- `harper@^5.3` pins the CLI major version. 5.3 is the first version that authenticates with an identity token.
+- `runs-on: ubuntu-latest` is used in all example workflows. The git-credential helper for private repositories requires git ≥ 2.31 and is not supported on Windows nodes.
+- Policy specificity for `https://token.actions.githubusercontent.com` requires all three of:
+
+  | Requirement            | Satisfied by one of                                                      | Left open otherwise                             |
+  | ---------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+  | **Pin the repository** | `repository_id`, `repository`                                            | Any repository                                  |
+  | **Pin the workflow**   | `workflow_ref`, `workflow_path`, `job_workflow_ref`, `job_workflow_path` | Any workflow in that repository                 |
+  | **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
+
+- `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
+- Two `exchangeable` policies that can match the same runs but give them a different user or operations cause the exchange to refuse those runs. Both will carry `invalid_reason`. Drop or disable one, or give them non-overlapping claims.
+- `add_oidc_trust` replaces a policy with the same `id`. Setup checks for conflicts immediately before writing, but a policy created by another `super_user` in that instant could still be overwritten.
+- See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for cluster-level deployment configuration on Harper Fabric.
 
 ### 4.3 Creating a Harper Fabric Account and Cluster
 
@@ -3602,11 +3642,11 @@ Instructions for the agent to follow when loading environment variables from `.e
 
 #### When to Use
 
-Apply this rule when a Harper application needs to supply secrets, API endpoints, or other configuration values to component code via `process.env` without hardcoding them. Use this whenever a `.env` file must be loaded at application startup.
+Apply this rule when a Harper application needs to supply secrets, API endpoints, or other configuration values to component code via `process.env` without hardcoding them. Use this whenever a `.env` file must be loaded at application startup before other components run.
 
 #### How It Works
 
-1. **Declare `loadEnv` first in `config.yaml`**: Place `loadEnv` before all other components so environment variables are available when dependent components start.
+1. **Declare `loadEnv` first in `config.yaml`**: Place `loadEnv` before all other components so environment variables are available when dependent components start. Harper is single-process, so variables loaded onto `process.env` are shared across all components.
 
    ```yaml
    # config.yaml — loadEnv must come first
@@ -3614,13 +3654,11 @@ Apply this rule when a Harper application needs to supply secrets, API endpoints
      files: '.env'
    ```
 
-2. **Set the `files` option**: Provide one or more paths or glob patterns pointing to the env file(s) to load. This option is required.
+2. **Specify files to load**: Set the `files` option to a path, glob pattern, or list of paths. This is the only required option.
 
-3. **Access variables in component code**: After loading, all values from the specified files are available on `process.env` and shared across all components in the single Harper process.
+3. **Control override behavior**: By default, existing environment variables take precedence over values in `.env` files. Set `override: true` to make loaded values overwrite existing environment variables.
 
-4. **Control override behavior with `override`**: By default, existing environment variables take precedence over values in `.env` files. Set `override: true` to reverse this — loaded values will overwrite variables already present in the shell or container environment.
-
-5. **Load multiple files when needed**: Specify a list or a glob pattern under `files`. Files are loaded in the order specified.
+4. **Access values in component code**: After loading, all values from the specified files are available on `process.env` throughout your components.
 
 ##### Configuration Options
 
@@ -3631,14 +3669,38 @@ Apply this rule when a Harper application needs to supply secrets, API endpoints
 
 #### Examples
 
-**Basic usage — load a single `.env` file:**
+**Basic single file:**
 
 ```yaml
 loadEnv:
   files: '.env'
 ```
 
-**Full `config.yaml` with `loadEnv` declared first:**
+**Override existing environment variables:**
+
+```yaml
+loadEnv:
+  files: '.env'
+  override: true
+```
+
+**Multiple explicit files** (loaded in order specified):
+
+```yaml
+loadEnv:
+  files:
+    - '.env'
+    - '.env.local'
+```
+
+**Glob pattern:**
+
+```yaml
+loadEnv:
+  files: 'env-vars/*'
+```
+
+**Full `config.yaml` with dependent components:**
 
 ```yaml
 # config.yaml — loadEnv must come first
@@ -3651,46 +3713,21 @@ myApp:
   files: './src/*.js'
 ```
 
-**Override existing environment variables:**
-
-```yaml
-loadEnv:
-  files: '.env'
-  override: true
-```
-
-**Load multiple files as a list:**
-
-```yaml
-loadEnv:
-  files:
-    - '.env'
-    - '.env.local'
-```
-
-**Load multiple files using a glob pattern:**
-
-```yaml
-loadEnv:
-  files: 'env-vars/*'
-```
-
 #### Notes
 
-- `loadEnv` is built into Harper — it does not need to be installed, only declared in `config.yaml`.
-- Variables are loaded onto `process.env` and shared across all components. Declare `loadEnv` before any component that depends on those variables.
-- `loadEnv` supplies **application** environment variables only. It does **not** configure Harper itself. Harper's own configuration is composed at startup before any `loadEnv` runs, so variables such as `HARPER_CONFIG`, `HARPER_SET_CONFIG`, and `HARPER_DEFAULT_CONFIG` delivered through a `.env` file are read too late and are ignored.
-- To change Harper's own configuration, use the configuration file directly or export variables in the real process/container environment before Harper starts.
-- For production credentials, prefer the encrypted secrets store over a committed `.env` file. Secrets are delivered to components via `process.env` and never appear in operation logs or replication payloads.
-- Individual `.env` values can also be stored encrypted so plaintext never reaches the API, logs, or replication payload.
+- `loadEnv` is built into Harper — do not install it separately. Only declare it in `config.yaml`.
+- `loadEnv` supplies **application** environment variables for component code. It does **not** configure Harper itself.
+- Harper's own configuration is composed at startup **before** any `loadEnv` runs. Variables such as `HARPER_CONFIG`, `HARPER_SET_CONFIG`, and `HARPER_DEFAULT_CONFIG` delivered through a `.env` file are read too late and are ignored. Set Harper configuration in the configuration file or export variables in the real process/container environment before Harper starts.
+- A component's `.env` file can be managed remotely via the Operations API (`get_env_keys`, `set_env_value`, `delete_env_value`). Changes reach running code only after worker threads restart.
+- For production credentials, prefer the encrypted secrets store over a committed `.env` file. Individual `.env` values can also be stored encrypted. See [Encrypted Environment Values](encrypted-values.md) and [Secrets](secrets.md).
 
 ### 4.8 v5 Upgrade: Breaking Changes and Migration Guide
 
-Instructions for the agent to follow when migrating a Harper application to v5, covering all breaking changes and required code updates.
+Instructions for the agent to apply when migrating a Harper application to v5, covering all breaking changes and required code updates.
 
 #### When to Use
 
-Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors after upgrading, or when reviewing application code for v5 compatibility. Every breaking change listed here must be addressed before the application will behave correctly under v5.
+Apply this rule when upgrading an existing Harper application from v4 to v5, when encountering runtime errors related to module loading, transactions, record access, or process spawning after a v5 upgrade, or when scaffolding new v5-compatible application code.
 
 #### How It Works
 
@@ -3700,12 +3737,12 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    import { tables } from 'harper';
    ```
 
-2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to compile native binaries), set `allowInstallScripts` in your deployment options.
+2. **Enable install scripts if needed**: Harper v5 runs `npm install` with `--ignore-scripts` by default. If your application requires install scripts (e.g., to install native binaries), set `allowInstallScripts` in your deployment options.
 
-3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned object. Replace it with `loadedFromSource` on the `RequestTarget`:
+3. **Update `Table.get` usage**: `Table.get` now returns a plain frozen record object, not a table class instance. The `wasLoadedFromSource()` method no longer exists on the returned record. Use a `RequestTarget` and check `loadedFromSource` on the target instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    if (record.wasLoadedFromSource()) {
    	// record was loaded from origin (not cache)
@@ -3713,8 +3750,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    ```
 
    ```javascript
-   // After
-   import { getContext } from 'harper';
+   // After (v5):
    const target = new RequestTarget();
    target.id = id;
    const record = await Table.get(target);
@@ -3723,34 +3759,23 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   The record objects do have `getUpdatedTime` and `getExpiresAt` methods available.
+   The record objects still expose `getUpdatedTime` and `getExpiresAt` methods.
 
-4. **Handle frozen records**: The record object returned by `Table.get` is frozen — you cannot mutate it directly. Copy it before modifying:
+4. **Handle frozen records**: Records returned by `Table.get` are frozen — you cannot mutate them directly. Spread into a new object instead.
 
    ```javascript
-   // Before
+   // Before (v4):
    const record = await Table.get(id);
    record.property = 'changed';
    ```
 
    ```javascript
-   // After
+   // After (v5):
    let record = await Table.get(id);
    record = { ...record, property: 'changed' };
    ```
 
-5. **Register allowed spawn commands via `allowedSpawnCommands`**: `spawn` and `execFile` may only launch executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml`. Only the first token of the command is matched. `exec` is not usable through the substituted module, and `execSync` always throws.
-
-   ```yaml
-   applications:
-     allowedSpawnCommands:
-       - npm
-       - node
-   ```
-
-   Additionally, `spawn`, `execFile`, and `fork` now require a `name` property in the `options` argument to prevent process multiplication across threads.
-
-6. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other calls now automatically inherit the current transaction. Code that previously omitted context to bypass a transaction will no longer work as expected. Explicitly commit the transaction or wrap calls in a new transaction to read updated data:
+5. **Update transaction and context usage**: Harper v5 uses asynchronous context tracking. `Table.get` and other table calls now automatically inherit the current transaction. If your code previously omitted context to bypass a transaction and read the latest data, that workaround no longer works. Explicitly commit the transaction and/or wrap reads in a new transaction using `getContext` and `transaction` from `'harper'`.
 
    ```javascript
    import { setTimeout as delay } from 'node:timers/promises';
@@ -3767,47 +3792,45 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
    }
    ```
 
-   Use `getContext` (exported from `'harper'`) to access the current transaction anywhere without passing context explicitly.
-
-7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
-
-8. **Handle response `headers`**: If you return an object from a REST method with a `headers` property, Harper v5 will use it as the response headers. Ensure any object you return that incidentally has a `headers` property is intentional.
-
-9. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. Control this with the `moduleLoader` setting:
-
-   | Value                | Behavior                                         |
-   | -------------------- | ------------------------------------------------ |
-   | `vm-current-context` | Default. Shares intrinsics with Harper.          |
-   | `vm`                 | Separate context and intrinsics per application. |
-   | `native`             | Standard `import()`, no application context.     |
-   | `compartment`        | SES Compartments; advanced and heavier.          |
-
-   The default (`vm-current-context`) avoids `instanceof` failures for values crossing the application/Harper boundary. Choose `vm` only if you need separate per-application intrinsics. Use `native` if the VM loader causes compatibility problems you cannot otherwise resolve.
-
-   To disable the VM loader entirely and restore pre-v5 behavior:
+6. **Register allowed spawn commands**: Spawning child processes via `node:child_process` is now restricted. Only executables listed in `applications.allowedSpawnCommands` in `harper-config.yaml` may be spawned. Additionally, `spawn`, `execFile`, and `fork` require a `name` property in the `options` argument to prevent process multiplication across threads. `exec` is not usable through the substituted module, and `execSync` always throws.
 
    ```yaml
    applications:
-     moduleLoader: native
+     allowedSpawnCommands:
+       - npm
+       - node
    ```
 
-   Note: `logger` and per-app `config` are not available in `native` mode.
+7. **Replace `blob.save()`**: The `blob.save()` method has been removed. Use the `saveBeforeCommit` flag in the options passed to the `Blob` constructor instead.
 
-   If the goal is only to fix package compatibility while keeping application context for first-party code, `dependencyLoader: native` is a narrower option — it uses native loading only for npm packages while keeping the VM loader for application source files.
+8. **Configure the module loader**: Harper v5 loads application modules through Node.js's VM module API. The default mode is `vm-current-context`, which shares JavaScript intrinsics (`Object`, `Array`, `Promise`, etc.) with Harper to avoid `instanceof` and identity-check failures across the application/Harper boundary.
 
-10. **Handle intrinsic `lockdown`**: The default `lockdown` mode (`freeze-after-load`) freezes JavaScript intrinsics (`Object`, `Array`, `Promise`, `Map`, `Set`, etc.) after all application code loads. Any code or dependency that modifies intrinsic prototypes at runtime will throw a `TypeError`. If a dependency requires a temporary workaround, set:
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+     moduleLoader: vm-current-context # vm-current-context (default) | vm | native | compartment
+     dependencyLoader: auto # auto (default) | app | native
+     allowedDirectory: app # app (default) | any
+   ```
 
-    ```yaml
-    applications:
-      lockdown: none
-    ```
+   - Use `vm` only if you need separate per-application intrinsics.
+   - Use `native` to restore pre-v5 behavior (standard `import()`), but note that application-specific context (tagged `logger`, per-app `config`) will not be available.
+   - Use `dependencyLoader: native` to apply native loading only to npm packages while keeping the VM loader for first-party source files.
 
-11. **Check `allowedDirectory` in production**: In production, applications can only load modules from within their own directory tree (`allowedDirectory: app`). If your application loads files from outside its directory, set:
+9. **Configure `lockdown`**: The default `lockdown: seal-after-load` seals intrinsic prototypes (`Object`, `Array`, `Promise`, `Map`, `Set`, and others) after all components load, blocking prototype pollution. Before v5.4.0 the default was `freeze-after-load`, which froze the intrinsics instead. If a dependency mutates an intrinsic prototype at runtime and throws a `TypeError`, set `lockdown: none` as a temporary workaround.
 
-    ```yaml
-    applications:
-      allowedDirectory: any
-    ```
+   ```yaml
+   applications:
+     lockdown: seal-after-load
+   ```
+
+   An in-place upgrade from v4 retains the existing config file, which has no `lockdown` value — Harper will not lock intrinsics until you explicitly add the key.
+
+10. **Check `allowedDirectory` in production**: In production, `allowedDirectory: app` is the default, restricting module loading to the application's own directory tree. If your application loads modules from outside its directory, set `allowedDirectory: any`. This restriction does not apply in dev mode.
+
+11. **Update response objects**: If a REST method returns an object with a `headers` property, Harper v5 will use it as the response headers. Ensure any object with a `headers` property returned from a REST method is intentional.
+
+12. **Use `getContext` instead of passing context explicitly**: Context no longer needs to be threaded through every call. Access it via `getContext` exported from `'harper'`. Prefer `static` methods on Resources/Tables for endpoints and access request information from the `target` argument or via `getContext`.
 
 #### Examples
 
@@ -3815,7 +3838,7 @@ Apply this rule when upgrading an existing Harper application from v4 to v5, whe
 
 ```yaml
 applications:
-  lockdown: freeze-after-load
+  lockdown: seal-after-load
   moduleLoader: vm-current-context
   dependencyLoader: auto
   allowedDirectory: app
@@ -3824,15 +3847,18 @@ applications:
     - node
 ```
 
-##### Updated import and context access
+##### Disabling the VM loader entirely
 
-```javascript
-import { tables, getContext, transaction } from 'harper';
+```yaml
+applications:
+  moduleLoader: native
 ```
 
-##### Checking `loadedFromSource` after `Table.get`
+##### Checking `loadedFromSource` and using `getContext`
 
 ```javascript
+import { getContext, transaction } from 'harper';
+
 const target = new RequestTarget();
 target.id = id;
 const record = await Table.get(target);
@@ -3841,7 +3867,7 @@ if (target.loadedFromSource) {
 }
 ```
 
-##### Copying a frozen record before mutation
+##### Spreading a frozen record
 
 ```javascript
 let record = await Table.get(id);
@@ -3850,11 +3876,11 @@ record = { ...record, property: 'changed' };
 
 #### Notes
 
-- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available in `native` mode.
-- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `vm-current-context` (the default) to avoid this.
-- `import()` behavior depends on the `moduleLoader` setting. In `native` mode, standard Node.js `import()` is used with no application context.
-- Automatic context tracking simplifies code but requires explicit `commit()` or new `transaction()` calls when you need to observe data written within the same transaction.
-- Use `getContext` from `'harper'` rather than passing context manually through every call — this is the recommended pattern in v5.
+- The `logger` exported from `'harper'` is tagged with the application name when using the VM module loader. It is not available with `moduleLoader: native`.
+- `instanceof` checks for values crossing the application/Harper boundary will fail when using `moduleLoader: vm` (separate intrinsics). Use `moduleLoader: vm-current-context` (the default) to avoid this.
+- `import()` behavior depends on the selected `moduleLoader`. With `native`, it behaves as standard Node.js `import()` with no application context.
+- The `exec` function from `node:child_process` is not usable through the substituted module in v5; `execSync` always throws.
+- Record objects returned by `Table.get` expose `getUpdatedTime` and `getExpiresAt` even though they are frozen plain objects.
 
 ### 4.9 Delegating to the Built-in Agent
 

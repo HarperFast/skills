@@ -37,6 +37,14 @@ If your corporate network prevents the `skills` CLI from downloading the skills,
 
 ## Available Skills
 
+### [Harper Architecture](harper-architecture/SKILL.md)
+
+Deciding what to build on Harper before writing code. Covers:
+
+- A mapping from common services (Postgres, Redis, Express, Socket.io, S3, Pinecone) to the Harper feature that replaces them.
+- A governing question, capability-decision notes, and a pre-install dependency checklist.
+- A worked example of one component doing the work of several services.
+
 ### [Harper Best Practices](harper-best-practices/SKILL.md)
 
 Comprehensive guidelines for building, extending, and deploying Harper applications. Covers:

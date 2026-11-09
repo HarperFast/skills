@@ -41,6 +41,16 @@ export const SKILLS = [
 		agentsLead:
 			'Guidelines for running and managing Harper on a developer machine: isolated dev instances, parallel instances across git worktrees, and the local tooling around them.',
 	},
+	{
+		dir: 'harper-architecture',
+		manifestFile: 'rules.manifest.yaml',
+		rulesDir: 'rules',
+		skillFile: 'SKILL.md',
+		agentsFile: 'AGENTS.md',
+		agentsTitle: 'Harper Architecture',
+		agentsLead:
+			'Guidance for deciding what to build on Harper before any code is written: which common services (databases, caches, API servers, brokers, file stores, vector search, auth) Harper already provides, so an app ships as one component instead of several services.',
+	},
 ];
 
 // Display labels for categories, used when assembling AGENTS.md. The manifest
@@ -57,6 +67,8 @@ export const CATEGORY_LABELS = {
 	security: 'Operations & Security',
 	// harper-local-dev categories
 	instances: 'Dev Instances',
+	// harper-architecture categories
+	architecture: 'Architecture Examples',
 };
 
 export const VALID_MODES = new Set(['generate', 'direct', 'synthesized']);

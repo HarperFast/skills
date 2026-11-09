@@ -15,6 +15,7 @@
 	"repository": "github:HarperFast/skills",
 	"files": [
 		"dist",
+		"harper-architecture",
 		"harper-best-practices",
 		"harper-local-dev",
 		"harper-mcp"

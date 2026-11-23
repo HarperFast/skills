@@ -38,7 +38,7 @@ Instructions for the agent to configure OIDC trusted publishing so a GitHub Acti
 
 ## When to Use
 
-Apply this rule when setting up a GitHub Actions workflow to deploy a Harper application using OIDC identity tokens instead of stored secrets. Use it when running `harper deploy setup=true provider=github-actions` for the first time, when writing or debugging a deploy workflow, or when managing trust policies, deploy users, and rolling restarts.
+Apply this rule when setting up a GitHub Actions workflow to deploy a Harper application (or per-PR previews with `harper preview setup`) using OIDC identity tokens instead of stored secrets. Use it when running `harper deploy setup=true provider=github-actions` or `harper preview setup` for the first time, when writing or debugging a deploy or preview workflow, or when managing trust policies, deploy users, and rolling restarts.
 
 ## How It Works
 
@@ -323,6 +323,52 @@ harper alter_user username=<project>-ci-deploy active=false
 
 **Replace a policy**: drop it with `harper drop_oidc_trust id=github-actions-<project>`, then run setup again. Setup never overwrites an existing policy.
 
+### 9. Allow `pull_request_target` for PR previews on public repositories
+
+Starting December 2, 2026, GitHub Actions blocks `pull_request_target` events by default in all **public** repositories (GitHub Free, GitHub Team, and GitHub Enterprise Cloud) unless an applicable Actions event policy explicitly allows them. Private and internal repositories are not affected.
+
+Harper's PR-preview deploys (`harper preview setup`, default workflow `.github/workflows/preview.yaml`) require `pull_request_target`: the preview OIDC trust policies pin `event_name: "pull_request_target"`, and the security model depends on the workflow running from the base branch. **Do not switch the preview workflow's trigger to `pull_request`.**
+
+When setting up preview deploys on a public repository, tell the user to add an **Active** GitHub Actions event policy scoped to the preview workflow file (`.github/workflows/preview.yaml`, or the custom `workflow=` path passed to `harper preview setup`) so only that workflow is allowed to run on `pull_request_target`:
+
+- **Repository level** (available on both organization-owned and personal-account public repositories; requires repository administrator permissions):
+  1. Open the repository's **Settings** tab.
+  2. In the left sidebar, under **Actions**, click **Policies** (separate from **Actions → General**).
+  3. Create a new policy, set enforcement to **Active**, target the preview workflow path (e.g. `.github/workflows/preview.yaml`), and under **Restrict events** allow `pull_request_target` (plus any other triggers that workflow uses, since event policies are allowlists).
+- **Organization level** (requires organization owner permissions; covers multiple repositories from one policy):
+  1. Open the organization's **Settings** tab.
+  2. In the left sidebar, under **Actions**, click **Policies**.
+  3. Create an **Active** policy targeting the desired repositories and the preview workflow path, and under **Restrict events** allow `pull_request_target`.
+- **REST API** (repository level via `POST /repos/{owner}/{repo}/actions/policies`, or organization level via `POST /orgs/{org}/actions/policies` with `repository_name`, `repository_id`, or `repository_property` alongside `workflow_path` in `conditions`):
+
+```bash
+gh api --method POST \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  repos/<owner>/<repo>/actions/policies \
+  --input - <<'EOF'
+{
+  "name": "Allow pull_request_target for Harper preview workflow",
+  "enforcement": "active",
+  "conditions": {
+    "workflow_path": {
+      "include": [".github/workflows/preview.yaml"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "restrict_action_events",
+      "parameters": {
+        "allowed_events": ["pull_request_target"]
+      }
+    }
+  ]
+}
+EOF
+```
+
+Keep the policy scoped to the preview workflow file rather than repository-wide, and never check out or execute untrusted PR code in a `pull_request_target` job that holds `id-token: write`. See GitHub's docs on [controlling workflow execution](https://docs.github.com/actions/how-tos/administer/control-workflow-execution) and [Actions policies REST API](https://docs.github.com/en/rest/actions/policies). (`evaluate` enforcement mode is only available on GitHub Enterprise; use `active` elsewhere.)
+
 ## Examples
 
 **Minimal OIDC-authenticated deploy job (branch-triggered, setup already run):**
@@ -374,6 +420,7 @@ harper alter_user username=<project>-ci-deploy active=false
   | **Gate the ref**       | `workflow_ref`, `ref`, `environment`                                     | Any branch that can be pushed to the repository |
 
 - `ref_type: tag` is not accepted as a ref gate, `sub` is not accepted as a pin, and `job_workflow_ref` pins the workflow without gating the ref. `pull_request_target` runs are denied unless the policy constrains `event_name`.
+- On public GitHub repositories, starting December 2, 2026 GitHub Actions blocks `pull_request_target` by default unless an Actions event policy allows it. When setting up `harper preview setup` on a public repository, tell the user to add an active workflow-scoped event policy for the preview workflow (see step 9 above) instead of switching the trigger to `pull_request`.
 - Two `exchangeable` policies that can match the same runs but give them a different user or operations cause the exchange to refuse those runs. Both will carry `invalid_reason`. Drop or disable one, or give them non-overlapping claims.
 - `add_oidc_trust` replaces a policy with the same `id`. Setup checks for conflicts immediately before writing, but a policy created by another `super_user` in that instant could still be overwritten.
 - See [deploying-to-harper-fabric.md](deploying-to-harper-fabric.md) for cluster-level deployment configuration on Harper Fabric.
